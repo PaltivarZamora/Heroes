@@ -1,0 +1,7 @@
+# Secrets — never commit environment files (matches any directory)
+.env
+.env.*
+!.env.example
+
+# Maven build output
+backend/target/
