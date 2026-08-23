@@ -1,7 +1,11 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { HexMap } from './hex/HexMap'
-import { formatDebugText, type HeroHudState } from './hex/debug'
-import { formatMovementPoints, MAX_MOVEMENT_POINTS } from './hex/hero'
+import {
+  formatDebugText,
+  type DataStatus,
+  type HeroHudState,
+} from './hex/debug'
+import { formatMovementPoints, MAX_MOVEMENT_POINTS, HERO_MARKER_LABEL } from './hex/hero'
 import {
   DEFAULT_HEX_SCALE,
   HEX_SCALES,
@@ -15,6 +19,13 @@ import {
   RESOURCES,
   type ResourceWallet,
 } from './hex/resources'
+import {
+  advanceDay,
+  formatCalendar,
+  sameCalendar,
+  startCalendar,
+  type Calendar,
+} from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
 import './App.css'
 
@@ -40,8 +51,54 @@ function App() {
     setWallet(next)
   }, [])
   const [welcomeTown, setWelcomeTown] = useState<string | null>(null)
+  const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
+  const [calendar, setCalendar] = useState(startCalendar)
+  const [lastTownAction, setLastTownAction] = useState<
+    Record<string, Calendar>
+  >({})
   const onTownWelcome = useCallback((townName: string) => {
     setWelcomeTown(townName)
+  }, [])
+  const onEndDay = useCallback(() => {
+    setCalendar((current) => advanceDay(current))
+  }, [])
+  const onTownActed = useCallback((townName: string) => {
+    setLastTownAction((current) => ({
+      ...current,
+      [townName]: { ...calendar },
+    }))
+  }, [calendar])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadStatus = async () => {
+      try {
+        const response = await fetch('/api/system/data-status')
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+        const payload = (await response.json()) as DataStatus
+        if (!cancelled) {
+          setDataStatus({
+            ok: payload.ok,
+            tables: Array.isArray(payload.tables) ? payload.tables : [],
+          })
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDataStatus({
+            ok: false,
+            tables: [],
+            fetchError:
+              error instanceof Error ? error.message : 'status request failed',
+          })
+        }
+      }
+    }
+    void loadStatus()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const hexSize = HEX_SCALES[hexScale]
@@ -51,6 +108,10 @@ function App() {
     hero?.remaining ?? MAX_MOVEMENT_POINTS,
   )
   const resourceLines = formatResourceLines(wallet)
+  const calendarLabel = formatCalendar(calendar)
+  const lastAction = welcomeTown ? lastTownAction[welcomeTown] : undefined
+  const hasActedToday =
+    lastAction != null && sameCalendar(lastAction, calendar)
 
   const debugText = formatDebugText({
     mapSize: mapLabel,
@@ -60,6 +121,7 @@ function App() {
     heroR: hero?.r ?? null,
     steps: stepsLabel,
     resources: resourceLines,
+    dataStatus,
   })
 
   const copyDebug = useCallback(() => {
@@ -70,8 +132,14 @@ function App() {
 
   return (
     <main className="app">
+      {dataStatus && !dataStatus.ok ? (
+        <div className="data-load-banner" role="alert">
+          Data load error — check debug panel
+        </div>
+      ) : null}
       <header className="map-hud">
         <p>Steps: {stepsLabel}</p>
+        <p className="calendar-readout">{calendarLabel}</p>
         <div className="hex-scale-switch" role="group" aria-label="Hex scale">
           {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (
             <button
@@ -100,15 +168,23 @@ function App() {
       </header>
       <HexMap
         hexSize={hexSize}
+        wallet={wallet}
         onMapInfo={onMapInfo}
         onHeroState={onHeroState}
         onResources={onResources}
         onTownWelcome={onTownWelcome}
+        onEndDay={onEndDay}
       />
       {welcomeTown ? (
         <TownManagement
           townName={welcomeTown}
+          wallet={wallet}
+          onWalletChange={setWallet}
           onExit={() => setWelcomeTown(null)}
+          calendarLabel={calendarLabel}
+          hasActedToday={hasActedToday}
+          onActed={() => onTownActed(welcomeTown)}
+          visitingHeroName={HERO_MARKER_LABEL}
         />
       ) : null}
     </main>

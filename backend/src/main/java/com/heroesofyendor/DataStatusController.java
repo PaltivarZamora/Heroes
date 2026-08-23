@@ -4,16 +4,16 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-public class MapController {
+public class DataStatusController {
 
     private final ReferenceData referenceData;
 
-    public MapController(ReferenceData referenceData) {
+    public DataStatusController(ReferenceData referenceData) {
         this.referenceData = referenceData;
     }
 
-    @GetMapping("/api/map/test-grid")
-    public TestGridResponse testGrid() {
-        return TestGrid.generate(referenceData);
+    @GetMapping("/api/system/data-status")
+    public DataStatusResponse dataStatus() {
+        return referenceData.status();
     }
 }

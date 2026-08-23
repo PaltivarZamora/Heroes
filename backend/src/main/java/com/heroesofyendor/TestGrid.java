@@ -2,7 +2,9 @@ package com.heroesofyendor;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -25,30 +27,15 @@ final class TestGrid {
     static final int START_TOWN_MIN_DIST = 2;
     static final int START_TOWN_MAX_DIST = 3;
 
-    private static final String[] TOWN_NAMES = {
-        "Ashford",
-        "Briarhold",
-        "Cinderfall",
-        "Duskmere",
-        "Emberwick",
-        "Frosthaven",
-        "Glimmeroad",
-        "Hollowfen",
-        "Ironvale",
-        "Mistwatch",
-        "Ravenspire",
-        "Thornwick"
-    };
-
     private TestGrid() {
     }
 
-    static TestGridResponse generate() {
+    static TestGridResponse generate(ReferenceData data) {
         int seed = ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE);
-        return generate(seed);
+        return generate(seed, data);
     }
 
-    static TestGridResponse generate(int seed) {
+    static TestGridResponse generate(int seed, ReferenceData data) {
         Random rng = new Random(seed);
         int width = SIZE.width();
         int height = SIZE.height();
@@ -62,12 +49,13 @@ final class TestGrid {
                 tiles.add(new TileData(q, r, terrain.label(), terrain.movementCost()));
             }
         }
-        List<MapObjectData> objects = placeObjects(cells, rng);
+        List<MapObjectData> objects = placeObjects(cells, rng, data);
         return new TestGridResponse(seed, List.copyOf(tiles), List.copyOf(objects));
     }
 
     /** Passable hexes only, one object per hex. First town sits near hero spawn. */
-    private static List<MapObjectData> placeObjects(Terrain[][] cells, Random rng) {
+    private static List<MapObjectData> placeObjects(
+            Terrain[][] cells, Random rng, ReferenceData data) {
         int height = cells.length;
         int width = cells[0].length;
         List<int[]> passable = new ArrayList<>();
@@ -78,12 +66,12 @@ final class TestGrid {
                 }
             }
         }
-        List<String> names = new ArrayList<>(List.of(TOWN_NAMES));
-        Collections.shuffle(names, rng);
+        TownNameSession names = TownNameSession.from(data, rng);
         List<MapObjectData> objects = new ArrayList<>();
-        int nameIndex = 0;
-        if (nameIndex < names.size()) {
-            placeStartTown(objects, passable, names.get(nameIndex++), rng);
+        int placed = 0;
+        String startName = names.takePreferredStart(rng);
+        if (startName != null && placeStartTown(objects, passable, startName, rng)) {
+            placed = 1;
         }
         Collections.shuffle(passable, rng);
         int i = 0;
@@ -101,11 +89,11 @@ final class TestGrid {
                 objects.add(objectAt(passable.get(i++), "pickup", resource));
             }
         }
-        placeTowns(objects, passable, i, names, nameIndex);
+        placeTowns(objects, passable, i, names, rng, placed);
         return objects;
     }
 
-    private static void placeStartTown(
+    private static boolean placeStartTown(
             List<MapObjectData> objects,
             List<int[]> passable,
             String name,
@@ -114,7 +102,7 @@ final class TestGrid {
         int startR = HERO_START_ROW - offsetFromZero(HERO_START_COL);
         int[] chosen = pickNearbyPassable(passable, startQ, startR, rng);
         if (chosen == null) {
-            return;
+            return false;
         }
         passable.remove(chosen);
         int col = chosen[0];
@@ -122,6 +110,7 @@ final class TestGrid {
         int q = col;
         int r = row - offsetFromZero(col);
         objects.add(new MapObjectData(q, r, "town", "", "T1", name));
+        return true;
     }
 
     /** Prefer a passable hex 2–3 away from spawn so the first town is in starting vision. */
@@ -165,11 +154,19 @@ final class TestGrid {
             List<MapObjectData> objects,
             List<int[]> passable,
             int start,
-            List<String> names,
-            int nameIndex) {
+            TownNameSession names,
+            Random rng,
+            int placed) {
         int i = start;
-        int placed = nameIndex;
-        while (placed < names.size() && placed < TOWN_COUNT) {
+        while (placed < TOWN_COUNT) {
+            Integer townId = names.pickTownId(rng);
+            if (townId == null) {
+                return;
+            }
+            String name = names.take(townId);
+            if (name == null) {
+                return;
+            }
             if (i >= passable.size()) {
                 return;
             }
@@ -178,7 +175,95 @@ final class TestGrid {
             int row = colRow[1];
             int q = col;
             int r = row - offsetFromZero(col);
-            objects.add(new MapObjectData(q, r, "town", "", "T1", names.get(placed++)));
+            objects.add(new MapObjectData(q, r, "town", "", "T1", name));
+            placed++;
+        }
+    }
+
+    /**
+     * In-memory shuffle-and-consume of {@code town_name_pool} for one generate()
+     * call (one game). Names are never written back to the database.
+     */
+    private static final class TownNameSession {
+        private final Map<Integer, List<String>> remaining = new LinkedHashMap<>();
+        private final int startTownId;
+
+        private TownNameSession(int startTownId) {
+            this.startTownId = startTownId;
+        }
+
+        static TownNameSession from(ReferenceData data, Random rng) {
+            List<Map<String, Object>> towns = data.rows("town");
+            int startTownId = findTownId(towns, "Necropolis");
+            TownNameSession session = new TownNameSession(startTownId);
+            for (Map<String, Object> row : data.rows("town_name_pool")) {
+                Object idObj = row.get("town_id");
+                Object nameObj = row.get("name");
+                if (!(idObj instanceof Number) || nameObj == null) {
+                    continue;
+                }
+                int townId = ((Number) idObj).intValue();
+                session
+                        .remaining
+                        .computeIfAbsent(townId, key -> new ArrayList<>())
+                        .add(nameObj.toString());
+            }
+            for (List<String> names : session.remaining.values()) {
+                Collections.shuffle(names, rng);
+            }
+            return session;
+        }
+
+        String takePreferredStart(Random rng) {
+            int townId = startTownId;
+            if (!hasName(townId)) {
+                Integer any = pickTownId(rng);
+                if (any == null) {
+                    return null;
+                }
+                townId = any;
+            }
+            return take(townId);
+        }
+
+        Integer pickTownId(Random rng) {
+            List<Integer> ids = new ArrayList<>();
+            for (Map.Entry<Integer, List<String>> entry : remaining.entrySet()) {
+                if (!entry.getValue().isEmpty()) {
+                    ids.add(entry.getKey());
+                }
+            }
+            if (ids.isEmpty()) {
+                return null;
+            }
+            Collections.shuffle(ids, rng);
+            return ids.get(0);
+        }
+
+        String take(int townId) {
+            List<String> names = remaining.get(townId);
+            if (names == null || names.isEmpty()) {
+                return null;
+            }
+            return names.remove(0);
+        }
+
+        boolean hasName(int townId) {
+            List<String> names = remaining.get(townId);
+            return names != null && !names.isEmpty();
+        }
+
+        private static int findTownId(List<Map<String, Object>> towns, String typeName) {
+            for (Map<String, Object> row : towns) {
+                if (typeName.equalsIgnoreCase(String.valueOf(row.get("name")))
+                        && row.get("id") instanceof Number id) {
+                    return id.intValue();
+                }
+            }
+            if (!towns.isEmpty() && towns.get(0).get("id") instanceof Number id) {
+                return id.intValue();
+            }
+            return 1;
         }
     }
 

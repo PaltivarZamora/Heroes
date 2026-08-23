@@ -18,7 +18,6 @@ import { hexDistance } from './pathfinding'
 import { type HeroHudState } from './debug'
 import {
   applyDailyTick,
-  emptyWallet,
   isResourceName,
   NEUTRAL_OBJECT_COLOR,
   PICKUP_AMOUNT,
@@ -35,10 +34,12 @@ import type { MapObjectData, TestGridResponse } from './types'
 
 type HexMapProps = {
   hexSize: number
+  wallet: ResourceWallet
   onMapInfo: (info: { width: number; height: number; seed: number }) => void
   onHeroState: (state: HeroHudState) => void
   onResources: (wallet: ResourceWallet) => void
   onTownWelcome: (townName: string) => void
+  onEndDay: () => void
 }
 
 type HeroState = HeroHudState
@@ -78,15 +79,26 @@ function sleep(ms: number, signal: AbortSignal) {
 
 export function HexMap({
   hexSize,
+  wallet,
   onMapInfo,
   onHeroState,
   onResources,
   onTownWelcome,
+  onEndDay,
 }: HexMapProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const tilesRef = useRef<TestGridResponse | null>(null)
   const heroRef = useRef<HeroState | null>(null)
-  const walletRef = useRef<ResourceWallet>(emptyWallet())
+  const walletRef = useRef<ResourceWallet>(snapshotWallet(wallet))
+  const onEndDayRef = useRef(onEndDay)
+
+  useEffect(() => {
+    walletRef.current = snapshotWallet(wallet)
+  }, [wallet])
+
+  useEffect(() => {
+    onEndDayRef.current = onEndDay
+  }, [onEndDay])
 
   useEffect(() => {
     const host = hostRef.current
@@ -597,6 +609,7 @@ export function HexMap({
             })
             applyDailyTick(walletRef.current)
             emitResources()
+            onEndDayRef.current()
             return
           }
           if (!isArrow(event.key) || moving) {
@@ -605,7 +618,7 @@ export function HexMap({
           event.preventDefault()
           keys.add(event.key)
         },
-        { signal },
+        { signal, capture: true },
       )
       window.addEventListener(
         'keyup',
