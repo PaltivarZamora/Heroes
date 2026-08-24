@@ -31,6 +31,7 @@ public class ReferenceCatalogController {
         body.put("building", decodeRows(referenceData.rows("building"), resourceNameToId));
         body.put("unit", decodeRows(referenceData.rows("unit"), resourceNameToId));
         body.put("hero_type", decodeRows(referenceData.rows("hero_type"), resourceNameToId));
+        body.put("hero_pool", decodeRows(referenceData.rows("hero_pool"), resourceNameToId));
         return body;
     }
 

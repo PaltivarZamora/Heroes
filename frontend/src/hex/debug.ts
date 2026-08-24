@@ -1,4 +1,5 @@
 export type HeroHudState = {
+  id: string
   q: number
   r: number
   remaining: number
@@ -21,6 +22,7 @@ export type DebugSnapshot = {
   mapSize: string
   hexSize: string
   seed: string
+  heroName: string
   heroQ: number | null
   heroR: number | null
   steps: string
@@ -55,8 +57,8 @@ function formatDataLoadSection(dataStatus: DataStatus | null): string[] {
 export function formatDebugText(snapshot: DebugSnapshot): string {
   const hero =
     snapshot.heroQ === null || snapshot.heroR === null
-      ? 'Hero: …'
-      : `Hero: q=${snapshot.heroQ}, r=${snapshot.heroR}`
+      ? `Hero: ${snapshot.heroName}`
+      : `Hero: ${snapshot.heroName} q=${snapshot.heroQ}, r=${snapshot.heroR}`
   return [
     `Map Size: ${snapshot.mapSize}`,
     `Hex Size: ${snapshot.hexSize}`,

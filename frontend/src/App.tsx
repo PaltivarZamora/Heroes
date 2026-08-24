@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
-import { HexMap } from './hex/HexMap'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { HexMap, getSelectedMapHeroId, selectHeroOnMap } from './hex/HexMap'
 import {
   formatDebugText,
   type DataStatus,
@@ -18,17 +18,54 @@ import {
   RESOURCES,
   type ResourceWallet,
 } from './hex/resources'
-import { advanceDay, formatCalendar } from './hex/calendar'
+import { advanceDay, formatCalendar, isWeekRollover } from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
-import { fetchCatalog } from './town/catalog'
+import { FriendlyTrade } from './town/FriendlyTrade'
+import { fetchCatalog, getCachedCatalog } from './town/catalog'
 import { OptionsMenu } from './options/OptionsMenu'
 import { getSession, subscribe, updateSession } from './session/store'
 import {
+  applyWeeklyGrowth,
+  assignHeroesFromPool,
+  findTownById,
   hasTownBuiltToday,
+  humanPlayer,
   markTownBuiltToday,
   walletFromSession,
 } from './session/accessors'
 import './App.css'
+
+function isEditableKeyTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  const tag = target.tagName
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    target.isContentEditable
+  )
+}
+
+function nextCycledId(
+  indexRef: { current: number },
+  ids: string[],
+): string | null {
+  if (ids.length === 0) {
+    return null
+  }
+  indexRef.current = (indexRef.current + 1) % ids.length
+  return ids[indexRef.current] ?? null
+}
+
+function nextIdAfter(currentId: string | null, ids: string[]): string | null {
+  if (ids.length === 0) {
+    return null
+  }
+  const idx = currentId ? ids.indexOf(currentId) : -1
+  return ids[(idx + 1) % ids.length] ?? null
+}
 
 function App() {
   const session = useSyncExternalStore(subscribe, getSession)
@@ -68,20 +105,100 @@ function App() {
     id: string
     name: string
   } | null>(null)
+  const [trade, setTrade] = useState<{
+    leftHeroId: string
+    rightHeroId: string
+  } | null>(null)
+  const [combatNotice, setCombatNotice] = useState(false)
+  const townCycleIndex = useRef(-1)
   const [mapEpoch, setMapEpoch] = useState(0)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
   const calendar = session.game.calendar
   const onTownWelcome = useCallback((townName: string, townId: string) => {
+    setTrade(null)
+    setCombatNotice(false)
     setWelcomeTown({ id: townId, name: townName })
   }, [])
+  const onHeroMeet = useCallback((targetHeroId: string) => {
+    const current = getSession()
+    const selfId = getSelectedMapHeroId()
+    const self = selfId
+      ? current.heroes.find((row) => row.id === selfId)
+      : undefined
+    const other = current.heroes.find((row) => row.id === targetHeroId)
+    if (!self || !other || self.id === other.id) {
+      return
+    }
+    setWelcomeTown(null)
+    if (self.player_id === other.player_id) {
+      setCombatNotice(false)
+      setTrade({ leftHeroId: self.id, rightHeroId: other.id })
+      return
+    }
+    setTrade(null)
+    setCombatNotice(true)
+  }, [])
   const onEndDay = useCallback(() => {
-    updateSession((current) => ({
-      ...current,
-      game: { ...current.game, calendar: advanceDay(current.game.calendar) },
-    }))
+    updateSession((current) => {
+      const previous = current.game.calendar
+      const next = advanceDay(previous)
+      let session = {
+        ...current,
+        game: { ...current.game, calendar: next },
+      }
+      if (isWeekRollover(previous, next)) {
+        const catalog = getCachedCatalog()
+        if (catalog) {
+          session = applyWeeklyGrowth(session, catalog)
+        }
+      }
+      return session
+    })
   }, [])
   const onTownActed = useCallback((townId: string) => {
     updateSession((current) => markTownBuiltToday(current, townId))
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) {
+        return
+      }
+      if (isEditableKeyTarget(event.target)) {
+        return
+      }
+      const key = event.key.toLowerCase()
+      if (key !== 't' && key !== 'h') {
+        return
+      }
+      event.preventDefault()
+      const current = getSession()
+      const player = humanPlayer(current)
+      if (!player) {
+        return
+      }
+      if (key === 't') {
+        const townId = nextCycledId(townCycleIndex, player.town_ids)
+        const town = townId ? findTownById(current, townId) : undefined
+        if (town) {
+          setWelcomeTown({ id: town.id, name: town.name })
+        }
+        return
+      }
+      const heroId = nextIdAfter(getSelectedMapHeroId(), player.hero_ids)
+      const nextHero = heroId
+        ? current.heroes.find((row) => row.id === heroId)
+        : undefined
+      if (!nextHero) {
+        return
+      }
+      selectHeroOnMap(nextHero.id)
+      setWelcomeTown(null)
+      setTrade(null)
+      setCombatNotice(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   useEffect(() => {
@@ -111,7 +228,15 @@ function App() {
       }
     }
     void loadStatus()
-    void fetchCatalog().catch(() => {})
+    void fetchCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          updateSession((current) =>
+            assignHeroesFromPool(current, catalog.hero_pool),
+          )
+        }
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
@@ -120,19 +245,26 @@ function App() {
   const hexSize = HEX_SCALES[hexScale]
   const mapLabel = mapInfo ? mapSizeLabel(mapInfo.width, mapInfo.height) : '…'
   const seedLabel = mapInfo ? String(mapInfo.seed) : '…'
+  const stepsRemaining = hero?.remaining ?? MAX_MOVEMENT_POINTS
   const stepsLabel = formatMovementPoints(
-    hero?.remaining ?? MAX_MOVEMENT_POINTS,
+    stepsRemaining,
+    Math.max(MAX_MOVEMENT_POINTS, stepsRemaining),
   )
   const resourceLines = formatResourceLines(wallet)
   const calendarLabel = formatCalendar(calendar)
   const hasActedToday = welcomeTown
     ? hasTownBuiltToday(session, welcomeTown.id)
     : false
+  const selectedHero = hero?.id
+    ? session.heroes.find((row) => row.id === hero.id)
+    : session.heroes[0]
+  const heroName = selectedHero?.name ?? HERO_MARKER_LABEL
 
   const debugText = formatDebugText({
     mapSize: mapLabel,
     hexSize: `${hexScale} (${hexSize})`,
     seed: seedLabel,
+    heroName,
     heroQ: hero?.q ?? null,
     heroR: hero?.r ?? null,
     steps: stepsLabel,
@@ -151,6 +283,13 @@ function App() {
       <OptionsMenu
         onLoaded={() => {
           setWelcomeTown(null)
+          townCycleIndex.current = -1
+          const catalog = getCachedCatalog()
+          if (catalog) {
+            updateSession((current) =>
+              assignHeroesFromPool(current, catalog.hero_pool),
+            )
+          }
           setMapEpoch((n) => n + 1)
         }}
       />
@@ -160,7 +299,7 @@ function App() {
         </div>
       ) : null}
       <header className="map-hud">
-        <p>Steps: {stepsLabel}</p>
+        <p>Steps: {heroName} {stepsLabel}</p>
         <p className="calendar-readout">{calendarLabel}</p>
         <div className="hex-scale-switch" role="group" aria-label="Hex scale">
           {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (
@@ -192,13 +331,38 @@ function App() {
         key={mapEpoch}
         hexSize={hexSize}
         wallet={wallet}
+        heroName={heroName}
         onMapInfo={onMapInfo}
         onHeroState={onHeroState}
         onResources={onResources}
         onTownWelcome={onTownWelcome}
         onEndDay={onEndDay}
+        onHeroMeet={onHeroMeet}
       />
-      {welcomeTown ? (
+      {combatNotice ? (
+        <div
+          className="combat-stub"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="combat-stub-title"
+        >
+          <div className="combat-stub-card">
+            <h1 id="combat-stub-title">Combat not yet implemented.</h1>
+            <button type="button" onClick={() => setCombatNotice(false)}>
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {trade ? (
+        <FriendlyTrade
+          leftHeroId={trade.leftHeroId}
+          rightHeroId={trade.rightHeroId}
+          wallet={wallet}
+          onExit={() => setTrade(null)}
+        />
+      ) : null}
+      {welcomeTown && !trade ? (
         <TownManagement
           key={welcomeTown.id}
           townId={welcomeTown.id}
@@ -208,7 +372,8 @@ function App() {
           calendarLabel={calendarLabel}
           hasActedToday={hasActedToday}
           onActed={() => onTownActed(welcomeTown.id)}
-          visitingHeroName={HERO_MARKER_LABEL}
+          visitingHeroName={heroName}
+          selectedHeroId={selectedHero?.id ?? null}
         />
       ) : null}
     </main>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { clearCachedGrid } from '../hex/HexMap'
+import { clearCachedGrid, setHeroMovementRemaining } from '../hex/HexMap'
+import { MAX_MOVEMENT_POINTS } from '../hex/hero'
 import {
   createSave,
   fetchSave,
@@ -165,6 +166,11 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
     window.location.reload()
   }
 
+  const setSteps = (remaining: number) => {
+    setHeroMovementRemaining(remaining)
+    setExpanded(false)
+  }
+
   return (
     <div className="options-menu">
       <button
@@ -186,6 +192,20 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
           </button>
           <button type="button" role="menuitem" onClick={() => openPanel('quit')}>
             Quit
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => setSteps(1000)}
+          >
+            Increase Steps to 1000
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => setSteps(MAX_MOVEMENT_POINTS)}
+          >
+            Reset Steps to 10
           </button>
         </div>
       ) : null}

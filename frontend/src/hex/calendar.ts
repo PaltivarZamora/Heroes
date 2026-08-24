@@ -25,6 +25,10 @@ export function advanceDay(calendar: Calendar): Calendar {
   return { day, week, month }
 }
 
+export function isWeekRollover(previous: Calendar, next: Calendar): boolean {
+  return previous.day === 7 && next.day === 1
+}
+
 export function formatCalendar(calendar: Calendar): string {
   return `M${calendar.month} W${calendar.week} D${calendar.day}`
 }

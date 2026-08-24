@@ -80,11 +80,12 @@ export function movementSteps(
   from: Axial,
   to: Axial,
   remaining: number,
+  blocked?: ReadonlySet<string>,
 ): Hex[] {
   if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return []
   }
-  const path = findPath(from, to)
+  const path = findPath(from, to, blocked)
   if (!path || path.length <= 1) {
     return []
   }

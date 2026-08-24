@@ -30,7 +30,6 @@ export type Player = {
 }
 
 export type TownGarrison = {
-  slot_0_hero_id: string | null
   slots_1_to_6: Array<string | null>
 }
 
@@ -62,6 +61,8 @@ export type Hero = {
   id: string
   player_id: string
   name: string
+  class_id: number | null
+  image_path: string | null
   position: AxialPos
   movement_remaining: number
   army: HeroArmy

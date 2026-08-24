@@ -1,11 +1,13 @@
 ﻿import { startCalendar } from '../hex/calendar'
 import { emptyWallet, RESOURCES } from '../hex/resources'
 import { HERO_MARKER_LABEL, MAX_MOVEMENT_POINTS } from '../hex/hero'
+import { getCachedCatalog } from '../town/catalog'
 import {
   mapObjectResourceId,
   mapObjectTownTypeId,
   type MapObjectData,
 } from '../hex/types'
+import { assignHeroesFromPool } from './accessors'
 import {
   ARMY_STACK_SLOTS,
   BUILDING_SLOT_COUNT,
@@ -118,7 +120,6 @@ export function hydrateMapObjects(
         player_id: obj.claimed ? HUMAN_PLAYER_ID : null,
         last_build_day: null,
         garrison: {
-          slot_0_hero_id: null,
           slots_1_to_6: emptyStackSlots(),
         },
       })
@@ -170,6 +171,8 @@ export function addHumanHero(
     id: HERO_ID,
     player_id: HUMAN_PLAYER_ID,
     name: HERO_MARKER_LABEL,
+    class_id: null,
+    image_path: null,
     position: { ...position },
     movement_remaining: MAX_MOVEMENT_POINTS,
     army: {
@@ -177,7 +180,7 @@ export function addHumanHero(
       slots_1_to_6: emptyStackSlots(),
     },
   }
-  return {
+  const withHero: GameSession = {
     ...session,
     heroes: [...session.heroes, hero],
     players: session.players.map((player) =>
@@ -186,4 +189,8 @@ export function addHumanHero(
         : player,
     ),
   }
+  const catalog = getCachedCatalog()
+  return catalog
+    ? assignHeroesFromPool(withHero, catalog.hero_pool)
+    : withHero
 }

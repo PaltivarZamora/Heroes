@@ -21,7 +21,7 @@ export type BuildingRow = {
   destroy_cost: CostMap | null
   slot_num: number | null
   image_path: string | null
-  /** Weekly unit growth — unused until recruitment exists. */
+  /** Weekly unit growth added to recruit_qty on week rollover. */
   growth: number | null
 }
 
@@ -29,11 +29,19 @@ export type UnitRow = {
   id: number
   name: string
   bldg_id: number | null
+  cost: CostMap | null
 }
 
 export type HeroTypeRow = {
   id: number
   name: string
+}
+
+export type HeroPoolRow = {
+  id: number
+  name: string
+  class_id: number
+  image_path: string | null
 }
 
 export type ResourceRow = {
@@ -50,6 +58,7 @@ export type ReferenceCatalog = {
   building: BuildingRow[]
   unit: UnitRow[]
   hero_type: HeroTypeRow[]
+  hero_pool: HeroPoolRow[]
   resource: ResourceRow[]
   town: TownRow[]
 }
@@ -81,6 +90,34 @@ function asCost(value: CostMap | Record<string, number> | null | undefined): Cos
   return cost
 }
 
+function asHeroPool(rows: unknown): HeroPoolRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  const pool: HeroPoolRow[] = []
+  for (const row of rows) {
+    if (row == null || typeof row !== 'object') {
+      continue
+    }
+    const rec = row as Record<string, unknown>
+    const id = Number(rec.id)
+    const classId = Number(rec.class_id)
+    const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+    if (!Number.isInteger(id) || !Number.isInteger(classId) || !name) {
+      continue
+    }
+    const image =
+      typeof rec.image_path === 'string' ? rec.image_path.trim() : ''
+    pool.push({
+      id,
+      name,
+      class_id: classId,
+      image_path: image || null,
+    })
+  }
+  return pool
+}
+
 export async function fetchCatalog(): Promise<ReferenceCatalog> {
   const response = await fetch('/api/reference/catalog')
   if (!response.ok) {
@@ -92,19 +129,81 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
   }
   applyResourceCatalog(Array.isArray(payload.resource) ? payload.resource : [])
   const building = (Array.isArray(payload.building) ? payload.building : []).map(
-    (row) => ({
-      ...row,
-      cost: asCost(row.cost),
-      destroy_cost: asCost(row.destroy_cost),
-    }),
+    (row) => {
+      const growthNum = Number(row.growth)
+      return {
+        ...row,
+        cost: asCost(row.cost),
+        destroy_cost: asCost(row.destroy_cost),
+        growth: Number.isFinite(growthNum) ? growthNum : row.growth,
+      }
+    },
   )
-  return {
+  const unit = (Array.isArray(payload.unit) ? payload.unit : []).map((row) => ({
+    ...row,
+    cost: asCost(row.cost),
+  }))
+  const catalog: ReferenceCatalog = {
     building,
-    unit: Array.isArray(payload.unit) ? payload.unit : [],
+    unit,
     hero_type: Array.isArray(payload.hero_type) ? payload.hero_type : [],
+    hero_pool: asHeroPool(payload.hero_pool),
     resource: Array.isArray(payload.resource) ? payload.resource : [],
     town: Array.isArray(payload.town) ? payload.town : [],
   }
+  cachedCatalog = catalog
+  return catalog
+}
+
+let cachedCatalog: ReferenceCatalog | null = null
+
+export function getCachedCatalog(): ReferenceCatalog | null {
+  return cachedCatalog
+}
+
+export function buildingGrowth(building: BuildingRow | null): number {
+  if (!building) {
+    return 0
+  }
+  if (typeof building.growth === 'number' && Number.isFinite(building.growth) && building.growth > 0) {
+    return Math.floor(building.growth)
+  }
+  const weekly = building.payload?.weekly_growth
+  if (typeof weekly === 'number' && Number.isFinite(weekly) && weekly > 0) {
+    return Math.floor(weekly)
+  }
+  return 0
+}
+
+export function unitCost(unit: UnitRow | null): CostMap {
+  return unit ? asCost(unit.cost) : {}
+}
+
+export function scaleCost(cost: CostMap, qty: number): CostMap {
+  const scaled: CostMap = {}
+  for (const [key, amount] of Object.entries(cost)) {
+    scaled[Number(key)] = amount * qty
+  }
+  return scaled
+}
+
+export function maxAffordableQty(
+  wallet: { [id: number]: { stockpile: number } },
+  cost: CostMap,
+  cap: number,
+): number {
+  if (cap <= 0) {
+    return 0
+  }
+  let max = cap
+  for (const [key, amount] of Object.entries(cost)) {
+    if (amount <= 0) {
+      continue
+    }
+    const have = wallet[Number(key)]?.stockpile ?? 0
+    max = Math.min(max, Math.floor(have / amount))
+  }
+  return Math.max(0, Math.floor(max))
 }
 
 export const BUILDING_SLOT_COUNT = 12
@@ -112,6 +211,10 @@ export const RESERVED_BUILDING_SLOT = 12
 
 export function isArmySlot(slotId: number): boolean {
   return slotId >= 4 && slotId <= 9
+}
+
+export function isTavernBuilding(building: BuildingRow): boolean {
+  return building.name.trim().toLowerCase() === 'tavern'
 }
 
 export function isReservedBuildingSlot(slotId: number): boolean {
@@ -124,6 +227,38 @@ export function armyTier(slotId: number): number {
 
 export function buildingCost(building: BuildingRow): CostMap {
   return asCost(building.cost)
+}
+
+/** Construction cost; if the building row has none, use that dwelling's unit cost. */
+export function constructionCost(
+  catalog: ReferenceCatalog,
+  building: BuildingRow,
+): CostMap {
+  const listed = buildingCost(building)
+  if (Object.keys(listed).length > 0) {
+    return listed
+  }
+  return unitCost(unitForBuilding(catalog, building.id))
+}
+
+export function hasPrerequisite(
+  building: BuildingRow,
+  builtIds: ReadonlySet<number>,
+): boolean {
+  return (
+    building.bldg_prereq_id == null || builtIds.has(building.bldg_prereq_id)
+  )
+}
+
+export function armyBuildOptions(
+  catalog: ReferenceCatalog,
+  slotId: number,
+  townTypeId: number,
+  builtIds: ReadonlySet<number>,
+): BuildingRow[] {
+  return armyOptions(catalog, slotId, townTypeId).filter((row) =>
+    hasPrerequisite(row, builtIds),
+  )
 }
 
 export function destroyCostOf(building: BuildingRow): CostMap {
@@ -169,11 +304,8 @@ export function effectLine(building: BuildingRow, units: UnitRow[]): string {
   switch (building.effect_type) {
     case 'unit_unlock': {
       const unit = units.find((row) => row.bldg_id === building.id)
-      const growth =
-        payload && typeof payload.weekly_growth === 'number'
-          ? payload.weekly_growth
-          : '?'
-      return `Trains ${growth} ${unit?.name ?? 'units'} per week`
+      const growth = buildingGrowth(building)
+      return `Trains ${growth > 0 ? String(growth) : '?'} ${unit?.name ?? 'units'} per week`
     }
     case 'resource_yield':
       return payloadNote(payload) || 'Produces resources'

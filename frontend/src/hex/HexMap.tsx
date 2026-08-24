@@ -4,7 +4,6 @@ import type { Hex } from 'honeycomb-grid'
 import { clampCamera, PAN_SPEED_PX_PER_SEC } from './camera'
 import {
   CLICK_PAN_THRESHOLD_PX,
-  HERO_MARKER_LABEL,
   MAX_MOVEMENT_POINTS,
   MOVE_STEP_MS,
   PLAYER_1_COLOR,
@@ -14,7 +13,7 @@ import {
   VISION_RANGE,
   type Axial,
 } from './hero'
-import { hexDistance } from './pathfinding'
+import { approachHex, hexDistance } from './pathfinding'
 import { type HeroHudState } from './debug'
 import {
   NEUTRAL_OBJECT_COLOR,
@@ -30,8 +29,9 @@ import {
 import { buildWorld, fetchTestGrid, getTile, isExplored, markExplored, TERRAIN_COLORS } from './world'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
-import { getSession, updateSession } from '../session/store'
+import { getSession, subscribe, updateSession } from '../session/store'
 import { addHumanHero, hydrateMapObjects } from '../session/create'
+import { HERO_ID } from '../session/types'
 import {
   applyMineIncome,
   claimMine,
@@ -39,6 +39,7 @@ import {
   collectPickup,
   findNodeAt,
   findTownAt,
+  restoreAllHeroMovement,
   syncHero,
   walletFromSession,
 } from '../session/accessors'
@@ -46,19 +47,57 @@ import {
 type HexMapProps = {
   hexSize: number
   wallet: ResourceWallet
+  heroName: string
   onMapInfo: (info: { width: number; height: number; seed: number }) => void
   onHeroState: (state: HeroHudState) => void
   onResources: (wallet: ResourceWallet) => void
   onTownWelcome: (townName: string, townId: string) => void
   onEndDay: () => void
+  onHeroMeet: (targetHeroId: string) => void
 }
 
 type HeroState = HeroHudState
 
 let cachedGrid: TestGridResponse | null = null
+let applyHeroMovement: ((remaining: number) => void) | null = null
+let panMapToHex: ((q: number, r: number) => void) | null = null
+let applyHeroMarkerLabel: ((name: string) => void) | null = null
+let selectMapHero: ((id: string) => void) | null = null
+let selectedMapHeroId: string | null = null
 
 export function clearCachedGrid(): void {
   cachedGrid = null
+}
+
+export function centerMapOnHex(q: number, r: number): void {
+  panMapToHex?.(q, r)
+}
+
+/** Switch which hero click-to-move and the camera follow. */
+export function selectHeroOnMap(id: string): void {
+  selectedMapHeroId = id
+  selectMapHero?.(id)
+}
+
+export function getSelectedMapHeroId(): string | null {
+  return selectedMapHeroId
+}
+
+/** Test helper — sets remaining steps on the live hero (session + map). */
+export function setHeroMovementRemaining(remaining: number): void {
+  if (applyHeroMovement) {
+    applyHeroMovement(remaining)
+    return
+  }
+  updateSession((current) => {
+    const hero =
+      current.heroes.find((row) => row.id === selectedMapHeroId) ??
+      current.heroes[0]
+    if (!hero) {
+      return current
+    }
+    return syncHero(current, hero.position, remaining, hero.id)
+  })
 }
 
 function gridHasResourceIds(grid: TestGridResponse): boolean {
@@ -73,6 +112,55 @@ function gridHasResourceIds(grid: TestGridResponse): boolean {
 
 /** Unexplored overlay — very dark grey, not pure black. */
 const UNEXPLORED_COLOR = 0x3a3a3a
+
+/** Explored map objects to path around. `walkOnto` is omitted from the set (mines/pickups). */
+function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
+  const blocked = new Set<string>()
+  const ontoKey =
+    walkOnto != null ? `${walkOnto.q},${walkOnto.r}` : ''
+  const add = (q: number, r: number) => {
+    if (q === mover.q && r === mover.r) {
+      return
+    }
+    if (!isExplored(q, r)) {
+      return
+    }
+    const hexKey = `${q},${r}`
+    if (ontoKey && hexKey === ontoKey) {
+      return
+    }
+    blocked.add(hexKey)
+  }
+  const session = getSession()
+  for (const hero of session.heroes) {
+    add(hero.position.q, hero.position.r)
+  }
+  for (const town of session.towns) {
+    add(town.position.q, town.position.r)
+  }
+  for (const node of session.nodes) {
+    if (node.kind === 'pickup' && node.collected) {
+      continue
+    }
+    add(node.position.q, node.position.r)
+  }
+  return blocked
+}
+
+function otherHeroAt(q: number, r: number, selfId: string) {
+  return getSession().heroes.find(
+    (hero) =>
+      hero.id !== selfId && hero.position.q === q && hero.position.r === r,
+  )
+}
+
+function liveNodeAt(q: number, r: number) {
+  const node = findNodeAt(getSession(), q, r)
+  if (!node || (node.kind === 'pickup' && node.collected)) {
+    return undefined
+  }
+  return node
+}
 
 function hexCenter(hex: Hex, offsetX: number, offsetY: number) {
   const corners = hex.corners
@@ -107,17 +195,20 @@ function sleep(ms: number, signal: AbortSignal) {
 export function HexMap({
   hexSize,
   wallet,
+  heroName,
   onMapInfo,
   onHeroState,
   onResources,
   onTownWelcome,
   onEndDay,
+  onHeroMeet,
 }: HexMapProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const tilesRef = useRef<TestGridResponse | null>(null)
   const heroRef = useRef<HeroState | null>(null)
   const walletRef = useRef<ResourceWallet>(snapshotWallet(wallet))
   const onEndDayRef = useRef(onEndDay)
+  const onHeroMeetRef = useRef(onHeroMeet)
 
   useEffect(() => {
     walletRef.current = snapshotWallet(wallet)
@@ -126,6 +217,14 @@ export function HexMap({
   useEffect(() => {
     onEndDayRef.current = onEndDay
   }, [onEndDay])
+
+  useEffect(() => {
+    onHeroMeetRef.current = onHeroMeet
+  }, [onHeroMeet])
+
+  useEffect(() => {
+    applyHeroMarkerLabel?.(heroName)
+  }, [heroName])
 
   useEffect(() => {
     const host = hostRef.current
@@ -155,16 +254,22 @@ export function HexMap({
       onMapInfo({ width, height, seed })
 
       if (!heroRef.current) {
-        const existing = getSession().heroes[0]
+        const heroes = getSession().heroes
+        const existing =
+          heroes.find((row) => row.id === selectedMapHeroId) ?? heroes[0]
         if (existing) {
+          selectedMapHeroId = existing.id
           heroRef.current = {
+            id: existing.id,
             q: existing.position.q,
             r: existing.position.r,
             remaining: existing.movement_remaining,
           }
         } else {
           const start = findPassableStart(grid)
+          selectedMapHeroId = HERO_ID
           heroRef.current = {
+            id: HERO_ID,
             q: start.q,
             r: start.r,
             remaining: MAX_MOVEMENT_POINTS,
@@ -174,6 +279,22 @@ export function HexMap({
       const spawned = heroRef.current
       if (!spawned) {
         return
+      }
+      applyHeroMovement = (remaining) => {
+        if (!heroRef.current) {
+          return
+        }
+        heroRef.current.remaining = remaining
+        onHeroState({
+          id: heroRef.current.id,
+          q: heroRef.current.q,
+          r: heroRef.current.r,
+          remaining: heroRef.current.remaining,
+        })
+        const hero = heroRef.current
+        updateSession((current) =>
+          syncHero(current, { q: hero.q, r: hero.r }, remaining, hero.id),
+        )
       }
       updateSession((current) =>
         addHumanHero(
@@ -186,6 +307,7 @@ export function HexMap({
       )
       walletRef.current = walletFromSession(getSession())
       onHeroState({
+        id: heroRef.current.id,
         q: heroRef.current.q,
         r: heroRef.current.r,
         remaining: heroRef.current.remaining,
@@ -244,23 +366,12 @@ export function HexMap({
       const preview = new Graphics()
       world.addChild(preview)
 
-      const marker = new Container()
-      const badge = new Graphics()
-      badge.circle(0, 0, hexSize * 0.55)
-      badge.fill({ color: PLAYER_1_COLOR })
-      badge.stroke({ width: 2, color: 0x111111 })
-      const label = new Text({
-        text: HERO_MARKER_LABEL,
-        style: {
-          fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-          fontSize: Math.max(10, Math.round(hexSize * 0.7)),
-          fontWeight: '700',
-          fill: 0xffffff,
-        },
-        anchor: 0.5,
-      })
-      marker.addChild(badge, label)
-      world.addChild(marker)
+      const heroLayer = new Container()
+      const heroMarkers = new Map<
+        string,
+        { view: Container; label: Text; badge: Graphics }
+      >()
+      world.addChild(heroLayer)
       instance.stage.addChild(world)
 
       const objectByKey = new Map<
@@ -467,29 +578,116 @@ export function HexMap({
         paintTexturedHexes()
       }
 
-      const placeMarker = () => {
-        const hero = heroRef.current
-        if (!hero) {
-          return
+      const placeHeroMarkers = () => {
+        const sessionHeroes = getSession().heroes
+        const counts = new Map<string, number>()
+        const indexOnHex = new Map<string, number>()
+        for (const hero of sessionHeroes) {
+          const hexKey = `${hero.position.q},${hero.position.r}`
+          const n = counts.get(hexKey) ?? 0
+          indexOnHex.set(hero.id, n)
+          counts.set(hexKey, n + 1)
         }
-        const hex = grid.getHex(hero) ?? grid.createHex(hero)
-        const center = hexCenter(hex, offsetX, offsetY)
-        marker.position.set(center.x, center.y)
+        const seen = new Set<string>()
+        for (const hero of sessionHeroes) {
+          seen.add(hero.id)
+          let entry = heroMarkers.get(hero.id)
+          if (!entry) {
+            const view = new Container()
+            const badge = new Graphics()
+            const label = new Text({
+              text: hero.name,
+              style: {
+                fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+                fontSize: Math.max(10, Math.round(hexSize * 0.7)),
+                fontWeight: '700',
+                fill: 0xffffff,
+              },
+              anchor: 0.5,
+            })
+            view.addChild(badge, label)
+            heroLayer.addChild(view)
+            entry = { view, label, badge }
+            heroMarkers.set(hero.id, entry)
+          } else {
+            entry.label.text = hero.name
+          }
+          const selected = heroRef.current?.id === hero.id
+          entry.badge.clear()
+          entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
+          entry.badge.fill({ color: PLAYER_1_COLOR })
+          entry.badge.stroke({
+            width: selected ? 3 : 2,
+            color: selected ? 0xffffff : 0x111111,
+          })
+          const hex = grid.getHex(hero.position) ?? grid.createHex(hero.position)
+          const center = hexCenter(hex, offsetX, offsetY)
+          const hexKey = `${hero.position.q},${hero.position.r}`
+          const count = counts.get(hexKey) ?? 1
+          const index = indexOnHex.get(hero.id) ?? 0
+          const spread =
+            count > 1 ? (index - (count - 1) / 2) * hexSize * 0.45 : 0
+          entry.view.position.set(center.x + spread, center.y)
+        }
+        for (const [id, entry] of heroMarkers) {
+          if (seen.has(id)) {
+            continue
+          }
+          heroLayer.removeChild(entry.view)
+          entry.view.destroy({ children: true })
+          heroMarkers.delete(id)
+        }
       }
+      applyHeroMarkerLabel = () => {
+        placeHeroMarkers()
+      }
+
+      const panToHex = (q: number, r: number) => {
+        const hex = grid.getHex({ q, r }) ?? grid.createHex({ q, r })
+        const center = hexCenter(hex, offsetX, offsetY)
+        camera.x = center.x - instance.screen.width / 2
+        camera.y = center.y - instance.screen.height / 2
+        applyCamera()
+      }
+      panMapToHex = panToHex
 
       const followHero = () => {
         const hero = heroRef.current
         if (!hero) {
           return
         }
-        const hex = grid.getHex(hero) ?? grid.createHex(hero)
-        const center = hexCenter(hex, offsetX, offsetY)
-        camera.x = center.x - instance.screen.width / 2
-        camera.y = center.y - instance.screen.height / 2
-        applyCamera()
+        panToHex(hero.q, hero.r)
+      }
+      selectMapHero = (id: string) => {
+        const row = getSession().heroes.find((hero) => hero.id === id)
+        if (!row) {
+          return
+        }
+        selectedMapHeroId = row.id
+        moveGen += 1
+        moving = false
+        heroRef.current = {
+          id: row.id,
+          q: row.position.q,
+          r: row.position.r,
+          remaining: row.movement_remaining,
+        }
+        onHeroState({
+          id: row.id,
+          q: row.position.q,
+          r: row.position.r,
+          remaining: row.movement_remaining,
+        })
+        panToHex(row.position.q, row.position.r)
+        exploreAround(heroRef.current)
+        placeHeroMarkers()
       }
 
-      placeMarker()
+      placeHeroMarkers()
+      const unsubHeroes = subscribe(() => {
+        placeHeroMarkers()
+      })
+      signal.addEventListener('abort', unsubHeroes, { once: true })
       if (heroRef.current) {
         exploreAround(heroRef.current)
         resolveHex(heroRef.current.q, heroRef.current.r)
@@ -540,12 +738,29 @@ export function HexMap({
           clearPreview()
           return
         }
-        const hoverKey = `${hero.q},${hero.r},${hero.remaining}->${hex.q},${hex.r}`
+        const occupant = otherHeroAt(hex.q, hex.r, hero.id)
+        const town = findTownAt(getSession(), hex.q, hex.r)
+        const node = liveNodeAt(hex.q, hex.r)
+        const walkOnto = !occupant && !town && node ? hex : null
+        const hoverBlocked = obstacleHexes(hero, walkOnto)
+        const hoverKey = `${hero.q},${hero.r},${hero.remaining}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|${[...hoverBlocked].sort().join(';')}`
         if (hoverKey === lastHoverKey) {
           return
         }
         lastHoverKey = hoverKey
-        const steps = movementSteps(grid, hero, hex, hero.remaining)
+        const dest =
+          occupant || town
+            ? approachHex(
+                hero,
+                occupant ? occupant.position : town!.position,
+                hoverBlocked,
+              )
+            : hex
+        if (!dest || (dest.q === hero.q && dest.r === hero.r)) {
+          preview.clear()
+          return
+        }
+        const steps = movementSteps(grid, hero, dest, hero.remaining, hoverBlocked)
         if (steps.length === 0) {
           preview.clear()
           return
@@ -553,12 +768,25 @@ export function HexMap({
         drawPreview(steps)
       }
 
-      const tryMoveTo = (to: Axial) => {
+      const tryMoveTo = (to: Axial, after?: () => void, walkOnto?: Axial | null) => {
         const hero = heroRef.current
-        if (!hero || moving || hero.remaining <= 1e-9) {
+        if (!hero || moving) {
           return
         }
-        const steps = movementSteps(grid, hero, to, hero.remaining)
+        if (to.q === hero.q && to.r === hero.r) {
+          after?.()
+          return
+        }
+        if (hero.remaining <= 1e-9) {
+          return
+        }
+        const steps = movementSteps(
+          grid,
+          hero,
+          to,
+          hero.remaining,
+          obstacleHexes(hero, walkOnto),
+        )
         if (steps.length === 0) {
           return
         }
@@ -581,6 +809,7 @@ export function HexMap({
               cost,
             )
             onHeroState({
+              id: heroRef.current.id,
               q: heroRef.current.q,
               r: heroRef.current.r,
               remaining: heroRef.current.remaining,
@@ -594,9 +823,10 @@ export function HexMap({
                 current,
                 { q: moved.q, r: moved.r },
                 moved.remaining,
+                moved.id,
               ),
             )
-            placeMarker()
+            placeHeroMarkers()
             exploreAround(heroRef.current)
             resolveHex(heroRef.current.q, heroRef.current.r)
             followHero()
@@ -604,6 +834,7 @@ export function HexMap({
           }
           if (gen === moveGen) {
             moving = false
+            after?.()
           }
         })()
       }
@@ -666,6 +897,64 @@ export function HexMap({
         if (!hex || !getTile(hex.q, hex.r)) {
           return
         }
+        const hero = heroRef.current
+        if (!hero) {
+          return
+        }
+        const occupant = otherHeroAt(hex.q, hex.r, hero.id)
+        if (occupant) {
+          const meet = () => {
+            const mover = heroRef.current
+            const live = getSession().heroes.find((row) => row.id === occupant.id)
+            if (!mover || !live) {
+              return
+            }
+            if (hexDistance(mover, live.position) <= 1) {
+              onHeroMeetRef.current(occupant.id)
+            }
+          }
+          if (hexDistance(hero, occupant.position) <= 1) {
+            meet()
+            return
+          }
+          const dest = approachHex(
+            hero,
+            occupant.position,
+            obstacleHexes(hero),
+          )
+          if (!dest) {
+            return
+          }
+          tryMoveTo(dest, meet)
+          return
+        }
+        const town = findTownAt(getSession(), hex.q, hex.r)
+        if (town) {
+          const greet = () => {
+            const mover = heroRef.current
+            if (!mover) {
+              return
+            }
+            if (hexDistance(mover, town.position) <= 1) {
+              resolveHex(town.position.q, town.position.r)
+            }
+          }
+          if (hexDistance(hero, town.position) <= 1) {
+            greet()
+            return
+          }
+          const dest = approachHex(hero, town.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          tryMoveTo(dest, greet)
+          return
+        }
+        const node = liveNodeAt(hex.q, hex.r)
+        if (node) {
+          tryMoveTo(hex, undefined, hex)
+          return
+        }
         tryMoveTo(hex)
       }
       canvas.addEventListener('pointerup', stopPointer, { signal })
@@ -697,6 +986,7 @@ export function HexMap({
             moving = false
             heroRef.current.remaining = MAX_MOVEMENT_POINTS
             onHeroState({
+              id: heroRef.current.id,
               q: heroRef.current.q,
               r: heroRef.current.r,
               remaining: heroRef.current.remaining,
@@ -705,15 +995,7 @@ export function HexMap({
             if (!resting) {
               return
             }
-            updateSession((current) =>
-              applyMineIncome(
-                syncHero(
-                  current,
-                  { q: resting.q, r: resting.r },
-                  resting.remaining,
-                ),
-              ),
-            )
+            updateSession((current) => applyMineIncome(restoreAllHeroMovement(current)))
             walletRef.current = walletFromSession(getSession())
             emitResources()
             onEndDayRef.current()
@@ -777,6 +1059,10 @@ export function HexMap({
 
     return () => {
       cancelled = true
+      applyHeroMovement = null
+      panMapToHex = null
+      applyHeroMarkerLabel = null
+      selectMapHero = null
       abort.abort()
       app?.destroy()
     }

@@ -1,6 +1,7 @@
 export type SlotState = {
   level: number
   buildingId: number | null
+  recruitQty: number
 }
 
 const slotsByTown = new Map<string, SlotState[]>()
@@ -11,6 +12,7 @@ function emptySlots(): SlotState[] {
   return Array.from({ length: SLOT_COUNT }, () => ({
     level: 0,
     buildingId: null,
+    recruitQty: 0,
   }))
 }
 

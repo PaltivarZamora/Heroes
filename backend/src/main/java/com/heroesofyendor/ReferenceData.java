@@ -30,7 +30,8 @@ public class ReferenceData {
             "spell",
             "building",
             "unit",
-            "town_name_pool");
+            "town_name_pool",
+            "hero_pool");
 
     private static final Logger log = LoggerFactory.getLogger(ReferenceData.class);
 
