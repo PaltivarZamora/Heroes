@@ -1,7 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
-  canAfford,
-  deductCost,
   formatAmount,
   formatResourceLine,
   RESOURCES,
@@ -32,12 +30,20 @@ import {
   slotArtFilename,
   slotArtUrl,
 } from './slotArt'
-import { getTownSlots, patchTownSlot, type SlotState } from './townSlots'
+import { getSession, subscribe, updateSession } from '../session/store'
+import { NECROPOLIS_TOWN_TYPE_ID } from '../session/types'
+import {
+  findTownById,
+  patchBuildingSlot,
+  slotStatesForTown,
+  spendResources,
+} from '../session/accessors'
+import type { SlotState } from './townSlots'
 
 type TownManagementProps = {
+  townId: string
   townName: string
   wallet: ResourceWallet
-  onWalletChange: (wallet: ResourceWallet) => void
   onExit: () => void
   calendarLabel: string
   hasActedToday: boolean
@@ -59,26 +65,28 @@ function SlotArt({ filename }: { filename: string }) {
 }
 
 export function TownManagement({
+  townId,
   townName,
   wallet,
-  onWalletChange,
   onExit,
   calendarLabel,
   hasActedToday,
   onActed,
   visitingHeroName,
 }: TownManagementProps) {
+  const session = useSyncExternalStore(subscribe, getSession)
   const [catalog, setCatalog] = useState<ReferenceCatalog | null>(null)
   const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [slots, setSlots] = useState<SlotState[]>(() => getTownSlots(townName))
+  const slots = slotStatesForTown(session, townId)
   const [openSlot, setOpenSlot] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const townTypeId =
+    findTownById(session, townId)?.town_type_id ?? NECROPOLIS_TOWN_TYPE_ID
 
   useEffect(() => {
-    setSlots(getTownSlots(townName))
     setOpenSlot(null)
     setMessage(null)
-  }, [townName])
+  }, [townId])
 
   useEffect(() => {
     let cancelled = false
@@ -100,29 +108,40 @@ export function TownManagement({
     }
   }, [])
 
-  const tryPay = (cost: Record<string, number>): boolean => {
-    const blocked = canAfford(wallet, cost)
-    if (blocked) {
-      setMessage(blocked)
+  const writeSlot = (
+    id: number,
+    next: SlotState,
+    cost: Record<number, number>,
+  ): boolean => {
+    let error: string | null = null
+    updateSession((current) => {
+      const town = findTownById(current, townId)
+      if (!town) {
+        error = 'This town is not in the game session.'
+        return current
+      }
+      const spent = spendResources(current, cost)
+      if (spent.error) {
+        error = spent.error
+        return current
+      }
+      return patchBuildingSlot(spent.session, town.id, id - 1, next)
+    })
+    if (error) {
+      setMessage(error)
       return false
     }
-    onWalletChange(deductCost(wallet, cost))
-    return true
-  }
-
-  const writeSlot = (id: number, next: SlotState) => {
-    setSlots(patchTownSlot(townName, id - 1, next))
     setMessage(null)
+    return true
   }
 
   const build = (id: number, building: BuildingRow) => {
     if (hasActedToday) {
       return
     }
-    if (!tryPay(buildingCost(building))) {
+    if (!writeSlot(id, { level: 1, buildingId: building.id }, buildingCost(building))) {
       return
     }
-    writeSlot(id, { level: 1, buildingId: building.id })
     onActed()
   }
 
@@ -131,10 +150,9 @@ export function TownManagement({
     if (!current || hasActedToday) {
       return
     }
-    if (!tryPay(buildingCost(next))) {
+    if (!writeSlot(id, { level: current.level + 1, buildingId: next.id }, buildingCost(next))) {
       return
     }
-    writeSlot(id, { level: current.level + 1, buildingId: next.id })
     onActed()
   }
 
@@ -142,10 +160,9 @@ export function TownManagement({
     if (hasActedToday) {
       return
     }
-    if (!tryPay(destroyCostOf(current))) {
+    if (!writeSlot(id, { level: 0, buildingId: null }, destroyCostOf(current))) {
       return
     }
-    writeSlot(id, { level: 0, buildingId: null })
     onActed()
   }
 
@@ -168,8 +185,8 @@ export function TownManagement({
         <p className="town-calendar">{calendarLabel}</p>
         <p className="town-resource-strip">
           {RESOURCES.map((resource) => (
-            <span key={resource.name}>
-              {formatResourceLine(resource.name, wallet[resource.name])}
+            <span key={resource.id}>
+              {formatResourceLine(resource, wallet[resource.id])}
             </span>
           ))}
         </p>
@@ -195,7 +212,7 @@ export function TownManagement({
             ? buildingById(catalog, state.buildingId)
             : null
           const placeholder = catalog
-            ? undesignedBuilding(catalog, id)
+            ? undesignedBuilding(catalog, id, townTypeId)
             : null
           const filename =
             state.level > 0
@@ -235,6 +252,7 @@ export function TownManagement({
           catalogError={catalogError}
           message={message}
           hasActedToday={hasActedToday}
+          townTypeId={townTypeId}
           onClose={() => {
             setOpenSlot(null)
             setMessage(null)
@@ -318,6 +336,7 @@ function BuildingPanel({
   catalogError,
   message,
   hasActedToday,
+  townTypeId,
   onClose,
   onBuild,
   onUpgrade,
@@ -329,6 +348,7 @@ function BuildingPanel({
   catalogError: string | null
   message: string | null
   hasActedToday: boolean
+  townTypeId: number
   onClose: () => void
   onBuild: (building: BuildingRow) => void
   onUpgrade: (next: BuildingRow) => void
@@ -339,7 +359,7 @@ function BuildingPanel({
     catalog != null ? buildingById(catalog, slotState.buildingId) : null
   const next =
     catalog != null && current != null
-      ? nextInChain(current, catalog, slotId)
+      ? nextInChain(current, catalog, slotId, townTypeId)
       : null
 
   return (
@@ -355,7 +375,7 @@ function BuildingPanel({
       ) : null}
       {!catalog ? (
         <p>Loading buildings…</p>
-      ) : isUndesignedSlot(catalog, slotId) ? (
+      ) : isUndesignedSlot(catalog, slotId, townTypeId) ? (
         <p>Not yet designed</p>
       ) : slotState.level === 0 ? (
         <EmptySlotActions
@@ -363,6 +383,7 @@ function BuildingPanel({
           army={army}
           catalog={catalog}
           hasActedToday={hasActedToday}
+          townTypeId={townTypeId}
           onBuild={onBuild}
         />
       ) : current ? (
@@ -395,16 +416,18 @@ function EmptySlotActions({
   army,
   catalog,
   hasActedToday,
+  townTypeId,
   onBuild,
 }: {
   slotId: number
   army: boolean
   catalog: ReferenceCatalog
   hasActedToday: boolean
+  townTypeId: number
   onBuild: (building: BuildingRow) => void
 }) {
   if (army) {
-    const options = armyOptions(catalog, slotId)
+    const options = armyOptions(catalog, slotId, townTypeId)
     if (options.length === 0) {
       return <p>No army buildings defined for this slot.</p>
     }
@@ -434,7 +457,7 @@ function EmptySlotActions({
       </div>
     )
   }
-  const root = genericRoot(genericSlotBuildings(catalog, slotId))
+  const root = genericRoot(genericSlotBuildings(catalog, slotId, townTypeId))
   if (!root) {
     return <p>No building defined for this slot.</p>
   }

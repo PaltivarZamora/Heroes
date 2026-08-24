@@ -1,24 +1,46 @@
-export const RESOURCES = [
-  { name: 'Gold', marker: 'G' },
-  { name: 'Wood', marker: 'W' },
-  { name: 'Ore', marker: 'O' },
-  { name: 'Ichor', marker: 'I' },
-  { name: 'Crystal', marker: 'C' },
-  { name: 'Sap', marker: 'S' },
-  { name: 'Ash', marker: 'A' },
-  { name: 'Aether', marker: 'E' },
-  { name: 'Incense', marker: 'N' },
-  { name: 'Brimstone', marker: 'B' },
-] as const
+export type ResourceDef = {
+  id: number
+  name: string
+  marker: string
+}
 
-export type ResourceName = (typeof RESOURCES)[number]['name']
+const MARKERS_BY_ID: Record<number, string> = {
+  1: 'G',
+  2: 'W',
+  3: 'O',
+  4: 'I',
+  5: 'C',
+  6: 'S',
+  7: 'A',
+  8: 'E',
+  9: 'N',
+  10: 'B',
+}
+
+export const GOLD_RESOURCE_ID = 1
+
+const FALLBACK_RESOURCES: ResourceDef[] = [
+  { id: 1, name: 'Gold', marker: 'G' },
+  { id: 2, name: 'Wood', marker: 'W' },
+  { id: 3, name: 'Ore', marker: 'O' },
+  { id: 4, name: 'Ichor', marker: 'I' },
+  { id: 5, name: 'Crystal', marker: 'C' },
+  { id: 6, name: 'Sap', marker: 'S' },
+  { id: 7, name: 'Ash', marker: 'A' },
+  { id: 8, name: 'Aether', marker: 'E' },
+  { id: 9, name: 'Incense', marker: 'N' },
+  { id: 10, name: 'Brimstone', marker: 'B' },
+]
+
+/** Live binding: catalog load replaces names from the resource table. */
+export let RESOURCES: ResourceDef[] = FALLBACK_RESOURCES
 
 export type ResourceEntry = {
   claimedMines: number
   stockpile: number
 }
 
-export type ResourceWallet = Record<ResourceName, ResourceEntry>
+export type ResourceWallet = Record<number, ResourceEntry>
 
 /** Neutral / unclaimed mine and pickup marker fill. */
 export const NEUTRAL_OBJECT_COLOR = 0x9e9e9e
@@ -31,22 +53,40 @@ export const YIELD_PER_MINE = 1
 
 /**
  * Placeholder starting stockpile so town construction is testable until a
- * starting-treasury brief exists.
+ * starting-treasury brief exists. Keyed by resource table id.
  */
-const STARTING_STOCKPILE: Partial<Record<ResourceName, number>> = {
-  Gold: 10000,
-  Wood: 20,
-  Ore: 20,
-  Ichor: 20,
-  Crystal: 10,
+const STARTING_STOCKPILE: Partial<Record<number, number>> = {
+  1: 10000,
+  2: 20,
+  3: 20,
+  4: 20,
+  5: 10,
+}
+
+export function applyResourceCatalog(rows: Array<{ id: number; name: string }>): void {
+  const next = rows
+    .filter((row) => Number.isInteger(row.id) && typeof row.name === 'string' && row.name)
+    .sort((a, b) => a.id - b.id)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      marker: MARKERS_BY_ID[row.id] ?? row.name.charAt(0).toUpperCase(),
+    }))
+  if (next.length > 0) {
+    RESOURCES = next
+  }
+}
+
+export function resourceById(id: number): ResourceDef | undefined {
+  return RESOURCES.find((resource) => resource.id === id)
 }
 
 export function emptyWallet(): ResourceWallet {
-  const wallet = {} as ResourceWallet
+  const wallet: ResourceWallet = {}
   for (const resource of RESOURCES) {
-    wallet[resource.name] = {
+    wallet[resource.id] = {
       claimedMines: 0,
-      stockpile: STARTING_STOCKPILE[resource.name] ?? 0,
+      stockpile: STARTING_STOCKPILE[resource.id] ?? 0,
     }
   }
   return wallet
@@ -58,42 +98,49 @@ export function formatAmount(n: number): string {
 }
 
 export function formatResourceLine(
-  name: ResourceName,
-  entry: ResourceEntry,
+  resource: ResourceDef,
+  entry: ResourceEntry | undefined,
 ): string {
-  const dailyYield = entry.claimedMines * YIELD_PER_MINE
-  return `${name} (${formatAmount(entry.claimedMines)}/${formatAmount(dailyYield)}) ${formatAmount(entry.stockpile)}`
+  const claimed = entry?.claimedMines ?? 0
+  const stockpile = entry?.stockpile ?? 0
+  const dailyYield = claimed * YIELD_PER_MINE
+  return `${resource.name} (${formatAmount(claimed)}/${formatAmount(dailyYield)}) ${formatAmount(stockpile)}`
 }
 
 export function formatResourceLines(wallet: ResourceWallet): string[] {
   return RESOURCES.map((resource) =>
-    formatResourceLine(resource.name, wallet[resource.name]),
+    formatResourceLine(resource, wallet[resource.id]),
   )
 }
 
-export function isResourceName(name: string): name is ResourceName {
-  return RESOURCES.some((resource) => resource.name === name)
+export function isKnownResourceId(id: number | null | undefined): id is number {
+  return typeof id === 'number' && RESOURCES.some((resource) => resource.id === id)
 }
 
 export function snapshotWallet(wallet: ResourceWallet): ResourceWallet {
   const next = emptyWallet()
   for (const resource of RESOURCES) {
-    next[resource.name] = { ...wallet[resource.name] }
+    const entry = wallet[resource.id]
+    if (entry) {
+      next[resource.id] = { ...entry }
+    }
   }
   return next
 }
 
 export function canAfford(
   wallet: ResourceWallet,
-  cost: Record<string, number>,
+  cost: Record<number, number> | Record<string, number>,
 ): string | null {
-  for (const [name, amount] of Object.entries(cost)) {
-    if (!isResourceName(name)) {
-      return `Unknown resource in cost: ${name}`
+  for (const [key, amount] of Object.entries(cost)) {
+    const id = Number(key)
+    const resource = resourceById(id)
+    if (!resource) {
+      return `Unknown resource in cost: ${key}`
     }
-    const have = wallet[name].stockpile
+    const have = wallet[id]?.stockpile ?? 0
     if (have < amount) {
-      return `Not enough ${name} (need ${formatAmount(amount)}, have ${formatAmount(have)})`
+      return `Not enough ${resource.name} (need ${formatAmount(amount)}, have ${formatAmount(have)})`
     }
   }
   return null
@@ -101,12 +148,13 @@ export function canAfford(
 
 export function deductCost(
   wallet: ResourceWallet,
-  cost: Record<string, number>,
+  cost: Record<number, number> | Record<string, number>,
 ): ResourceWallet {
   const next = snapshotWallet(wallet)
-  for (const [name, amount] of Object.entries(cost)) {
-    if (isResourceName(name)) {
-      next[name].stockpile -= amount
+  for (const [key, amount] of Object.entries(cost)) {
+    const id = Number(key)
+    if (next[id]) {
+      next[id].stockpile -= amount
     }
   }
   return next
@@ -114,7 +162,9 @@ export function deductCost(
 
 export function applyDailyTick(wallet: ResourceWallet): void {
   for (const resource of RESOURCES) {
-    const entry = wallet[resource.name]
-    entry.stockpile += entry.claimedMines * YIELD_PER_MINE
+    const entry = wallet[resource.id]
+    if (entry) {
+      entry.stockpile += entry.claimedMines * YIELD_PER_MINE
+    }
   }
 }

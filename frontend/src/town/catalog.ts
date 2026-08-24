@@ -1,6 +1,12 @@
-import { RESOURCES, formatAmount, isResourceName } from '../hex/resources'
+import {
+  GOLD_RESOURCE_ID,
+  RESOURCES,
+  applyResourceCatalog,
+  formatAmount,
+  resourceById,
+} from '../hex/resources'
 
-export type CostMap = Record<string, number>
+export type CostMap = Record<number, number>
 
 export type BuildingRow = {
   id: number
@@ -30,27 +36,74 @@ export type HeroTypeRow = {
   name: string
 }
 
+export type ResourceRow = {
+  id: number
+  name: string
+}
+
+export type TownRow = {
+  id: number
+  name: string
+}
+
 export type ReferenceCatalog = {
   building: BuildingRow[]
   unit: UnitRow[]
   hero_type: HeroTypeRow[]
+  resource: ResourceRow[]
+  town: TownRow[]
 }
 
 /** TBD until per-building destroy_cost values exist. */
-export const PLACEHOLDER_DESTROY_COST: CostMap = { Gold: 500 }
+export const PLACEHOLDER_DESTROY_COST: CostMap = { [GOLD_RESOURCE_ID]: 500 }
 
-const NECROPOLIS_TOWN_ID = 1
+function costKeyToId(key: string): number | null {
+  const asNumber = Number(key)
+  if (Number.isInteger(asNumber) && resourceById(asNumber)) {
+    return asNumber
+  }
+  const byName = RESOURCES.find((resource) => resource.name === key)
+  return byName ? byName.id : null
+}
+
+function asCost(value: CostMap | Record<string, number> | null | undefined): CostMap {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  const cost: CostMap = {}
+  for (const [key, amount] of Object.entries(value)) {
+    const n = Number(amount)
+    const id = costKeyToId(key)
+    if (id != null && Number.isFinite(n) && n !== 0) {
+      cost[id] = n
+    }
+  }
+  return cost
+}
 
 export async function fetchCatalog(): Promise<ReferenceCatalog> {
   const response = await fetch('/api/reference/catalog')
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`)
   }
-  const payload = (await response.json()) as Partial<ReferenceCatalog>
+  const payload = (await response.json()) as Partial<ReferenceCatalog> & {
+    resource?: ResourceRow[]
+    town?: TownRow[]
+  }
+  applyResourceCatalog(Array.isArray(payload.resource) ? payload.resource : [])
+  const building = (Array.isArray(payload.building) ? payload.building : []).map(
+    (row) => ({
+      ...row,
+      cost: asCost(row.cost),
+      destroy_cost: asCost(row.destroy_cost),
+    }),
+  )
   return {
-    building: Array.isArray(payload.building) ? payload.building : [],
+    building,
     unit: Array.isArray(payload.unit) ? payload.unit : [],
     hero_type: Array.isArray(payload.hero_type) ? payload.hero_type : [],
+    resource: Array.isArray(payload.resource) ? payload.resource : [],
+    town: Array.isArray(payload.town) ? payload.town : [],
   }
 }
 
@@ -69,20 +122,6 @@ export function armyTier(slotId: number): number {
   return slotId - 3
 }
 
-function asCost(value: CostMap | null | undefined): CostMap {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {}
-  }
-  const cost: CostMap = {}
-  for (const [name, amount] of Object.entries(value)) {
-    const n = Number(amount)
-    if (Number.isFinite(n) && n !== 0) {
-      cost[name] = n
-    }
-  }
-  return cost
-}
-
 export function buildingCost(building: BuildingRow): CostMap {
   return asCost(building.cost)
 }
@@ -94,15 +133,19 @@ export function destroyCostOf(building: BuildingRow): CostMap {
 
 export function formatCost(cost: CostMap): string {
   const parts: string[] = []
+  const seen = new Set<number>()
   for (const resource of RESOURCES) {
-    const amount = cost[resource.name]
+    const amount = cost[resource.id]
     if (amount) {
+      seen.add(resource.id)
       parts.push(`${formatAmount(amount)} ${resource.name}`)
     }
   }
-  for (const [name, amount] of Object.entries(cost)) {
-    if (amount && !isResourceName(name)) {
-      parts.push(`${formatAmount(amount)} ${name}`)
+  for (const [key, amount] of Object.entries(cost)) {
+    const id = Number(key)
+    if (amount && !seen.has(id)) {
+      const resource = resourceById(id)
+      parts.push(`${formatAmount(amount)} ${resource?.name ?? `#${key}`}`)
     }
   }
   return parts.length > 0 ? parts.join(', ') : 'Free'
@@ -159,27 +202,31 @@ export function heroTypeName(
 function buildingsInSlot(
   catalog: ReferenceCatalog,
   slotId: number,
+  townTypeId: number,
 ): BuildingRow[] {
   return catalog.building.filter(
-    (row) => row.town_id === NECROPOLIS_TOWN_ID && row.slot_num === slotId,
+    (row) => row.town_id === townTypeId && row.slot_num === slotId,
   )
 }
 
 export function undesignedBuilding(
   catalog: ReferenceCatalog,
   slotId: number,
+  townTypeId: number,
 ): BuildingRow | null {
   return (
-    buildingsInSlot(catalog, slotId).find((row) => row.effect_type === 'TBD') ??
-    null
+    buildingsInSlot(catalog, slotId, townTypeId).find(
+      (row) => row.effect_type === 'TBD',
+    ) ?? null
   )
 }
 
 export function isUndesignedSlot(
   catalog: ReferenceCatalog,
   slotId: number,
+  townTypeId: number,
 ): boolean {
-  const rows = buildingsInSlot(catalog, slotId)
+  const rows = buildingsInSlot(catalog, slotId, townTypeId)
   if (rows.some((row) => row.effect_type === 'TBD')) {
     return true
   }
@@ -189,15 +236,19 @@ export function isUndesignedSlot(
 export function armyOptions(
   catalog: ReferenceCatalog,
   slotId: number,
+  townTypeId: number,
 ): BuildingRow[] {
-  return buildingsInSlot(catalog, slotId).filter((row) => row.class_id != null)
+  return buildingsInSlot(catalog, slotId, townTypeId).filter(
+    (row) => row.class_id != null,
+  )
 }
 
 export function genericSlotBuildings(
   catalog: ReferenceCatalog,
   slotId: number,
+  townTypeId: number,
 ): BuildingRow[] {
-  return buildingsInSlot(catalog, slotId)
+  return buildingsInSlot(catalog, slotId, townTypeId)
     .filter((row) => row.class_id == null)
     .sort((a, b) => a.id - b.id)
 }
@@ -214,10 +265,11 @@ export function nextInChain(
   current: BuildingRow,
   catalog: ReferenceCatalog,
   slotId: number,
+  townTypeId: number,
 ): BuildingRow | null {
   const group = isArmySlot(slotId)
-    ? armyOptions(catalog, slotId)
-    : genericSlotBuildings(catalog, slotId)
+    ? armyOptions(catalog, slotId, townTypeId)
+    : genericSlotBuildings(catalog, slotId, townTypeId)
   const child = group.find((row) => row.bldg_prereq_id === current.id)
   if (child) {
     return child

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { HexMap } from './hex/HexMap'
 import {
   formatDebugText,
@@ -13,23 +13,25 @@ import {
   type HexScaleName,
 } from './hex/hexScale'
 import {
-  emptyWallet,
   formatResourceLine,
   formatResourceLines,
   RESOURCES,
   type ResourceWallet,
 } from './hex/resources'
-import {
-  advanceDay,
-  formatCalendar,
-  sameCalendar,
-  startCalendar,
-  type Calendar,
-} from './hex/calendar'
+import { advanceDay, formatCalendar } from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
+import { fetchCatalog } from './town/catalog'
+import { OptionsMenu } from './options/OptionsMenu'
+import { getSession, subscribe, updateSession } from './session/store'
+import {
+  hasTownBuiltToday,
+  markTownBuiltToday,
+  walletFromSession,
+} from './session/accessors'
 import './App.css'
 
 function App() {
+  const session = useSyncExternalStore(subscribe, getSession)
   const [hexScale, setHexScale] = useState<HexScaleName>(DEFAULT_HEX_SCALE)
   const [mapInfo, setMapInfo] = useState<{
     width: number
@@ -37,37 +39,50 @@ function App() {
     seed: number
   } | null>(null)
   const [hero, setHero] = useState<HeroHudState | null>(null)
-  const [wallet, setWallet] = useState<ResourceWallet>(emptyWallet)
+  const wallet = walletFromSession(session)
   const onMapInfo = useCallback(
     (info: { width: number; height: number; seed: number }) => {
       setMapInfo(info)
+      updateSession((current) => {
+        const currentName = current.game.name.trim()
+        const keepName = currentName !== '' && currentName !== 'Test Game'
+        return {
+          ...current,
+          game: {
+            ...current.game,
+            seed: info.seed,
+            name: keepName ? current.game.name : `Random ${info.seed}`,
+          },
+        }
+      })
     },
     [],
   )
   const onHeroState = useCallback((state: HeroHudState) => {
     setHero(state)
   }, [])
-  const onResources = useCallback((next: ResourceWallet) => {
-    setWallet(next)
+  const onResources = useCallback((_next: ResourceWallet) => {
+    // Player.resources is the source of truth; HexMap writes it directly.
   }, [])
-  const [welcomeTown, setWelcomeTown] = useState<string | null>(null)
+  const [welcomeTown, setWelcomeTown] = useState<{
+    id: string
+    name: string
+  } | null>(null)
+  const [mapEpoch, setMapEpoch] = useState(0)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
-  const [calendar, setCalendar] = useState(startCalendar)
-  const [lastTownAction, setLastTownAction] = useState<
-    Record<string, Calendar>
-  >({})
-  const onTownWelcome = useCallback((townName: string) => {
-    setWelcomeTown(townName)
+  const calendar = session.game.calendar
+  const onTownWelcome = useCallback((townName: string, townId: string) => {
+    setWelcomeTown({ id: townId, name: townName })
   }, [])
   const onEndDay = useCallback(() => {
-    setCalendar((current) => advanceDay(current))
-  }, [])
-  const onTownActed = useCallback((townName: string) => {
-    setLastTownAction((current) => ({
+    updateSession((current) => ({
       ...current,
-      [townName]: { ...calendar },
+      game: { ...current.game, calendar: advanceDay(current.game.calendar) },
     }))
-  }, [calendar])
+  }, [])
+  const onTownActed = useCallback((townId: string) => {
+    updateSession((current) => markTownBuiltToday(current, townId))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -96,6 +111,7 @@ function App() {
       }
     }
     void loadStatus()
+    void fetchCatalog().catch(() => {})
     return () => {
       cancelled = true
     }
@@ -109,9 +125,9 @@ function App() {
   )
   const resourceLines = formatResourceLines(wallet)
   const calendarLabel = formatCalendar(calendar)
-  const lastAction = welcomeTown ? lastTownAction[welcomeTown] : undefined
-  const hasActedToday =
-    lastAction != null && sameCalendar(lastAction, calendar)
+  const hasActedToday = welcomeTown
+    ? hasTownBuiltToday(session, welcomeTown.id)
+    : false
 
   const debugText = formatDebugText({
     mapSize: mapLabel,
@@ -132,6 +148,12 @@ function App() {
 
   return (
     <main className="app">
+      <OptionsMenu
+        onLoaded={() => {
+          setWelcomeTown(null)
+          setMapEpoch((n) => n + 1)
+        }}
+      />
       {dataStatus && !dataStatus.ok ? (
         <div className="data-load-banner" role="alert">
           Data load error — check debug panel
@@ -160,13 +182,14 @@ function App() {
         </div>
         <p className="resource-debug">
           {RESOURCES.map((resource) => (
-            <span key={resource.name}>
-              {formatResourceLine(resource.name, wallet[resource.name])}
+            <span key={resource.id}>
+              {formatResourceLine(resource, wallet[resource.id])}
             </span>
           ))}
         </p>
       </header>
       <HexMap
+        key={mapEpoch}
         hexSize={hexSize}
         wallet={wallet}
         onMapInfo={onMapInfo}
@@ -177,13 +200,14 @@ function App() {
       />
       {welcomeTown ? (
         <TownManagement
-          townName={welcomeTown}
+          key={welcomeTown.id}
+          townId={welcomeTown.id}
+          townName={welcomeTown.name}
           wallet={wallet}
-          onWalletChange={setWallet}
           onExit={() => setWelcomeTown(null)}
           calendarLabel={calendarLabel}
           hasActedToday={hasActedToday}
-          onActed={() => onTownActed(welcomeTown)}
+          onActed={() => onTownActed(welcomeTown.id)}
           visitingHeroName={HERO_MARKER_LABEL}
         />
       ) : null}

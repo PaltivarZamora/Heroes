@@ -17,8 +17,6 @@ import {
 import { hexDistance } from './pathfinding'
 import { type HeroHudState } from './debug'
 import {
-  applyDailyTick,
-  isResourceName,
   NEUTRAL_OBJECT_COLOR,
   PICKUP_AMOUNT,
   snapshotWallet,
@@ -31,6 +29,19 @@ import {
 } from './terrainTextures'
 import { buildWorld, fetchTestGrid, getTile, isExplored, markExplored, TERRAIN_COLORS } from './world'
 import type { MapObjectData, TestGridResponse } from './types'
+import { mapObjectResourceId, mapObjectTownTypeId } from './types'
+import { getSession, updateSession } from '../session/store'
+import { addHumanHero, hydrateMapObjects } from '../session/create'
+import {
+  applyMineIncome,
+  claimMine,
+  claimTown,
+  collectPickup,
+  findNodeAt,
+  findTownAt,
+  syncHero,
+  walletFromSession,
+} from '../session/accessors'
 
 type HexMapProps = {
   hexSize: number
@@ -38,11 +49,27 @@ type HexMapProps = {
   onMapInfo: (info: { width: number; height: number; seed: number }) => void
   onHeroState: (state: HeroHudState) => void
   onResources: (wallet: ResourceWallet) => void
-  onTownWelcome: (townName: string) => void
+  onTownWelcome: (townName: string, townId: string) => void
   onEndDay: () => void
 }
 
 type HeroState = HeroHudState
+
+let cachedGrid: TestGridResponse | null = null
+
+export function clearCachedGrid(): void {
+  cachedGrid = null
+}
+
+function gridHasResourceIds(grid: TestGridResponse): boolean {
+  const nodes = (grid.objects ?? []).filter(
+    (obj) => obj.kind === 'mine' || obj.kind === 'pickup',
+  )
+  return (
+    nodes.length === 0 ||
+    nodes.every((obj) => mapObjectResourceId(obj) != null)
+  )
+}
 
 /** Unexplored overlay — very dark grey, not pure black. */
 const UNEXPLORED_COLOR = 0x3a3a3a
@@ -114,9 +141,11 @@ export function HexMap({
     let moving = false
 
     void (async () => {
-      if (!tilesRef.current) {
-        tilesRef.current = await fetchTestGrid()
+      if (!cachedGrid || !gridHasResourceIds(cachedGrid)) {
+        const savedSeed = getSession().game.seed
+        cachedGrid = await fetchTestGrid(savedSeed > 0 ? savedSeed : undefined)
       }
+      tilesRef.current = cachedGrid
       const { tiles, seed, objects } = tilesRef.current
       if (cancelled || tiles.length === 0) {
         return
@@ -126,13 +155,36 @@ export function HexMap({
       onMapInfo({ width, height, seed })
 
       if (!heroRef.current) {
-        const start = findPassableStart(grid)
-        heroRef.current = {
-          q: start.q,
-          r: start.r,
-          remaining: MAX_MOVEMENT_POINTS,
+        const existing = getSession().heroes[0]
+        if (existing) {
+          heroRef.current = {
+            q: existing.position.q,
+            r: existing.position.r,
+            remaining: existing.movement_remaining,
+          }
+        } else {
+          const start = findPassableStart(grid)
+          heroRef.current = {
+            q: start.q,
+            r: start.r,
+            remaining: MAX_MOVEMENT_POINTS,
+          }
         }
       }
+      const spawned = heroRef.current
+      if (!spawned) {
+        return
+      }
+      updateSession((current) =>
+        addHumanHero(
+          hydrateMapObjects(
+            { ...current, game: { ...current.game, seed } },
+            objects ?? [],
+          ),
+          { q: spawned.q, r: spawned.r },
+        ),
+      )
+      walletRef.current = walletFromSession(getSession())
       onHeroState({
         q: heroRef.current.q,
         r: heroRef.current.r,
@@ -224,13 +276,17 @@ export function HexMap({
       }
 
       const addObjectView = (obj: MapObjectData) => {
-        if (obj.kind === 'pickup' && obj.collected) {
+        const sessionNow = getSession()
+        const node = findNodeAt(sessionNow, obj.q, obj.r)
+        if (obj.kind === 'pickup' && (obj.collected || node?.collected)) {
           return
         }
         const view = new Container()
         const objectBadge = new Graphics()
+        const town = obj.kind === 'town' ? findTownAt(sessionNow, obj.q, obj.r) : undefined
         const owned =
-          (obj.kind === 'mine' || obj.kind === 'town') && !!obj.claimed
+          (obj.kind === 'mine' && (!!obj.claimed || node?.player_id != null)) ||
+          (obj.kind === 'town' && (!!obj.claimed || town?.player_id != null))
         paintObjectBadge(objectBadge, owned)
         const objectLabel = new Text({
           text: obj.marker,
@@ -271,35 +327,62 @@ export function HexMap({
         }
         const obj = entry.data
         if (obj.kind === 'town') {
+          updateSession((current) =>
+            claimTown(current, q, r, {
+              name: obj.name ?? undefined,
+              townTypeId: mapObjectTownTypeId(obj),
+            }),
+          )
           if (!obj.claimed) {
             obj.claimed = true
             paintObjectBadge(entry.badge, true)
             entry.label.style.fill = '#ffffff'
           }
-          onTownWelcome(obj.name?.trim() || 'Town')
+          const town = findTownAt(getSession(), q, r)
+          onTownWelcome(
+            town?.name ?? (obj.name?.trim() || 'Town'),
+            town?.id ?? '',
+          )
           return
         }
-        if (!isResourceName(entry.data.resource)) {
-          return
-        }
-        const resource = entry.data.resource
-        if (obj.kind === 'pickup') {
-          if (obj.collected) {
+
+        const node = findNodeAt(getSession(), q, r)
+        const resourceId = mapObjectResourceId(obj) ?? node?.resource_id
+        const kind = obj.kind === 'pickup' || node?.kind === 'pickup' ? 'pickup' : obj.kind
+
+        if (kind === 'pickup') {
+          if (obj.collected || node?.collected) {
+            return
+          }
+          if (typeof resourceId !== 'number') {
             return
           }
           obj.collected = true
-          walletRef.current[resource].stockpile += PICKUP_AMOUNT
+          updateSession((current) =>
+            collectPickup(current, q, r, resourceId, PICKUP_AMOUNT),
+          )
+          walletRef.current = walletFromSession(getSession())
           objectLayer.removeChild(entry.view)
           entry.view.destroy({ children: true })
           objectByKey.delete(key)
           emitResources()
           return
         }
-        if (obj.claimed) {
+
+        if (obj.kind !== 'mine' && node?.kind !== 'mine') {
+          return
+        }
+        if (obj.claimed || node?.player_id != null) {
+          if (!obj.claimed && node?.player_id != null) {
+            obj.claimed = true
+            paintObjectBadge(entry.badge, true)
+            entry.label.style.fill = '#ffffff'
+          }
           return
         }
         obj.claimed = true
-        walletRef.current[resource].claimedMines += 1
+        updateSession((current) => claimMine(current, q, r, resourceId))
+        walletRef.current = walletFromSession(getSession())
         paintObjectBadge(entry.badge, true)
         entry.label.style.fill = '#ffffff'
         emitResources()
@@ -502,6 +585,17 @@ export function HexMap({
               r: heroRef.current.r,
               remaining: heroRef.current.remaining,
             })
+            const moved = heroRef.current
+            if (!moved) {
+              break
+            }
+            updateSession((current) =>
+              syncHero(
+                current,
+                { q: moved.q, r: moved.r },
+                moved.remaining,
+              ),
+            )
             placeMarker()
             exploreAround(heroRef.current)
             resolveHex(heroRef.current.q, heroRef.current.r)
@@ -607,7 +701,20 @@ export function HexMap({
               r: heroRef.current.r,
               remaining: heroRef.current.remaining,
             })
-            applyDailyTick(walletRef.current)
+            const resting = heroRef.current
+            if (!resting) {
+              return
+            }
+            updateSession((current) =>
+              applyMineIncome(
+                syncHero(
+                  current,
+                  { q: resting.q, r: resting.r },
+                  resting.remaining,
+                ),
+              ),
+            )
+            walletRef.current = walletFromSession(getSession())
             emitResources()
             onEndDayRef.current()
             return

@@ -60,9 +60,11 @@ export function resetExplored(): void {
   explored = new Set()
 }
 
-export async function fetchTestGrid(): Promise<TestGridResponse> {
+export async function fetchTestGrid(seed?: number): Promise<TestGridResponse> {
   try {
-    const response = await fetch('/api/map/test-grid')
+    const query =
+      seed != null && seed > 0 ? `?seed=${encodeURIComponent(String(seed))}` : ''
+    const response = await fetch(`/api/map/test-grid${query}`)
     if (!response.ok) {
       console.log('Failed to fetch test grid:', response.status)
       return { seed: 0, tiles: [], objects: [] }

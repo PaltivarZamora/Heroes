@@ -1,6 +1,7 @@
 package com.heroesofyendor;
 
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -13,7 +14,10 @@ public class MapController {
     }
 
     @GetMapping("/api/map/test-grid")
-    public TestGridResponse testGrid() {
-        return TestGrid.generate(referenceData);
+    public TestGridResponse testGrid(@RequestParam(required = false) Integer seed) {
+        if (seed == null) {
+            return TestGrid.generate(referenceData);
+        }
+        return TestGrid.generate(seed, referenceData);
     }
 }

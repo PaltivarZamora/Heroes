@@ -2,6 +2,7 @@ package com.heroesofyendor;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ final class TestGrid {
     static final int MINES_PER_RESOURCE = 2;
     static final int PICKUPS_PER_RESOURCE = 2;
     static final int TOWN_COUNT = 5;
+    static final int START_TOWN_TYPE_ID = 1;
 
     /** Same offset cell as frontend `HERO_START_OFFSET` (Small 36×36 center). */
     static final int HERO_START_COL = 18;
@@ -69,24 +71,29 @@ final class TestGrid {
         TownNameSession names = TownNameSession.from(data, rng);
         List<MapObjectData> objects = new ArrayList<>();
         int placed = 0;
-        String startName = names.takePreferredStart(rng);
-        if (startName != null && placeStartTown(objects, passable, startName, rng)) {
+        TownPick start = names.takePreferredStart(rng);
+        if (start != null && placeStartTown(objects, passable, start, rng)) {
             placed = 1;
         }
         Collections.shuffle(passable, rng);
         int i = 0;
-        for (Resource resource : Resource.values()) {
+        for (Map<String, Object> row : resourceRows(data)) {
+            Integer resourceId = intId(row, "id");
+            if (resourceId == null) {
+                continue;
+            }
+            String resourceName = stringVal(row, "name");
             for (int n = 0; n < MINES_PER_RESOURCE; n++) {
                 if (i >= passable.size()) {
                     return objects;
                 }
-                objects.add(objectAt(passable.get(i++), "mine", resource));
+                objects.add(objectAt(passable.get(i++), "mine", resourceId, resourceName));
             }
             for (int n = 0; n < PICKUPS_PER_RESOURCE; n++) {
                 if (i >= passable.size()) {
                     return objects;
                 }
-                objects.add(objectAt(passable.get(i++), "pickup", resource));
+                objects.add(objectAt(passable.get(i++), "pickup", resourceId, resourceName));
             }
         }
         placeTowns(objects, passable, i, names, rng, placed);
@@ -96,7 +103,7 @@ final class TestGrid {
     private static boolean placeStartTown(
             List<MapObjectData> objects,
             List<int[]> passable,
-            String name,
+            TownPick start,
             Random rng) {
         int startQ = HERO_START_COL;
         int startR = HERO_START_ROW - offsetFromZero(HERO_START_COL);
@@ -109,7 +116,7 @@ final class TestGrid {
         int row = chosen[1];
         int q = col;
         int r = row - offsetFromZero(col);
-        objects.add(new MapObjectData(q, r, "town", "", "T1", name));
+        objects.add(new MapObjectData(q, r, "town", null, "T1", start.name(), start.townTypeId()));
         return true;
     }
 
@@ -175,7 +182,7 @@ final class TestGrid {
             int row = colRow[1];
             int q = col;
             int r = row - offsetFromZero(col);
-            objects.add(new MapObjectData(q, r, "town", "", "T1", name));
+            objects.add(new MapObjectData(q, r, "town", null, "T1", name, townId));
             placed++;
         }
     }
@@ -194,7 +201,7 @@ final class TestGrid {
 
         static TownNameSession from(ReferenceData data, Random rng) {
             List<Map<String, Object>> towns = data.rows("town");
-            int startTownId = findTownId(towns, "Necropolis");
+            int startTownId = resolveStartTownTypeId(towns);
             TownNameSession session = new TownNameSession(startTownId);
             for (Map<String, Object> row : data.rows("town_name_pool")) {
                 Object idObj = row.get("town_id");
@@ -214,7 +221,7 @@ final class TestGrid {
             return session;
         }
 
-        String takePreferredStart(Random rng) {
+        TownPick takePreferredStart(Random rng) {
             int townId = startTownId;
             if (!hasName(townId)) {
                 Integer any = pickTownId(rng);
@@ -223,10 +230,17 @@ final class TestGrid {
                 }
                 townId = any;
             }
-            return take(townId);
+            String name = take(townId);
+            if (name == null) {
+                return null;
+            }
+            return new TownPick(townId, name);
         }
 
         Integer pickTownId(Random rng) {
+            if (hasName(startTownId)) {
+                return startTownId;
+            }
             List<Integer> ids = new ArrayList<>();
             for (Map.Entry<Integer, List<String>> entry : remaining.entrySet()) {
                 if (!entry.getValue().isEmpty()) {
@@ -253,27 +267,51 @@ final class TestGrid {
             return names != null && !names.isEmpty();
         }
 
-        private static int findTownId(List<Map<String, Object>> towns, String typeName) {
+        private static int resolveStartTownTypeId(List<Map<String, Object>> towns) {
             for (Map<String, Object> row : towns) {
-                if (typeName.equalsIgnoreCase(String.valueOf(row.get("name")))
-                        && row.get("id") instanceof Number id) {
-                    return id.intValue();
+                if (row.get("id") instanceof Number id && id.intValue() == START_TOWN_TYPE_ID) {
+                    return START_TOWN_TYPE_ID;
                 }
             }
             if (!towns.isEmpty() && towns.get(0).get("id") instanceof Number id) {
                 return id.intValue();
             }
-            return 1;
+            return START_TOWN_TYPE_ID;
         }
     }
 
-    private static MapObjectData objectAt(int[] colRow, String kind, Resource resource) {
+    private record TownPick(int townTypeId, String name) {}
+
+    private static List<Map<String, Object>> resourceRows(ReferenceData data) {
+        List<Map<String, Object>> rows = new ArrayList<>(data.rows("resource"));
+        rows.sort(Comparator.comparingInt(row -> {
+            Integer id = intId(row, "id");
+            return id == null ? Integer.MAX_VALUE : id;
+        }));
+        return rows;
+    }
+
+    private static Integer intId(Map<String, Object> row, String key) {
+        Object value = row.get(key);
+        return value instanceof Number n ? n.intValue() : null;
+    }
+
+    private static String stringVal(Map<String, Object> row, String key) {
+        Object value = row.get(key);
+        return value == null ? "" : value.toString();
+    }
+
+    private static MapObjectData objectAt(
+            int[] colRow, String kind, int resourceId, String resourceName) {
         int col = colRow[0];
         int row = colRow[1];
         int q = col;
         int r = row - offsetFromZero(col);
-        String marker = "mine".equals(kind) ? resource.mineMarker() : resource.pickupMarker();
-        return new MapObjectData(q, r, kind, resource.displayName(), marker, null);
+        String marker =
+                "mine".equals(kind)
+                        ? Resource.mineMarker(resourceId, resourceName)
+                        : Resource.pickupMarker(resourceId, resourceName);
+        return new MapObjectData(q, r, kind, resourceId, marker, null, null);
     }
 
     private static Terrain[][] paintSegments(int width, int height, Random rng) {

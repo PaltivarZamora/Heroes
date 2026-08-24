@@ -32,3 +32,8 @@ export function formatCalendar(calendar: Calendar): string {
 export function sameCalendar(a: Calendar, b: Calendar): boolean {
   return a.day === b.day && a.week === b.week && a.month === b.month
 }
+
+/** Monotonic day index for last_build_day comparisons (13×4×7 calendar). */
+export function calendarDayNumber(calendar: Calendar): number {
+  return (calendar.month - 1) * 28 + (calendar.week - 1) * 7 + calendar.day
+}
