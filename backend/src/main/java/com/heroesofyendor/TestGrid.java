@@ -63,7 +63,7 @@ final class TestGrid {
         List<int[]> passable = new ArrayList<>();
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
-                if (cells[row][col].movementCost() != null) {
+                if (cells[row][col].isPassable()) {
                     passable.add(new int[] {col, row});
                 }
             }
@@ -375,13 +375,24 @@ final class TestGrid {
 
     /** Adjacent segments in a row use different types so one terrain cannot wall the row. */
     private static Terrain pickTerrain(Random rng, Terrain avoid) {
-        Terrain[] all = Terrain.values();
-        int index = rng.nextInt(all.length);
-        Terrain picked = all[index];
-        if (avoid != null && picked == avoid) {
-            picked = all[(index + 1) % all.length];
+        Terrain[] pool = generationPool();
+        int index = rng.nextInt(pool.length);
+        Terrain picked = pool[index];
+        if (avoid != null && picked == avoid && pool.length > 1) {
+            picked = pool[(index + 1) % pool.length];
         }
         return picked;
+    }
+
+    /** Temporary: Barrier and Void are left out of new maps. */
+    private static Terrain[] generationPool() {
+        List<Terrain> pool = new ArrayList<>();
+        for (Terrain terrain : Terrain.values()) {
+            if (terrain.inGenerationPool()) {
+                pool.add(terrain);
+            }
+        }
+        return pool.toArray(Terrain[]::new);
     }
 
     /**

@@ -534,6 +534,21 @@
   background: #333;
 }
 
+.options-choices button:disabled {
+  cursor: wait;
+  color: #aaa;
+}
+
+.options-notice {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border: 1px solid #2e7d32;
+  border-radius: 4px;
+  background: #1b3d1e;
+  color: #c8e6c9;
+  font: 13px/1.4 system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
 .options-modal {
   position: fixed;
   inset: 0;

@@ -292,6 +292,7 @@ function App() {
           }
           setMapEpoch((n) => n + 1)
         }}
+        onDataStatus={setDataStatus}
       />
       {dataStatus && !dataStatus.ok ? (
         <div className="data-load-banner" role="alert">

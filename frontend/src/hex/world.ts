@@ -51,6 +51,40 @@ export function markExplored(q: number, r: number): void {
   explored.add(coordKey(q, r))
 }
 
+export function getExploredHexes(): { q: number; r: number }[] {
+  const hexes: { q: number; r: number }[] = []
+  for (const key of explored) {
+    const comma = key.indexOf(',')
+    if (comma < 0) {
+      continue
+    }
+    const q = Number(key.slice(0, comma))
+    const r = Number(key.slice(comma + 1))
+    if (Number.isFinite(q) && Number.isFinite(r)) {
+      hexes.push({ q, r })
+    }
+  }
+  return hexes
+}
+
+export function restoreExplored(
+  hexes: readonly { q: number; r: number }[] | null | undefined,
+): void {
+  explored = new Set()
+  if (!hexes) {
+    return
+  }
+  for (const hex of hexes) {
+    if (
+      hex &&
+      Number.isFinite(hex.q) &&
+      Number.isFinite(hex.r)
+    ) {
+      explored.add(coordKey(hex.q, hex.r))
+    }
+  }
+}
+
 /** Explored and passable — A* will not enter fog or impassable terrain. */
 export function isWalkable(q: number, r: number): boolean {
   return isExplored(q, r) && isPassable(q, r)

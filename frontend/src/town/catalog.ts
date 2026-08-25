@@ -5,6 +5,7 @@ import {
   formatAmount,
   resourceById,
 } from '../hex/resources'
+import type { DataStatus } from '../hex/debug'
 
 export type CostMap = Record<number, number>
 
@@ -152,13 +153,42 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     town: Array.isArray(payload.town) ? payload.town : [],
   }
   cachedCatalog = catalog
+  emitCatalog()
   return catalog
 }
 
 let cachedCatalog: ReferenceCatalog | null = null
+const catalogListeners = new Set<() => void>()
+
+function emitCatalog(): void {
+  for (const listener of catalogListeners) {
+    listener()
+  }
+}
+
+export function subscribeCatalog(listener: () => void): () => void {
+  catalogListeners.add(listener)
+  return () => {
+    catalogListeners.delete(listener)
+  }
+}
 
 export function getCachedCatalog(): ReferenceCatalog | null {
   return cachedCatalog
+}
+
+export async function reloadReferenceData(): Promise<DataStatus> {
+  const response = await fetch('/api/system/reload-reference-data', {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  const payload = (await response.json()) as DataStatus
+  return {
+    ok: payload.ok,
+    tables: Array.isArray(payload.tables) ? payload.tables : [],
+  }
 }
 
 export function buildingGrowth(building: BuildingRow | null): number {
@@ -173,6 +203,55 @@ export function buildingGrowth(building: BuildingRow | null): number {
     return Math.floor(weekly)
   }
   return 0
+}
+
+function asPositiveInt(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    return null
+  }
+  return Math.floor(n)
+}
+
+function payloadResourceId(payload: Record<string, unknown>): number | null {
+  const raw = payload.resource_id
+  if (typeof raw === 'number' && Number.isInteger(raw) && resourceById(raw)) {
+    return raw
+  }
+  if (typeof raw === 'string' && resourceById(Number(raw))) {
+    return Number(raw)
+  }
+  const name = payload.resource_name
+  if (typeof name !== 'string' || name.trim() === '') {
+    return null
+  }
+  const match = RESOURCES.find(
+    (resource) => resource.name.toLowerCase() === name.trim().toLowerCase(),
+  )
+  return match?.id ?? null
+}
+
+/** Weekly grant from a built `resource_yield` building, or null if payload is incomplete. */
+export function resourceYieldGrant(
+  building: BuildingRow | null,
+): { resourceId: number; amount: number } | null {
+  if (!building || building.effect_type !== 'resource_yield' || !building.payload) {
+    return null
+  }
+  const amount = asPositiveInt(building.payload.amount)
+  const resourceId = payloadResourceId(building.payload)
+  if (amount == null || resourceId == null) {
+    return null
+  }
+  return { resourceId, amount }
+}
+
+/** Weekly gold from a built `defense_tier` building; 0 if `gold_income` is missing. */
+export function defenseGoldIncome(building: BuildingRow | null): number {
+  if (!building || building.effect_type !== 'defense_tier' || !building.payload) {
+    return 0
+  }
+  return asPositiveInt(building.payload.gold_income) ?? 0
 }
 
 export function unitCost(unit: UnitRow | null): CostMap {
@@ -286,39 +365,9 @@ export function formatCost(cost: CostMap): string {
   return parts.length > 0 ? parts.join(', ') : 'Free'
 }
 
-export function payloadNote(payload: Record<string, unknown> | null): string {
-  if (!payload) {
-    return ''
-  }
-  if (typeof payload.yield === 'string') {
-    return payload.yield
-  }
-  if (typeof payload.note === 'string') {
-    return payload.note
-  }
-  return ''
-}
-
-export function effectLine(building: BuildingRow, units: UnitRow[]): string {
-  const payload = building.payload
-  switch (building.effect_type) {
-    case 'unit_unlock': {
-      const unit = units.find((row) => row.bldg_id === building.id)
-      const growth = buildingGrowth(building)
-      return `Trains ${growth > 0 ? String(growth) : '?'} ${unit?.name ?? 'units'} per week`
-    }
-    case 'resource_yield':
-      return payloadNote(payload) || 'Produces resources'
-    case 'defense_tier':
-      return 'Increases town defense'
-    case 'passive_buff':
-    case 'recruitment':
-      return payloadNote(payload) || (building.effect_type === 'recruitment'
-        ? 'Hero recruitment'
-        : 'Town bonus')
-    default:
-      return payloadNote(payload)
-  }
+export function effectLine(building: BuildingRow): string {
+  const display = building.payload?.display
+  return typeof display === 'string' ? display : ''
 }
 
 export function heroTypeName(

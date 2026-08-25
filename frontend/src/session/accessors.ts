@@ -13,7 +13,9 @@ import type { SlotState } from '../town/townSlots'
 import {
   buildingById,
   buildingGrowth,
+  defenseGoldIncome,
   isArmySlot,
+  resourceYieldGrant,
   scaleCost,
   unitCost,
   unitForBuilding,
@@ -327,7 +329,7 @@ export function applyWeeklyGrowth(
   session: GameSession,
   catalog: ReferenceCatalog,
 ): GameSession {
-  return {
+  const grown: GameSession = {
     ...session,
     building_states: session.building_states.map((row) => {
       if (row.level < 1 || row.building_id == null || !isArmySlot(row.slot_num)) {
@@ -338,6 +340,68 @@ export function applyWeeklyGrowth(
         return row
       }
       return { ...row, recruit_qty: row.recruit_qty + growth }
+    }),
+  }
+  return applyWeeklyBuildingIncome(grown, catalog)
+}
+
+function addGrant(
+  grants: Map<string, Record<number, number>>,
+  playerId: string,
+  resourceId: number,
+  amount: number,
+): void {
+  if (amount <= 0) {
+    return
+  }
+  const current = grants.get(playerId) ?? {}
+  current[resourceId] = (current[resourceId] ?? 0) + amount
+  grants.set(playerId, current)
+}
+
+/** Owned towns: stack `resource_yield`; per town, max `defense_tier.gold_income`. */
+function applyWeeklyBuildingIncome(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+): GameSession {
+  const grants = new Map<string, Record<number, number>>()
+  for (const town of session.towns) {
+    if (!town.player_id) {
+      continue
+    }
+    let maxGold = 0
+    for (const row of session.building_states) {
+      if (row.town_id !== town.id || row.level < 1 || row.building_id == null) {
+        continue
+      }
+      const building = buildingById(catalog, row.building_id)
+      const yieldGrant = resourceYieldGrant(building)
+      if (yieldGrant) {
+        addGrant(grants, town.player_id, yieldGrant.resourceId, yieldGrant.amount)
+      }
+      const gold = defenseGoldIncome(building)
+      if (gold > maxGold) {
+        maxGold = gold
+      }
+    }
+    addGrant(grants, town.player_id, GOLD_RESOURCE_ID, maxGold)
+  }
+  if (grants.size === 0) {
+    return session
+  }
+  return {
+    ...session,
+    players: session.players.map((player) => {
+      const add = grants.get(player.id)
+      if (!add) {
+        return player
+      }
+      const resources = { ...player.resources }
+      for (const [key, amount] of Object.entries(add)) {
+        const id = Number(key)
+        resources[id] = (resources[id] ?? 0) + amount
+      }
+      return { ...player, resources }
     }),
   }
 }

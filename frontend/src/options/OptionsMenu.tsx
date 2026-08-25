@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { clearCachedGrid, setHeroMovementRemaining } from '../hex/HexMap'
 import { MAX_MOVEMENT_POINTS } from '../hex/hero'
+import type { DataStatus } from '../hex/debug'
 import {
   createSave,
   fetchSave,
@@ -9,11 +10,37 @@ import {
   type SaveSummary,
 } from '../session/saves'
 import { getSession, setSession } from '../session/store'
+import { HUMAN_PLAYER_ID, type GameSession } from '../session/types'
+import { fetchCatalog, reloadReferenceData } from '../town/catalog'
+import { getExploredHexes } from '../hex/world'
 
 type Panel = 'save' | 'load' | 'quit' | null
 
 type OptionsMenuProps = {
   onLoaded: () => void
+  onDataStatus: (status: DataStatus) => void
+}
+
+function withCurrentFog(session: GameSession): GameSession {
+  const explored = getExploredHexes()
+  return {
+    ...session,
+    players: session.players.map((player) =>
+      player.id === HUMAN_PLAYER_ID
+        ? { ...player, explored }
+        : { ...player, explored: player.explored ?? [] },
+    ),
+  }
+}
+
+function withExploredDefaults(session: GameSession): GameSession {
+  return {
+    ...session,
+    players: session.players.map((player) => ({
+      ...player,
+      explored: Array.isArray(player.explored) ? player.explored : [],
+    })),
+  }
 }
 
 function defaultSaveName(): string {
@@ -42,14 +69,24 @@ function errorMessage(error: unknown, fallback: string): string {
     : fallback
 }
 
-export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
+export function OptionsMenu({ onLoaded, onDataStatus }: OptionsMenuProps) {
   const [expanded, setExpanded] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
   const [saveName, setSaveName] = useState('')
   const [saves, setSaves] = useState<SaveSummary[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!notice) {
+      return
+    }
+    const timer = window.setTimeout(() => setNotice(null), 2500)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   const closePanel = () => {
     if (busy) {
@@ -60,6 +97,9 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
   }
 
   const openPanel = (next: Panel) => {
+    if (reloading) {
+      return
+    }
     setExpanded(false)
     setError(null)
     setBusy(false)
@@ -124,10 +164,10 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
     setBusy(true)
     setError(null)
     const current = getSession()
-    const snapshot = {
+    const snapshot = withCurrentFog({
       ...current,
       game: { ...current.game, name },
-    }
+    })
     try {
       await createSave(name, snapshot.game.seed, snapshot)
       setSession(snapshot)
@@ -151,7 +191,7 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
       if (!isGameSession(detail.gameState)) {
         throw new Error('That save is corrupt and was not loaded.')
       }
-      setSession(detail.gameState)
+      setSession(withExploredDefaults(detail.gameState))
       clearCachedGrid()
       setPanel(null)
       onLoaded()
@@ -164,6 +204,31 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
 
   const onQuitYes = () => {
     window.location.reload()
+  }
+
+  const onReloadReference = async () => {
+    if (reloading) {
+      return
+    }
+    setExpanded(false)
+    setReloading(true)
+    setNotice(null)
+    try {
+      const status = await reloadReferenceData()
+      onDataStatus(status)
+      await fetchCatalog()
+      if (status.ok) {
+        setNotice('Reference data reloaded')
+      }
+    } catch (err: unknown) {
+      onDataStatus({
+        ok: false,
+        tables: [],
+        fetchError: errorMessage(err, 'Reference data reload failed'),
+      })
+    } finally {
+      setReloading(false)
+    }
   }
 
   const setSteps = (remaining: number) => {
@@ -196,6 +261,14 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
           <button
             type="button"
             role="menuitem"
+            disabled={reloading}
+            onClick={() => void onReloadReference()}
+          >
+            Reload Reference Data
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             onClick={() => setSteps(1000)}
           >
             Increase Steps to 1000
@@ -208,6 +281,11 @@ export function OptionsMenu({ onLoaded }: OptionsMenuProps) {
             Reset Steps to 10
           </button>
         </div>
+      ) : null}
+      {notice ? (
+        <p className="options-notice" role="status">
+          {notice}
+        </p>
       ) : null}
 
       {panel === 'save' ? (

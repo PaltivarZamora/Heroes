@@ -58,6 +58,7 @@ export function createInitialSession(): GameSession {
         resources: startingResources(),
         hero_ids: [],
         town_ids: [],
+        explored: [],
       },
     ],
     towns: [],
@@ -76,6 +77,7 @@ export function addHumanPlayer(session: GameSession): GameSession {
     resources: startingResources(),
     hero_ids: [],
     town_ids: [],
+    explored: [],
   }
   return { ...session, players: [...session.players, player] }
 }

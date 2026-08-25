@@ -1,7 +1,7 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { formatResourceLine, RESOURCES, type ResourceWallet } from '../hex/resources'
 import { getSession, subscribe } from '../session/store'
-import { fetchCatalog, type ReferenceCatalog } from './catalog'
+import { fetchCatalog, getCachedCatalog, subscribeCatalog } from './catalog'
 import { ArmyTransfer } from './ArmyTransfer'
 
 type FriendlyTradeProps = {
@@ -18,22 +18,15 @@ export function FriendlyTrade({
   onExit,
 }: FriendlyTradeProps) {
   const session = useSyncExternalStore(subscribe, getSession)
-  const [catalog, setCatalog] = useState<ReferenceCatalog | null>(null)
+  const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const left = session.heroes.find((hero) => hero.id === leftHeroId)
   const right = session.heroes.find((hero) => hero.id === rightHeroId)
 
   useEffect(() => {
-    let cancelled = false
-    void fetchCatalog()
-      .then((data) => {
-        if (!cancelled) {
-          setCatalog(data)
-        }
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
+    if (getCachedCatalog()) {
+      return
     }
+    void fetchCatalog().catch(() => {})
   }, [])
 
   return (

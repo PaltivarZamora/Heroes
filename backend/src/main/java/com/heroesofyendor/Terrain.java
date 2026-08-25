@@ -36,4 +36,13 @@ public enum Terrain {
     public Double movementCost() {
         return movementCost;
     }
+
+    public boolean isPassable() {
+        return movementCost != null;
+    }
+
+    /** Barrier and Void stay in the enum but are not painted onto new maps for now. */
+    public boolean inGenerationPool() {
+        return this != BARRIER && this != VOID;
+    }
 }

@@ -95,7 +95,7 @@ export function approachHex(
  * Path includes start and destination. Cost is paid on entering a hex.
  * `blocked` is other heroes, towns, and resource nodes for this path only —
  * not baked into terrain. Callers omit the destination when that hex is a
- * walk-onto target (mine/pickup).
+ * walk-onto target (town, mine, or pickup). Heroes are never omitted.
  */
 export function findPath(
   from: Axial,

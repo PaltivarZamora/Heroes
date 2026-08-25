@@ -13,8 +13,9 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 
 /**
- * Loads static reference tables once at startup and holds them in memory.
- * Gameplay must read from here — these tables are never queried again.
+ * Loads static reference tables into memory at startup. Gameplay reads from
+ * this cache. {@link #reload()} re-runs the same load against the database
+ * without restarting the process.
  */
 @Service
 public class ReferenceData {
@@ -44,15 +45,28 @@ public class ReferenceData {
     }
 
     @PostConstruct
-    void loadAll() {
+    void loadOnStartup() {
+        loadAll();
+    }
+
+    /** Re-query every reference table and replace the in-memory cache. */
+    public synchronized DataStatusResponse reload() {
+        loadAll();
+        return status();
+    }
+
+    private synchronized void loadAll() {
         log.info(
                 "Loading reference data as current_user={} row_security={}",
                 jdbc.queryForObject("select current_user", String.class),
                 jdbc.queryForObject("select current_setting('row_security')", String.class));
+        statuses.clear();
+        Map<String, List<Map<String, Object>>> next = new LinkedHashMap<>();
         for (String table : TABLE_NAMES) {
-            List<Map<String, Object>> rows = loadTable(table, new ColumnMapRowMapper());
-            rowsByTable.put(table, rows);
+            next.put(table, loadTable(table, new ColumnMapRowMapper()));
         }
+        rowsByTable.clear();
+        rowsByTable.putAll(next);
     }
 
     /**
@@ -75,7 +89,7 @@ public class ReferenceData {
         }
     }
 
-    public List<Map<String, Object>> rows(String table) {
+    public synchronized List<Map<String, Object>> rows(String table) {
         List<Map<String, Object>> rows = rowsByTable.get(table);
         if (rows == null) {
             return List.of();
@@ -83,7 +97,7 @@ public class ReferenceData {
         return rows;
     }
 
-    public DataStatusResponse status() {
+    public synchronized DataStatusResponse status() {
         boolean ok = statuses.stream().allMatch(TableLoadStatus::ok);
         return new DataStatusResponse(ok, List.copyOf(statuses));
     }

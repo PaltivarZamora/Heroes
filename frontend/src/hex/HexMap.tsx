@@ -9,6 +9,7 @@ import {
   PLAYER_1_COLOR,
   findPassableStart,
   movementSteps,
+  spendHeroInteract,
   spendMovement,
   VISION_RANGE,
   type Axial,
@@ -26,7 +27,7 @@ import {
   loadAllTerrainTextures,
   pickTerrainVariantIndex,
 } from './terrainTextures'
-import { buildWorld, fetchTestGrid, getTile, isExplored, markExplored, TERRAIN_COLORS } from './world'
+import { buildWorld, fetchTestGrid, getTile, isExplored, markExplored, restoreExplored, TERRAIN_COLORS } from './world'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 import { getSession, subscribe, updateSession } from '../session/store'
@@ -39,6 +40,7 @@ import {
   collectPickup,
   findNodeAt,
   findTownAt,
+  humanPlayer,
   restoreAllHeroMovement,
   syncHero,
   walletFromSession,
@@ -113,7 +115,11 @@ function gridHasResourceIds(grid: TestGridResponse): boolean {
 /** Unexplored overlay — very dark grey, not pure black. */
 const UNEXPLORED_COLOR = 0x3a3a3a
 
-/** Explored map objects to path around. `walkOnto` is omitted from the set (mines/pickups). */
+/**
+ * Explored map objects to path around. Heroes are always blocked.
+ * Towns and resource nodes are blocked unless they are `walkOnto`
+ * (the clicked destination).
+ */
 function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
   const blocked = new Set<string>()
   const ontoKey =
@@ -240,11 +246,15 @@ export function HexMap({
     let moving = false
 
     void (async () => {
-      if (!cachedGrid || !gridHasResourceIds(cachedGrid)) {
+      const needsGrid = !cachedGrid || !gridHasResourceIds(cachedGrid)
+      if (needsGrid) {
         const savedSeed = getSession().game.seed
         cachedGrid = await fetchTestGrid(savedSeed > 0 ? savedSeed : undefined)
       }
       tilesRef.current = cachedGrid
+      if (!tilesRef.current) {
+        return
+      }
       const { tiles, seed, objects } = tilesRef.current
       if (cancelled || tiles.length === 0) {
         return
@@ -252,6 +262,9 @@ export function HexMap({
 
       const { grid, layout, width, height } = buildWorld(tiles, hexSize)
       onMapInfo({ width, height, seed })
+      if (needsGrid) {
+        restoreExplored(humanPlayer(getSession())?.explored)
+      }
 
       if (!heroRef.current) {
         const heroes = getSession().heroes
@@ -741,21 +754,16 @@ export function HexMap({
         const occupant = otherHeroAt(hex.q, hex.r, hero.id)
         const town = findTownAt(getSession(), hex.q, hex.r)
         const node = liveNodeAt(hex.q, hex.r)
-        const walkOnto = !occupant && !town && node ? hex : null
+        const walkOnto = !occupant && (town || node) ? hex : null
         const hoverBlocked = obstacleHexes(hero, walkOnto)
         const hoverKey = `${hero.q},${hero.r},${hero.remaining}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|${[...hoverBlocked].sort().join(';')}`
         if (hoverKey === lastHoverKey) {
           return
         }
         lastHoverKey = hoverKey
-        const dest =
-          occupant || town
-            ? approachHex(
-                hero,
-                occupant ? occupant.position : town!.position,
-                hoverBlocked,
-              )
-            : hex
+        const dest = occupant
+          ? approachHex(hero, occupant.position, hoverBlocked)
+          : hex
         if (!dest || (dest.q === hero.q && dest.r === hero.r)) {
           preview.clear()
           return
@@ -909,9 +917,25 @@ export function HexMap({
             if (!mover || !live) {
               return
             }
-            if (hexDistance(mover, live.position) <= 1) {
-              onHeroMeetRef.current(occupant.id)
+            if (hexDistance(mover, live.position) > 1) {
+              return
             }
+            mover.remaining = spendHeroInteract(mover.remaining)
+            onHeroState({
+              id: mover.id,
+              q: mover.q,
+              r: mover.r,
+              remaining: mover.remaining,
+            })
+            updateSession((current) =>
+              syncHero(
+                current,
+                { q: mover.q, r: mover.r },
+                mover.remaining,
+                mover.id,
+              ),
+            )
+            onHeroMeetRef.current(occupant.id)
           }
           if (hexDistance(hero, occupant.position) <= 1) {
             meet()
@@ -930,24 +954,11 @@ export function HexMap({
         }
         const town = findTownAt(getSession(), hex.q, hex.r)
         if (town) {
-          const greet = () => {
-            const mover = heroRef.current
-            if (!mover) {
-              return
-            }
-            if (hexDistance(mover, town.position) <= 1) {
-              resolveHex(town.position.q, town.position.r)
-            }
-          }
-          if (hexDistance(hero, town.position) <= 1) {
-            greet()
+          if (hero.q === town.position.q && hero.r === town.position.r) {
+            resolveHex(town.position.q, town.position.r)
             return
           }
-          const dest = approachHex(hero, town.position, obstacleHexes(hero))
-          if (!dest) {
-            return
-          }
-          tryMoveTo(dest, greet)
+          tryMoveTo(hex, undefined, hex)
           return
         }
         const node = liveNodeAt(hex.q, hex.r)
@@ -996,9 +1007,9 @@ export function HexMap({
               return
             }
             updateSession((current) => applyMineIncome(restoreAllHeroMovement(current)))
+            onEndDayRef.current()
             walletRef.current = walletFromSession(getSession())
             emitResources()
-            onEndDayRef.current()
             return
           }
           if (!isArrow(event.key) || moving) {

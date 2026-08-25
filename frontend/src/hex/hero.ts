@@ -10,6 +10,9 @@ export const PLAYER_1_COLOR = 0xc62828
 
 export const MAX_MOVEMENT_POINTS = 10
 
+/** Flat extra cost when a hero-to-hero interaction actually triggers. */
+export const HERO_INTERACT_COST = 0.25
+
 /** Offset col/row — map center on Small 36×36; moved if that hex is impassable. */
 export const HERO_START_OFFSET = { col: 18, row: 18 }
 
@@ -28,6 +31,11 @@ export function roundMovement(n: number): number {
 
 export function spendMovement(remaining: number, cost: number): number {
   return roundMovement(remaining - cost)
+}
+
+/** Hero-meet cost: still fires if remaining < cost, never goes below 0. */
+export function spendHeroInteract(remaining: number): number {
+  return roundMovement(Math.max(0, remaining - HERO_INTERACT_COST))
 }
 
 export function formatMp(n: number): string {

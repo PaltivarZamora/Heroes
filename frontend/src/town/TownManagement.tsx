@@ -8,6 +8,7 @@ import {
 import {
   armyBuildOptions,
   buildingById,
+  buildingGrowth,
   constructionCost,
   destroyCostOf,
   hasPrerequisite,
@@ -16,6 +17,7 @@ import {
   formatCost,
   genericRoot,
   genericSlotBuildings,
+  getCachedCatalog,
   heroTypeName,
   isArmySlot,
   isReservedBuildingSlot,
@@ -24,6 +26,7 @@ import {
   maxAffordableQty,
   nextInChain,
   scaleCost,
+  subscribeCatalog,
   undesignedBuilding,
   unitCost,
   unitForBuilding,
@@ -123,7 +126,7 @@ export function TownManagement({
   selectedHeroId = null,
 }: TownManagementProps) {
   const session = useSyncExternalStore(subscribe, getSession)
-  const [catalog, setCatalog] = useState<ReferenceCatalog | null>(null)
+  const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const slots = slotStatesForTown(session, townId)
   const [openSlot, setOpenSlot] = useState<number | null>(null)
@@ -137,6 +140,9 @@ export function TownManagement({
   }, [townId])
 
   useEffect(() => {
+    if (getCachedCatalog()) {
+      return
+    }
     let cancelled = false
     void fetchCatalog()
       .then((data) => {
@@ -144,7 +150,6 @@ export function TownManagement({
           updateSession((current) =>
             assignHeroesFromPool(current, data.hero_pool),
           )
-          setCatalog(data)
         }
       })
       .catch((error: unknown) => {
@@ -208,7 +213,11 @@ export function TownManagement({
     if (
       !writeSlot(
         id,
-        { level: 1, buildingId: building.id, recruitQty: 0 },
+        {
+          level: 1,
+          buildingId: building.id,
+          recruitQty: buildingGrowth(building),
+        },
         constructionCost(catalog, building),
       )
     ) {
@@ -981,7 +990,7 @@ function EmptySlotActions({
                 Build {building.name}
                 {klass ? ` (${klass})` : ''}
               </h3>
-              <p>{effectLine(building, catalog.unit)}</p>
+              <p>{effectLine(building)}</p>
               <p>Cost: {formatCost(constructionCost(catalog, building))}</p>
               <button
                 type="button"
@@ -1004,7 +1013,7 @@ function EmptySlotActions({
   return (
     <div className="town-building-option">
       <h3>Build {root.name}</h3>
-      <p>{effectLine(root, catalog.unit)}</p>
+      <p>{effectLine(root)}</p>
       <p>Cost: {formatCost(constructionCost(catalog, root))}</p>
       <button
         type="button"
@@ -1064,7 +1073,7 @@ function FilledSlotActions({
   return (
     <div className="town-building-option">
       <h3>{current.name}</h3>
-      <p>{effectLine(current, catalog.unit)}</p>
+      <p>{effectLine(current)}</p>
       {next ? (
         <>
           <p>

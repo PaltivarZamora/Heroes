@@ -27,6 +27,8 @@ export type Player = {
   resources: Record<number, number>
   hero_ids: string[]
   town_ids: string[]
+  /** Fog of war — hexes this player has seen. */
+  explored: AxialPos[]
 }
 
 export type TownGarrison = {
