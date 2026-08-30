@@ -8,7 +8,20 @@ export type HexScaleName = keyof typeof HEX_SCALES
 
 export const DEFAULT_HEX_SCALE: HexScaleName = 'Small'
 
-const MAP_SIZE_NAMES: Record<string, string> = {
+/** Named map sizes already used for generated maps. Not hex zoom. */
+export const MAP_SIZES = [
+  'Small',
+  'Medium',
+  'Large',
+  'Extra Large',
+  'Huge',
+  'Extra Huge',
+  'Giant',
+] as const
+
+export type MapSizeName = (typeof MAP_SIZES)[number]
+
+const MAP_SIZE_NAMES: Record<string, MapSizeName> = {
   '36x36': 'Small',
   '72x72': 'Medium',
   '108x108': 'Large',
@@ -21,4 +34,12 @@ const MAP_SIZE_NAMES: Record<string, string> = {
 export function mapSizeLabel(width: number, height: number): string {
   const name = MAP_SIZE_NAMES[`${width}x${height}`]
   return name ? `${name} (${width}×${height})` : `${width}×${height}`
+}
+
+export function mapSizeChoiceLabel(name: MapSizeName): string {
+  const dims = Object.entries(MAP_SIZE_NAMES).find(([, label]) => label === name)?.[0]
+  if (!dims) {
+    return name
+  }
+  return `${name} (${dims.replace('x', '×')})`
 }

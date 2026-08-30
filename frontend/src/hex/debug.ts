@@ -28,6 +28,7 @@ export type DebugSnapshot = {
   steps: string
   resources: string[]
   dataStatus: DataStatus | null
+  extraLines?: string[]
 }
 
 function formatDataLoadSection(dataStatus: DataStatus | null): string[] {
@@ -66,6 +67,7 @@ export function formatDebugText(snapshot: DebugSnapshot): string {
     hero,
     `Steps: ${snapshot.steps}`,
     ...snapshot.resources,
+    ...(snapshot.extraLines ?? []),
     ...formatDataLoadSection(snapshot.dataStatus),
   ].join('\n')
 }

@@ -31,6 +31,8 @@ export function slotArtFilename(
   return imagePath
 }
 
+export const GENERIC_EMPTY_ART_FILENAME = 'Empty.png'
+
 /** Slot 0 placeholder — file lives in public/assets/heros/, not towns/. */
 export const GARRISON_ART_FILENAME = 'Garrison.png'
 
@@ -46,4 +48,18 @@ export function heroPortraitUrl(filename: string): string {
     return filename
   }
   return `/assets/heros/${filename}`
+}
+
+export function itemArtUrl(filename: string): string {
+  if (filename.startsWith('/')) {
+    return filename
+  }
+  return `/assets/items/${filename}`
+}
+
+export function unitPortraitUrl(filename: string): string {
+  if (filename.startsWith('/')) {
+    return filename
+  }
+  return `/assets/units/${filename}`
 }

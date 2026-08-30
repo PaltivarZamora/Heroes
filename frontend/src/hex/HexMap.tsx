@@ -27,21 +27,21 @@ import {
   loadAllTerrainTextures,
   pickTerrainVariantIndex,
 } from './terrainTextures'
-import { buildWorld, fetchTestGrid, getTile, isExplored, markExplored, restoreExplored, TERRAIN_COLORS } from './world'
+import { buildWorld, fetchTestGrid, getTile, getExploredHexes, isExplored, markExplored, restoreExplored, TERRAIN_COLORS } from './world'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 import { getSession, subscribe, updateSession } from '../session/store'
-import { addHumanHero, hydrateMapObjects } from '../session/create'
+import { ensureStartingHeroes, hydrateMapObjects } from '../session/create'
 import { HERO_ID } from '../session/types'
+import { fetchCatalog, ownerTint, subscribeCatalog } from '../town/catalog'
 import {
-  applyMineIncome,
+  activePlayer,
   claimMine,
   claimTown,
   collectPickup,
   findNodeAt,
   findTownAt,
-  humanPlayer,
-  restoreAllHeroMovement,
+  persistActiveExplored,
   syncHero,
   walletFromSession,
 } from '../session/accessors'
@@ -54,7 +54,6 @@ type HexMapProps = {
   onHeroState: (state: HeroHudState) => void
   onResources: (wallet: ResourceWallet) => void
   onTownWelcome: (townName: string, townId: string) => void
-  onEndDay: () => void
   onHeroMeet: (targetHeroId: string) => void
 }
 
@@ -66,6 +65,7 @@ let panMapToHex: ((q: number, r: number) => void) | null = null
 let applyHeroMarkerLabel: ((name: string) => void) | null = null
 let selectMapHero: ((id: string) => void) | null = null
 let selectedMapHeroId: string | null = null
+let applyHotseatView: (() => void) | null = null
 
 export function clearCachedGrid(): void {
   cachedGrid = null
@@ -79,6 +79,10 @@ export function centerMapOnHex(q: number, r: number): void {
 export function selectHeroOnMap(id: string): void {
   selectedMapHeroId = id
   selectMapHero?.(id)
+}
+
+export function syncActivePlayerView(): void {
+  applyHotseatView?.()
 }
 
 export function getSelectedMapHeroId(): string | null {
@@ -153,10 +157,21 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
   return blocked
 }
 
+function heroVisibleOnMap(hero: { player_id: string; position: { q: number; r: number } }): boolean {
+  const actor = activePlayer(getSession())
+  if (actor && hero.player_id === actor.id) {
+    return true
+  }
+  return isExplored(hero.position.q, hero.position.r)
+}
+
 function otherHeroAt(q: number, r: number, selfId: string) {
   return getSession().heroes.find(
     (hero) =>
-      hero.id !== selfId && hero.position.q === q && hero.position.r === r,
+      hero.id !== selfId &&
+      hero.position.q === q &&
+      hero.position.r === r &&
+      heroVisibleOnMap(hero),
   )
 }
 
@@ -206,23 +221,17 @@ export function HexMap({
   onHeroState,
   onResources,
   onTownWelcome,
-  onEndDay,
   onHeroMeet,
 }: HexMapProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const tilesRef = useRef<TestGridResponse | null>(null)
   const heroRef = useRef<HeroState | null>(null)
   const walletRef = useRef<ResourceWallet>(snapshotWallet(wallet))
-  const onEndDayRef = useRef(onEndDay)
   const onHeroMeetRef = useRef(onHeroMeet)
 
   useEffect(() => {
     walletRef.current = snapshotWallet(wallet)
   }, [wallet])
-
-  useEffect(() => {
-    onEndDayRef.current = onEndDay
-  }, [onEndDay])
 
   useEffect(() => {
     onHeroMeetRef.current = onHeroMeet
@@ -246,6 +255,7 @@ export function HexMap({
     let moving = false
 
     void (async () => {
+      const colorsReady = fetchCatalog().catch(() => {})
       const needsGrid = !cachedGrid || !gridHasResourceIds(cachedGrid)
       if (needsGrid) {
         const savedSeed = getSession().game.seed
@@ -263,13 +273,19 @@ export function HexMap({
       const { grid, layout, width, height } = buildWorld(tiles, hexSize)
       onMapInfo({ width, height, seed })
       if (needsGrid) {
-        restoreExplored(humanPlayer(getSession())?.explored)
+        restoreExplored(activePlayer(getSession())?.explored)
       }
 
       if (!heroRef.current) {
+        const actor = activePlayer(getSession())
         const heroes = getSession().heroes
         const existing =
-          heroes.find((row) => row.id === selectedMapHeroId) ?? heroes[0]
+          (actor
+            ? heroes.find(
+                (row) =>
+                  row.id === selectedMapHeroId && row.player_id === actor.id,
+              ) ?? heroes.find((row) => row.player_id === actor.id)
+            : null) ?? heroes[0]
         if (existing) {
           selectedMapHeroId = existing.id
           heroRef.current = {
@@ -310,7 +326,7 @@ export function HexMap({
         )
       }
       updateSession((current) =>
-        addHumanHero(
+        ensureStartingHeroes(
           hydrateMapObjects(
             { ...current, game: { ...current.game, seed } },
             objects ?? [],
@@ -318,7 +334,24 @@ export function HexMap({
           { q: spawned.q, r: spawned.r },
         ),
       )
-      walletRef.current = walletFromSession(getSession())
+      const after = getSession()
+      const actor = activePlayer(after)
+      const ownHero = actor
+        ? after.heroes.find((hero) => hero.player_id === actor.id)
+        : after.heroes[0]
+      if (ownHero) {
+        selectedMapHeroId = ownHero.id
+        heroRef.current = {
+          id: ownHero.id,
+          q: ownHero.position.q,
+          r: ownHero.position.r,
+          remaining: ownHero.movement_remaining,
+        }
+      }
+      if (!heroRef.current) {
+        return
+      }
+      walletRef.current = walletFromSession(after)
       onHeroState({
         id: heroRef.current.id,
         q: heroRef.current.q,
@@ -339,6 +372,7 @@ export function HexMap({
       }
 
       const texturesByTerrain = await loadAllTerrainTextures()
+      await colorsReady
       if (cancelled) {
         instance.destroy()
         return
@@ -392,12 +426,15 @@ export function HexMap({
         { data: MapObjectData; view: Container; badge: Graphics; label: Text }
       >()
 
-      const paintObjectBadge = (target: Graphics, claimed: boolean) => {
+      const paintObjectBadge = (target: Graphics, fill: number) => {
         target.clear()
         target.circle(0, 0, hexSize * 0.42)
-        target.fill({ color: claimed ? PLAYER_1_COLOR : NEUTRAL_OBJECT_COLOR })
+        target.fill({ color: fill })
         target.stroke({ width: 2, color: 0x111111 })
       }
+
+      const townFill = (playerId: string | null | undefined) =>
+        ownerTint(playerId) ?? NEUTRAL_OBJECT_COLOR
 
       const addObjectView = (obj: MapObjectData) => {
         const sessionNow = getSession()
@@ -408,17 +445,23 @@ export function HexMap({
         const view = new Container()
         const objectBadge = new Graphics()
         const town = obj.kind === 'town' ? findTownAt(sessionNow, obj.q, obj.r) : undefined
-        const owned =
-          (obj.kind === 'mine' && (!!obj.claimed || node?.player_id != null)) ||
-          (obj.kind === 'town' && (!!obj.claimed || town?.player_id != null))
-        paintObjectBadge(objectBadge, owned)
+        const mineOwned =
+          obj.kind === 'mine' && (!!obj.claimed || node?.player_id != null)
+        const fill =
+          obj.kind === 'town'
+            ? townFill(town?.player_id)
+            : mineOwned
+              ? PLAYER_1_COLOR
+              : NEUTRAL_OBJECT_COLOR
+        const labeledOwned = obj.kind === 'town' ? town?.player_id != null : mineOwned
+        paintObjectBadge(objectBadge, fill)
         const objectLabel = new Text({
           text: obj.marker,
           style: {
             fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
             fontSize: Math.max(9, Math.round(hexSize * 0.55)),
             fontWeight: '700',
-            fill: owned ? 0xffffff : 0x111111,
+            fill: labeledOwned ? 0xffffff : 0x111111,
           },
           anchor: 0.5,
         })
@@ -457,15 +500,15 @@ export function HexMap({
               townTypeId: mapObjectTownTypeId(obj),
             }),
           )
-          if (!obj.claimed) {
+          const claimedTown = findTownAt(getSession(), q, r)
+          paintObjectBadge(entry.badge, townFill(claimedTown?.player_id))
+          entry.label.style.fill = claimedTown?.player_id != null ? '#ffffff' : '#111111'
+          if (!obj.claimed && claimedTown?.player_id != null) {
             obj.claimed = true
-            paintObjectBadge(entry.badge, true)
-            entry.label.style.fill = '#ffffff'
           }
-          const town = findTownAt(getSession(), q, r)
           onTownWelcome(
-            town?.name ?? (obj.name?.trim() || 'Town'),
-            town?.id ?? '',
+            claimedTown?.name ?? (obj.name?.trim() || 'Town'),
+            claimedTown?.id ?? '',
           )
           return
         }
@@ -499,7 +542,7 @@ export function HexMap({
         if (obj.claimed || node?.player_id != null) {
           if (!obj.claimed && node?.player_id != null) {
             obj.claimed = true
-            paintObjectBadge(entry.badge, true)
+            paintObjectBadge(entry.badge, PLAYER_1_COLOR)
             entry.label.style.fill = '#ffffff'
           }
           return
@@ -507,7 +550,7 @@ export function HexMap({
         obj.claimed = true
         updateSession((current) => claimMine(current, q, r, resourceId))
         walletRef.current = walletFromSession(getSession())
-        paintObjectBadge(entry.badge, true)
+        paintObjectBadge(entry.badge, PLAYER_1_COLOR)
         entry.label.style.fill = '#ffffff'
         emitResources()
       }
@@ -589,6 +632,9 @@ export function HexMap({
         })
         paintFog()
         paintTexturedHexes()
+        updateSession((current) =>
+          persistActiveExplored(current, getExploredHexes()),
+        )
       }
 
       const placeHeroMarkers = () => {
@@ -596,6 +642,9 @@ export function HexMap({
         const counts = new Map<string, number>()
         const indexOnHex = new Map<string, number>()
         for (const hero of sessionHeroes) {
+          if (!heroVisibleOnMap(hero)) {
+            continue
+          }
           const hexKey = `${hero.position.q},${hero.position.r}`
           const n = counts.get(hexKey) ?? 0
           indexOnHex.set(hero.id, n)
@@ -625,10 +674,17 @@ export function HexMap({
           } else {
             entry.label.text = hero.name
           }
+          const visible = heroVisibleOnMap(hero)
+          entry.view.visible = visible
+          if (!visible) {
+            continue
+          }
           const selected = heroRef.current?.id === hero.id
           entry.badge.clear()
           entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
-          entry.badge.fill({ color: PLAYER_1_COLOR })
+          entry.badge.fill({
+            color: ownerTint(hero.player_id) ?? NEUTRAL_OBJECT_COLOR,
+          })
           entry.badge.stroke({
             width: selected ? 3 : 2,
             color: selected ? 0xffffff : 0x111111,
@@ -671,9 +727,11 @@ export function HexMap({
         }
         panToHex(hero.q, hero.r)
       }
-      selectMapHero = (id: string) => {
-        const row = getSession().heroes.find((hero) => hero.id === id)
-        if (!row) {
+      const switchToMapHero = (id: string) => {
+        const session = getSession()
+        const actor = activePlayer(session)
+        const row = session.heroes.find((hero) => hero.id === id)
+        if (!row || !actor || row.player_id !== actor.id) {
           return
         }
         selectedMapHeroId = row.id
@@ -695,12 +753,52 @@ export function HexMap({
         exploreAround(heroRef.current)
         placeHeroMarkers()
       }
+      selectMapHero = switchToMapHero
 
+      applyHotseatView = () => {
+        const session = getSession()
+        const player = activePlayer(session)
+        restoreExplored(player?.explored)
+        paintFog()
+        paintTexturedHexes()
+        walletRef.current = walletFromSession(session)
+        emitResources()
+        const ownHero = player
+          ? session.heroes.find((hero) => hero.player_id === player.id)
+          : undefined
+        if (ownHero) {
+          switchToMapHero(ownHero.id)
+          return
+        }
+        selectedMapHeroId = null
+        heroRef.current = null
+        placeHeroMarkers()
+      }
+
+      const paintOwnedTownColors = () => {
+        const sessionNow = getSession()
+        for (const entry of objectByKey.values()) {
+          if (entry.data.kind !== 'town') {
+            continue
+          }
+          const town = findTownAt(sessionNow, entry.data.q, entry.data.r)
+          const fill = townFill(town?.player_id)
+          paintObjectBadge(entry.badge, fill)
+          entry.label.style.fill = town?.player_id != null ? '#ffffff' : '#111111'
+        }
+      }
       placeHeroMarkers()
+      paintOwnedTownColors()
       const unsubHeroes = subscribe(() => {
         placeHeroMarkers()
+        paintOwnedTownColors()
+      })
+      const unsubCatalog = subscribeCatalog(() => {
+        placeHeroMarkers()
+        paintOwnedTownColors()
       })
       signal.addEventListener('abort', unsubHeroes, { once: true })
+      signal.addEventListener('abort', unsubCatalog, { once: true })
       if (heroRef.current) {
         exploreAround(heroRef.current)
         resolveHex(heroRef.current.q, heroRef.current.r)
@@ -988,30 +1086,6 @@ export function HexMap({
       window.addEventListener(
         'keydown',
         (event) => {
-          if (event.code === 'Space') {
-            event.preventDefault()
-            if (event.repeat || !heroRef.current) {
-              return
-            }
-            moveGen += 1
-            moving = false
-            heroRef.current.remaining = MAX_MOVEMENT_POINTS
-            onHeroState({
-              id: heroRef.current.id,
-              q: heroRef.current.q,
-              r: heroRef.current.r,
-              remaining: heroRef.current.remaining,
-            })
-            const resting = heroRef.current
-            if (!resting) {
-              return
-            }
-            updateSession((current) => applyMineIncome(restoreAllHeroMovement(current)))
-            onEndDayRef.current()
-            walletRef.current = walletFromSession(getSession())
-            emitResources()
-            return
-          }
           if (!isArrow(event.key) || moving) {
             return
           }
@@ -1074,6 +1148,7 @@ export function HexMap({
       panMapToHex = null
       applyHeroMarkerLabel = null
       selectMapHero = null
+      applyHotseatView = null
       abort.abort()
       app?.destroy()
     }

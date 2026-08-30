@@ -10,25 +10,40 @@ import {
   type SaveSummary,
 } from '../session/saves'
 import { getSession, setSession } from '../session/store'
-import { HUMAN_PLAYER_ID, type GameSession } from '../session/types'
+import type { GameSession } from '../session/types'
 import { fetchCatalog, reloadReferenceData } from '../town/catalog'
+import { NewGameScreen } from './NewGameScreen'
+import type { GameConfig } from './gameConfig'
 import { getExploredHexes } from '../hex/world'
 
-type Panel = 'save' | 'load' | 'quit' | null
+type Panel = 'new' | 'save' | 'load' | 'quit' | null
 
 type OptionsMenuProps = {
   onLoaded: () => void
   onDataStatus: (status: DataStatus) => void
+  onCopyDebug: () => void
+  onStartGame: (config: GameConfig) => void
 }
 
 function withCurrentFog(session: GameSession): GameSession {
   const explored = getExploredHexes()
+  const index =
+    typeof session.activePlayerIndex === 'number' &&
+    session.activePlayerIndex >= 0 &&
+    session.activePlayerIndex < session.players.length
+      ? session.activePlayerIndex
+      : 0
   return {
     ...session,
-    players: session.players.map((player) =>
-      player.id === HUMAN_PLAYER_ID
-        ? { ...player, explored }
-        : { ...player, explored: player.explored ?? [] },
+    activePlayerIndex: index,
+    players: session.players.map((player, i) =>
+      i === index
+        ? { ...player, explored, eliminated: player.eliminated === true }
+        : {
+            ...player,
+            explored: Array.isArray(player.explored) ? player.explored : [],
+            eliminated: player.eliminated === true,
+          },
     ),
   }
 }
@@ -36,9 +51,28 @@ function withCurrentFog(session: GameSession): GameSession {
 function withExploredDefaults(session: GameSession): GameSession {
   return {
     ...session,
+    activePlayerIndex:
+      typeof session.activePlayerIndex === 'number' &&
+      session.activePlayerIndex >= 0 &&
+      session.activePlayerIndex < session.players.length
+        ? session.activePlayerIndex
+        : 0,
     players: session.players.map((player) => ({
       ...player,
+      eliminated: player.eliminated === true,
       explored: Array.isArray(player.explored) ? player.explored : [],
+    })),
+    heroes: session.heroes.map((hero) => ({
+      ...hero,
+      learned_abilities: Array.isArray(hero.learned_abilities)
+        ? hero.learned_abilities
+        : [],
+    })),
+    building_states: session.building_states.map((row) => ({
+      ...row,
+      offered_abilities: Array.isArray(row.offered_abilities)
+        ? row.offered_abilities
+        : [],
     })),
   }
 }
@@ -69,7 +103,12 @@ function errorMessage(error: unknown, fallback: string): string {
     : fallback
 }
 
-export function OptionsMenu({ onLoaded, onDataStatus }: OptionsMenuProps) {
+export function OptionsMenu({
+  onLoaded,
+  onDataStatus,
+  onCopyDebug,
+  onStartGame,
+}: OptionsMenuProps) {
   const [expanded, setExpanded] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
   const [saveName, setSaveName] = useState('')
@@ -249,6 +288,9 @@ export function OptionsMenu({ onLoaded, onDataStatus }: OptionsMenuProps) {
       </button>
       {expanded ? (
         <div className="options-choices" role="menu">
+          <button type="button" role="menuitem" onClick={() => openPanel('new')}>
+            New Game
+          </button>
           <button type="button" role="menuitem" onClick={() => openPanel('save')}>
             Save
           </button>
@@ -257,6 +299,17 @@ export function OptionsMenu({ onLoaded, onDataStatus }: OptionsMenuProps) {
           </button>
           <button type="button" role="menuitem" onClick={() => openPanel('quit')}>
             Quit
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onCopyDebug()
+              setExpanded(false)
+              setNotice('Debug copied')
+            }}
+          >
+            Copy Debug
           </button>
           <button
             type="button"
@@ -286,6 +339,16 @@ export function OptionsMenu({ onLoaded, onDataStatus }: OptionsMenuProps) {
         <p className="options-notice" role="status">
           {notice}
         </p>
+      ) : null}
+
+      {panel === 'new' ? (
+        <NewGameScreen
+          onClose={closePanel}
+          onStartGame={(config) => {
+            onStartGame(config)
+            closePanel()
+          }}
+        />
       ) : null}
 
       {panel === 'save' ? (

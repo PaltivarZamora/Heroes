@@ -1,4 +1,4 @@
-import { calendarDayNumber } from '../hex/calendar'
+import { calendarDayNumber, advanceDay, isWeekRollover } from '../hex/calendar'
 import {
   canAfford,
   deductCost,
@@ -6,6 +6,7 @@ import {
   GOLD_RESOURCE_ID,
   RESOURCES,
   YIELD_PER_MINE,
+  snapshotWallet,
   type ResourceWallet,
 } from '../hex/resources'
 import { MAX_MOVEMENT_POINTS } from '../hex/hero'
@@ -13,24 +14,41 @@ import type { SlotState } from '../town/townSlots'
 import {
   buildingById,
   buildingGrowth,
-  defenseGoldIncome,
+  goldIncomeGrant,
   isArmySlot,
+  isLibraryBuilding,
   resourceYieldGrant,
   scaleCost,
   unitCost,
   unitForBuilding,
+  getCachedCatalog,
   type HeroPoolRow,
   type ReferenceCatalog,
 } from '../town/catalog'
+import {
+  abilityById,
+  findOffer,
+  goldCostForLevel,
+  heroHasDiscipline,
+  mergeLibraryOffers,
+} from '../town/libraryRules'
+import {
+  marketConversionRate,
+  ownedMarketplaceCount as countOwnedMarketplaces,
+  quoteMarketTrade,
+  quoteMultiSell,
+} from '../town/market'
 import {
   ARMY_STACK_SLOTS,
   BUILDING_SLOT_COUNT,
   HUMAN_PLAYER_ID,
   NECROPOLIS_TOWN_TYPE_ID,
+  type AxialPos,
   type BuildingState,
   type GameSession,
   type Hero,
   type Node,
+  type Player,
   type Town,
   type UnitStack,
 } from './types'
@@ -54,8 +72,109 @@ export function visitingHeroId(
   return hero ? hero.id : null
 }
 
+export function activePlayerIndex(session: GameSession): number {
+  const index = session.activePlayerIndex
+  if (typeof index === 'number' && index >= 0 && index < session.players.length) {
+    return index
+  }
+  return 0
+}
+
+export function activePlayer(session: GameSession): Player | null {
+  return session.players[activePlayerIndex(session)] ?? session.players[0] ?? null
+}
+
+/** The player whose turn it is. Kept as an alias for existing call sites. */
 export function humanPlayer(session: GameSession) {
-  return session.players.find((player) => player.id === HUMAN_PLAYER_ID) ?? null
+  return activePlayer(session)
+}
+
+function actingPlayerId(session: GameSession): string | null {
+  return activePlayer(session)?.id ?? null
+}
+
+export function persistActiveExplored(
+  session: GameSession,
+  hexes: AxialPos[],
+): GameSession {
+  const index = activePlayerIndex(session)
+  return {
+    ...session,
+    players: session.players.map((player, i) =>
+      i === index ? { ...player, explored: hexes } : player,
+    ),
+  }
+}
+
+export function isPlayerEliminated(session: GameSession, player: Player): boolean {
+  if (player.eliminated) {
+    return true
+  }
+  const hasTown = session.towns.some((town) => town.player_id === player.id)
+  const hasHero = session.heroes.some((hero) => hero.player_id === player.id)
+  if (hasTown || hasHero) {
+    return false
+  }
+  return session.towns.length > 0 || session.heroes.length > 0
+}
+
+export function withEliminations(session: GameSession): GameSession {
+  let changed = false
+  const players = session.players.map((player) => {
+    const eliminated = isPlayerEliminated(session, player)
+    if (eliminated === player.eliminated) {
+      return player
+    }
+    changed = true
+    return { ...player, eliminated }
+  })
+  return changed ? { ...session, players } : session
+}
+
+export function nextActivePlayerIndex(session: GameSession): {
+  index: number
+  dayAdvance: boolean
+} {
+  const start = activePlayerIndex(session)
+  const n = session.players.length
+  if (n === 0) {
+    return { index: 0, dayAdvance: false }
+  }
+  for (let step = 1; step <= n; step += 1) {
+    const index = (start + step) % n
+    const player = session.players[index]
+    if (!player || isPlayerEliminated(session, player)) {
+      continue
+    }
+    return { index, dayAdvance: index <= start }
+  }
+  return { index: start, dayAdvance: true }
+}
+
+export function endTurn(session: GameSession): GameSession {
+  let current = withEliminations(session)
+  const { index, dayAdvance } = nextActivePlayerIndex(current)
+  current = { ...current, activePlayerIndex: index }
+  if (dayAdvance) {
+    const previous = current.game.calendar
+    const next = advanceDay(previous)
+    current = {
+      ...current,
+      game: { ...current.game, calendar: next },
+    }
+    current = applyMineIncome(current)
+    if (isWeekRollover(previous, next)) {
+      const catalog = getCachedCatalog()
+      if (catalog) {
+        current = applyWeeklyGrowth(current, catalog)
+      }
+    }
+  }
+  const incoming = activePlayer(current)
+  if (incoming) {
+    current = restorePlayerHeroMovement(current, incoming.id)
+  }
+  return current
 }
 
 const PLACEHOLDER_HERO_NAME = 'X1'
@@ -103,6 +222,7 @@ export function assignHeroesFromPool(
       class_id: pick.class_id,
       image_path: pick.image_path,
       army: { ...hero.army, slot_0: pick.name },
+      learned_abilities: hero.learned_abilities ?? [],
     }
   })
   const withNames = changed ? { ...session, heroes } : session
@@ -140,7 +260,7 @@ export function hireHeroFromPool(
   }
   const hero: Hero = {
     id: nextHeroId(spent.session),
-    player_id: HUMAN_PLAYER_ID,
+    player_id: actingPlayerId(spent.session) ?? HUMAN_PLAYER_ID,
     name: pick.name,
     class_id: pick.class_id,
     image_path: pick.image_path,
@@ -150,13 +270,14 @@ export function hireHeroFromPool(
       slot_0: pick.name,
       slots_1_to_6: Array.from({ length: ARMY_STACK_SLOTS }, () => null),
     },
+    learned_abilities: [],
   }
   return {
     session: {
       ...spent.session,
       heroes: [...spent.session.heroes, hero],
       players: spent.session.players.map((player) =>
-        player.id === HUMAN_PLAYER_ID
+        player.id === hero.player_id
           ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
           : player,
       ),
@@ -190,7 +311,7 @@ export function applyWalletStockpiles(
   return {
     ...session,
     players: session.players.map((player) =>
-      player.id === HUMAN_PLAYER_ID
+      player.id === (activePlayer(session)?.id ?? HUMAN_PLAYER_ID)
         ? {
             ...player,
             resources: Object.fromEntries(
@@ -220,23 +341,127 @@ export function spendResources(
   }
 }
 
-export function applyMineIncome(session: GameSession): GameSession {
+export function playerMarketplaceCount(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+): number {
   const player = humanPlayer(session)
   if (!player) {
-    return session
+    return 0
   }
-  const resources = { ...player.resources }
-  for (const node of session.nodes) {
-    if (node.kind !== 'mine' || node.player_id !== player.id) {
-      continue
+  const ownedTownIds = new Set(
+    session.towns
+      .filter((town) => town.player_id === player.id)
+      .map((town) => town.id),
+  )
+  return countOwnedMarketplaces(catalog, ownedTownIds, session.building_states)
+}
+
+export function executeMarketTrade(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  sellId: number,
+  buyId: number,
+  edited: 'sell' | 'buy',
+  qty: number,
+): { session: GameSession; error: string | null } {
+  if (sellId === buyId) {
+    return { session, error: 'Choose two different resources.' }
+  }
+  const player = humanPlayer(session)
+  if (!player) {
+    return { session, error: 'No player.' }
+  }
+  const rate = marketConversionRate(
+    catalog.market,
+    playerMarketplaceCount(session, catalog),
+  )
+  if (rate == null) {
+    return { session, error: 'Market rates are not loaded.' }
+  }
+  const ownedSell = player.resources[sellId] ?? 0
+  const quote = quoteMarketTrade(
+    catalog,
+    sellId,
+    buyId,
+    rate,
+    edited,
+    qty,
+    ownedSell,
+  )
+  if (!quote || quote.sellQty <= 0 || quote.buyQty <= 0) {
+    return { session, error: 'Trade is not valid.' }
+  }
+  if (quote.sellQty > ownedSell) {
+    return { session, error: 'Not enough to sell.' }
+  }
+  const wallet = walletFromSession(session)
+  const sellEntry = wallet[sellId]
+  const buyEntry = wallet[buyId]
+  if (!sellEntry || !buyEntry) {
+    return { session, error: 'Unknown resource.' }
+  }
+  const next = snapshotWallet(wallet)
+  next[sellId].stockpile -= quote.sellQty
+  next[buyId].stockpile += quote.buyQty
+  return { session: applyWalletStockpiles(session, next), error: null }
+}
+
+export function executeMarketMultiSell(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  sellIds: number[],
+  buyId: number,
+): { session: GameSession; error: string | null } {
+  const player = humanPlayer(session)
+  if (!player) {
+    return { session, error: 'No player.' }
+  }
+  const rate = marketConversionRate(
+    catalog.market,
+    playerMarketplaceCount(session, catalog),
+  )
+  if (rate == null) {
+    return { session, error: 'Market rates are not loaded.' }
+  }
+  const quote = quoteMultiSell(catalog, sellIds, buyId, rate, player.resources)
+  if (quote.buyTotal <= 0 || quote.included.length === 0) {
+    return { session, error: 'Trade is not valid.' }
+  }
+  const wallet = walletFromSession(session)
+  const buyEntry = wallet[buyId]
+  if (!buyEntry) {
+    return { session, error: 'Unknown resource.' }
+  }
+  const next = snapshotWallet(wallet)
+  for (const line of quote.included) {
+    const sellEntry = next[line.sellId]
+    if (!sellEntry || line.sellQty > (player.resources[line.sellId] ?? 0)) {
+      return { session, error: 'Not enough to sell.' }
     }
-    resources[node.resource_id] = (resources[node.resource_id] ?? 0) + YIELD_PER_MINE
+    sellEntry.stockpile -= line.sellQty
   }
+  next[buyId].stockpile += quote.buyTotal
+  return { session: applyWalletStockpiles(session, next), error: null }
+}
+
+export function applyMineIncome(session: GameSession): GameSession {
   return {
     ...session,
-    players: session.players.map((p) =>
-      p.id === HUMAN_PLAYER_ID ? { ...p, resources } : p,
-    ),
+    players: session.players.map((player) => {
+      if (isPlayerEliminated(session, player)) {
+        return player
+      }
+      const resources = { ...player.resources }
+      for (const node of session.nodes) {
+        if (node.kind !== 'mine' || node.player_id !== player.id) {
+          continue
+        }
+        resources[node.resource_id] =
+          (resources[node.resource_id] ?? 0) + YIELD_PER_MINE
+      }
+      return { ...player, resources }
+    }),
   }
 }
 
@@ -270,16 +495,39 @@ function emptyBuildingStates(townId: string): BuildingState[] {
     slot_num: index + 1,
     level: 0,
     recruit_qty: 0,
+    offered_abilities: [],
   }))
 }
 
 function withBuildingSlots(session: GameSession, townId: string): GameSession {
-  if (session.building_states.some((row) => row.town_id === townId)) {
+  const existing = session.building_states.filter((row) => row.town_id === townId)
+  if (existing.length === 0) {
+    return {
+      ...session,
+      building_states: [...session.building_states, ...emptyBuildingStates(townId)],
+    }
+  }
+  const have = new Set(existing.map((row) => row.slot_num))
+  const missing: BuildingState[] = []
+  for (let slotNum = 1; slotNum <= BUILDING_SLOT_COUNT; slotNum += 1) {
+    if (!have.has(slotNum)) {
+      missing.push({
+        id: `${townId}-slot-${slotNum}`,
+        town_id: townId,
+        building_id: null,
+        slot_num: slotNum,
+        level: 0,
+        recruit_qty: 0,
+        offered_abilities: [],
+      })
+    }
+  }
+  if (missing.length === 0) {
     return session
   }
   return {
     ...session,
-    building_states: [...session.building_states, ...emptyBuildingStates(townId)],
+    building_states: [...session.building_states, ...missing],
   }
 }
 
@@ -306,6 +554,7 @@ export function patchBuildingSlot(
           slot_num: slotNum,
           level: next.level,
           recruit_qty: next.recruitQty,
+          offered_abilities: [],
         },
       ],
     }
@@ -319,9 +568,105 @@ export function patchBuildingSlot(
             building_id: next.buildingId,
             level: next.level,
             recruit_qty: next.recruitQty,
+            offered_abilities:
+              next.level === 0 ? [] : (row.offered_abilities ?? []),
           }
         : row,
     ),
+  }
+}
+
+export function ensureLibraryOffers(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  townId: string,
+  townTypeId: number,
+  slotNum: number,
+): GameSession {
+  let changed = false
+  const building_states = session.building_states.map((row) => {
+    if (row.town_id !== townId || row.slot_num !== slotNum) {
+      return row
+    }
+    if (row.level < 1 || row.building_id == null) {
+      return row
+    }
+    const offered = mergeLibraryOffers(
+      row.offered_abilities,
+      catalog,
+      row.building_id,
+      townTypeId,
+      row.level,
+    )
+    if (offered === row.offered_abilities) {
+      return row
+    }
+    changed = true
+    return { ...row, offered_abilities: offered }
+  })
+  return changed ? { ...session, building_states } : session
+}
+
+export function learnLibraryAbility(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  townId: string,
+  heroId: string,
+  abilityId: number,
+): { session: GameSession; error: string | null } {
+  const town = findTownById(session, townId)
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!town || !hero) {
+    return { session, error: 'This town is not in the game session.' }
+  }
+  if (visitingHeroId(session, town) !== heroId) {
+    return { session, error: 'A hero must be visiting this town.' }
+  }
+  const ability = abilityById(catalog, abilityId)
+  if (!ability) {
+    return { session, error: 'Unknown ability.' }
+  }
+  if ((hero.learned_abilities ?? []).includes(abilityId)) {
+    return { session, error: 'Already learned.' }
+  }
+  if (!heroHasDiscipline(catalog, hero.class_id, ability.discipline_id)) {
+    return { session, error: 'This hero cannot learn that ability.' }
+  }
+  const library = session.building_states.find((row) => {
+    if (row.town_id !== townId || row.level < ability.level_id || row.building_id == null) {
+      return false
+    }
+    const building = buildingById(catalog, row.building_id)
+    return building != null && isLibraryBuilding(building)
+  })
+  if (!library) {
+    return { session, error: 'That tier is not open yet.' }
+  }
+  const offer = findOffer(
+    library.offered_abilities,
+    ability.discipline_id,
+    ability.level_id,
+  )
+  if (!offer || !offer.ability_ids.includes(abilityId)) {
+    return { session, error: 'That ability is not on offer.' }
+  }
+  const spent = spendResources(session, goldCostForLevel(ability.level_id))
+  if (spent.error) {
+    return spent
+  }
+  return {
+    session: {
+      ...spent.session,
+      heroes: spent.session.heroes.map((row) =>
+        row.id === heroId
+          ? {
+              ...row,
+              learned_abilities: [...(row.learned_abilities ?? []), abilityId],
+            }
+          : row,
+      ),
+    },
+    error: null,
   }
 }
 
@@ -359,7 +704,7 @@ function addGrant(
   grants.set(playerId, current)
 }
 
-/** Owned towns: stack `resource_yield`; per town, max `defense_tier.gold_income`. */
+/** Owned towns: stack `resource_yield`; per town, max `gold_income` among built buildings. */
 function applyWeeklyBuildingIncome(
   session: GameSession,
   catalog: ReferenceCatalog,
@@ -379,7 +724,7 @@ function applyWeeklyBuildingIncome(
       if (yieldGrant) {
         addGrant(grants, town.player_id, yieldGrant.resourceId, yieldGrant.amount)
       }
-      const gold = defenseGoldIncome(building)
+      const gold = goldIncomeGrant(building)
       if (gold > maxGold) {
         maxGold = gold
       }
@@ -992,19 +1337,28 @@ export function claimTown(
     }
   }
   current = withBuildingSlots(current, town.id)
-  if (town.player_id === HUMAN_PLAYER_ID) {
+  const ownerId = actingPlayerId(current)
+  if (!ownerId || town.player_id === ownerId) {
     return current
   }
+  const previousId = town.player_id
   return {
     ...current,
     towns: current.towns.map((t) =>
-      t.id === town.id ? { ...t, player_id: HUMAN_PLAYER_ID } : t,
+      t.id === town.id ? { ...t, player_id: ownerId } : t,
     ),
-    players: current.players.map((player) =>
-      player.id === HUMAN_PLAYER_ID && !player.town_ids.includes(town.id)
-        ? { ...player, town_ids: [...player.town_ids, town.id] }
-        : player,
-    ),
+    players: current.players.map((player) => {
+      if (player.id === ownerId && !player.town_ids.includes(town.id)) {
+        return { ...player, town_ids: [...player.town_ids, town.id] }
+      }
+      if (previousId && player.id === previousId) {
+        return {
+          ...player,
+          town_ids: player.town_ids.filter((id) => id !== town.id),
+        }
+      }
+      return player
+    }),
   }
 }
 
@@ -1014,6 +1368,10 @@ export function claimMine(
   r: number,
   resourceId?: number,
 ): GameSession {
+  const ownerId = actingPlayerId(session)
+  if (!ownerId) {
+    return session
+  }
   const existing = session.nodes.find(
     (node) => node.kind === 'mine' && node.position.q === q && node.position.r === r,
   )
@@ -1021,7 +1379,7 @@ export function claimMine(
     return {
       ...session,
       nodes: session.nodes.map((node) =>
-        node.id === existing.id ? { ...node, player_id: HUMAN_PLAYER_ID } : node,
+        node.id === existing.id ? { ...node, player_id: ownerId } : node,
       ),
     }
   }
@@ -1033,7 +1391,7 @@ export function claimMine(
     position: { q, r },
     resource_id: resourceId,
     kind: 'mine',
-    player_id: HUMAN_PLAYER_ID,
+    player_id: ownerId,
     collected: false,
   }
   return { ...session, nodes: [...session.nodes, node] }
@@ -1072,7 +1430,7 @@ export function collectPickup(
     ...session,
     nodes,
     players: session.players.map((p) =>
-      p.id === HUMAN_PLAYER_ID
+      p.id === player.id
         ? {
             ...p,
             resources: {
@@ -1096,6 +1454,20 @@ export function syncHero(
     heroes: session.heroes.map((hero) =>
       hero.id === heroId
         ? { ...hero, position: { ...position }, movement_remaining: movementRemaining }
+        : hero,
+    ),
+  }
+}
+
+export function restorePlayerHeroMovement(
+  session: GameSession,
+  playerId: string,
+): GameSession {
+  return {
+    ...session,
+    heroes: session.heroes.map((hero) =>
+      hero.player_id === playerId
+        ? { ...hero, movement_remaining: MAX_MOVEMENT_POINTS }
         : hero,
     ),
   }

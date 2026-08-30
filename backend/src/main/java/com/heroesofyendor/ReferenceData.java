@@ -22,17 +22,23 @@ public class ReferenceData {
 
     static final List<String> TABLE_NAMES = List.of(
             "resource",
-            "magic_type",
             "attack_type",
             "move_type",
             "town",
             "hero_type",
             "skill",
-            "spell",
             "building",
             "unit",
             "town_name_pool",
-            "hero_pool");
+            "hero_pool",
+            "town_layout",
+            "market",
+            "ability",
+            "discipline",
+            "ability_level",
+            "hero_discipline",
+            "difficulty",
+            "player_color");
 
     private static final Logger log = LoggerFactory.getLogger(ReferenceData.class);
 

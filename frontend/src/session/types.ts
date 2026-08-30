@@ -11,6 +11,8 @@ export type GameSettings = {
   victory_condition: string
   difficulty: string
   game_type: string
+  /** Catalog hero_type.id per player slot; null = Random. */
+  hero_type_ids?: Array<number | null>
 }
 
 export type Game = {
@@ -24,10 +26,12 @@ export type Game = {
 export type Player = {
   id: string
   is_ai: boolean
+  /** Skip in turn order after losing last town and last hero. */
+  eliminated: boolean
   resources: Record<number, number>
   hero_ids: string[]
   town_ids: string[]
-  /** Fog of war — hexes this player has seen. */
+  /** Per-player fog of war — hexes this player has seen. */
   explored: AxialPos[]
 }
 
@@ -52,6 +56,15 @@ export type BuildingState = {
   slot_num: number
   level: number
   recruit_qty: number
+  /** Rolled Library offers, keyed by building_id + discipline_id + level. */
+  offered_abilities: OfferedAbilityRoll[]
+}
+
+export type OfferedAbilityRoll = {
+  building_id: number
+  discipline_id: number
+  level: number
+  ability_ids: number[]
 }
 
 export type HeroArmy = {
@@ -68,6 +81,7 @@ export type Hero = {
   position: AxialPos
   movement_remaining: number
   army: HeroArmy
+  learned_abilities: number[]
 }
 
 export type UnitStack = {
@@ -99,6 +113,8 @@ export type Mob = {
 export type GameSession = {
   game: Game
   players: Player[]
+  /** Index into players[]; 0 = first slot. */
+  activePlayerIndex: number
   towns: Town[]
   building_states: BuildingState[]
   heroes: Hero[]
@@ -111,5 +127,20 @@ export const HUMAN_PLAYER_ID = 'player-1'
 export const GAME_ID = 'game-1'
 export const HERO_ID = 'hero-1'
 export const NECROPOLIS_TOWN_TYPE_ID = 1
-export const BUILDING_SLOT_COUNT = 12
+export const BUILDING_SLOT_COUNT = 16
 export const ARMY_STACK_SLOTS = 6
+
+export function playerIdForSlot(slot: number): string {
+  return `player-${slot}`
+}
+
+export function slotFromPlayerId(playerId: string): number | null {
+  if (!playerId.startsWith('player-')) {
+    return null
+  }
+  const slot = Number(playerId.slice('player-'.length))
+  if (!Number.isInteger(slot) || slot < 1) {
+    return null
+  }
+  return slot
+}

@@ -29,6 +29,27 @@ export function isWeekRollover(previous: Calendar, next: Calendar): boolean {
   return previous.day === 7 && next.day === 1
 }
 
+export function isMonthRollover(previous: Calendar, next: Calendar): boolean {
+  return previous.month !== next.month
+}
+
+/** Highest calendar unit that ticked; null if the date did not change. */
+export function calendarRolloverTitle(
+  previous: Calendar,
+  next: Calendar,
+): 'New Day' | 'New Week' | 'New Month' | null {
+  if (sameCalendar(previous, next)) {
+    return null
+  }
+  if (isMonthRollover(previous, next)) {
+    return 'New Month'
+  }
+  if (isWeekRollover(previous, next)) {
+    return 'New Week'
+  }
+  return 'New Day'
+}
+
 export function formatCalendar(calendar: Calendar): string {
   return `M${calendar.month} W${calendar.week} D${calendar.day}`
 }

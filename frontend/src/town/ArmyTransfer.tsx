@@ -14,6 +14,7 @@ import {
 import type { GameSession } from '../session/types'
 import type { ReferenceCatalog } from './catalog'
 import { heroPortraitUrl } from './slotArt'
+import { stackView, UnitStackFace, type UnitStackView } from './unitStack'
 
 export type ArmyRowSpec = {
   row: ArmyRowId
@@ -267,6 +268,16 @@ export function ArmyTransfer({
       if (event.key !== 'Escape') {
         return
       }
+      const busy =
+        heldRef.current != null ||
+        draggingRef.current != null ||
+        menu != null ||
+        splitSlot != null
+      if (!busy) {
+        return
+      }
+      event.preventDefault()
+      event.stopImmediatePropagation()
       if (heldRef.current) {
         cancelHeld('Split stack returned to its origin.')
       }
@@ -278,13 +289,13 @@ export function ArmyTransfer({
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
-    window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
     }
-  }, [catalog, townId])
+  }, [catalog, menu, splitSlot, townId])
 
   useEffect(() => {
     return () => {
@@ -336,8 +347,8 @@ export function ArmyTransfer({
           heroId={spec.heroId}
           portraitLabel={spec.portraitLabel}
           portraitFilename={spec.portraitFilename}
-          armyLabels={rowSlotIds(session, townId, spec.row, spec.heroId).map(
-            (id) => stackLabel(session, id, catalog),
+          armyStacks={rowSlotIds(session, townId, spec.row, spec.heroId).map(
+            (id) => stackView(session, id, catalog),
           )}
           onSlotPointerDown={(slot, event) => {
             if (event.button !== 0 || held) {
@@ -436,7 +447,7 @@ function ArmyRow({
   heroId,
   portraitLabel,
   portraitFilename,
-  armyLabels,
+  armyStacks,
   onSlotPointerDown,
   onSlotContextMenu,
 }: {
@@ -444,7 +455,7 @@ function ArmyRow({
   heroId?: string | null
   portraitLabel: string
   portraitFilename: string | null
-  armyLabels: string[]
+  armyStacks: UnitStackView[]
   onSlotPointerDown: (slot: number, event: ReactPointerEvent) => void
   onSlotContextMenu: (slot: number, event: ReactMouseEvent) => void
 }) {
@@ -457,7 +468,7 @@ function ArmyRow({
       >
         <PortraitFace label={portraitLabel} filename={portraitFilename} />
       </div>
-      {armyLabels.map((text, index) => (
+      {armyStacks.map((stack, index) => (
         <button
           key={index}
           type="button"
@@ -468,7 +479,7 @@ function ArmyRow({
           onPointerDown={(event) => onSlotPointerDown(index + 1, event)}
           onContextMenu={(event) => onSlotContextMenu(index + 1, event)}
         >
-          {text}
+          <UnitStackFace {...stack} />
         </button>
       ))}
     </div>
