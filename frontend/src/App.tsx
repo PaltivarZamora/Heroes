@@ -22,6 +22,7 @@ import { calendarRolloverTitle, formatCalendar } from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
 import { FriendlyTrade } from './town/FriendlyTrade'
+import { CombatScreen } from './combat/CombatScreen'
 import { fetchCatalog, getCachedCatalog } from './town/catalog'
 import { OptionsMenu } from './options/OptionsMenu'
 import type { GameConfig } from './options/gameConfig'
@@ -118,7 +119,10 @@ function App() {
     leftHeroId: string
     rightHeroId: string
   } | null>(null)
-  const [combatNotice, setCombatNotice] = useState(false)
+  const [combat, setCombat] = useState<{
+    attackerHeroId: string
+    defenderHeroId: string
+  } | null>(null)
   const [dateNotice, setDateNotice] = useState<{
     title: string
     date: string
@@ -129,7 +133,7 @@ function App() {
   const calendar = session.game.calendar
   const onTownWelcome = useCallback((townName: string, townId: string) => {
     setTrade(null)
-    setCombatNotice(false)
+    setCombat(null)
     const next = { id: townId, name: townName }
     lastTownRef.current = next
     setWelcomeTown(next)
@@ -146,18 +150,19 @@ function App() {
     }
     setWelcomeTown(null)
     if (self.player_id === other.player_id) {
-      setCombatNotice(false)
+      setCombat(null)
       setTrade({ leftHeroId: self.id, rightHeroId: other.id })
       return
     }
     setTrade(null)
-    setCombatNotice(true)
+    setHeroScreen(false)
+    setCombat({ attackerHeroId: self.id, defenderHeroId: other.id })
   }, [])
   const onEndTurn = useCallback(() => {
     setWelcomeTown(null)
     setHeroScreen(false)
     setTrade(null)
-    setCombatNotice(false)
+    setCombat(null)
     const previous = getSession().game.calendar
     updateSession((current) =>
       endTurn(persistActiveExplored(current, getExploredHexes())),
@@ -173,7 +178,7 @@ function App() {
     setWelcomeTown(null)
     setHeroScreen(false)
     setTrade(null)
-    setCombatNotice(false)
+    setCombat(null)
     setDateNotice(null)
     lastTownRef.current = null
     clearCachedGrid()
@@ -228,7 +233,7 @@ function App() {
     }
     setWelcomeTown(null)
     setTrade(null)
-    setCombatNotice(false)
+    setCombat(null)
     setHeroScreen(true)
   }, [])
 
@@ -275,9 +280,9 @@ function App() {
           setDateNotice(null)
           return
         }
-        if (combatNotice) {
+        if (combat) {
           event.preventDefault()
-          setCombatNotice(false)
+          setCombat(null)
           return
         }
         if (trade) {
@@ -300,7 +305,10 @@ function App() {
       }
 
       if (event.key === 'Tab') {
-        if (inOptions || editable) {
+        if (inOptions || editable || combat) {
+          if (combat) {
+            event.preventDefault()
+          }
           return
         }
         event.preventDefault()
@@ -317,14 +325,14 @@ function App() {
           return
         }
         event.preventDefault()
-        if (heroScreen || welcomeTown || trade || combatNotice || dateNotice) {
+        if (heroScreen || welcomeTown || trade || combat || dateNotice) {
           return
         }
         onEndTurn()
         return
       }
 
-      if (inOptions || editable) {
+      if (inOptions || editable || combat) {
         return
       }
       const key = event.key.toLowerCase()
@@ -345,7 +353,7 @@ function App() {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [
-    combatNotice,
+    combat,
     cycleHero,
     cycleTown,
     dateNotice,
@@ -464,7 +472,7 @@ function App() {
           setWelcomeTown(null)
           setHeroScreen(false)
           setTrade(null)
-          setCombatNotice(false)
+          setCombat(null)
           setDateNotice(null)
           lastTownRef.current = null
           const catalog = getCachedCatalog()
@@ -544,20 +552,12 @@ function App() {
           </div>
         </div>
       ) : null}
-      {combatNotice ? (
-        <div
-          className="combat-stub"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="combat-stub-title"
-        >
-          <div className="combat-stub-card">
-            <h1 id="combat-stub-title">Combat not yet implemented.</h1>
-            <button type="button" onClick={() => setCombatNotice(false)}>
-              Close
-            </button>
-          </div>
-        </div>
+      {combat ? (
+        <CombatScreen
+          attackerHeroId={combat.attackerHeroId}
+          defenderHeroId={combat.defenderHeroId}
+          onExit={() => setCombat(null)}
+        />
       ) : null}
       {trade ? (
         <FriendlyTrade

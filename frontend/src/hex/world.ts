@@ -4,6 +4,26 @@ import type { TileData, TerrainType, TestGridResponse } from './types'
 
 const GRID_PADDING = 28
 
+/** Same costs as backend `Terrain` — World map tiles store these on each hex. */
+export const TERRAIN_MOVE_COST: Record<TerrainType, number | null> = {
+  'Stone Path': 0.9,
+  'Dirt Path': 1.0,
+  Grass: 1.1,
+  Ash: 1.25,
+  Rocky: 1.5,
+  Lava: 1.75,
+  Desert: 2.0,
+  Snow: 2.0,
+  Mud: 2.0,
+  Swamp: 2.5,
+  Shallows: 2.5,
+  Forest: null,
+  Mountain: null,
+  Water: null,
+  Barrier: null,
+  Void: null,
+}
+
 export const TERRAIN_COLORS: Record<TerrainType, number> = {
   'Stone Path': 0xcfd8dc,
   'Dirt Path': 0xc4a574,
@@ -182,9 +202,8 @@ function measureGrid(grid: Grid<Hex>) {
   }
 }
 
-export function buildWorld(tiles: TileData[], hexSize: number) {
-  setTiles(tiles)
-  const { width, height } = dimensionsFromTiles(tiles)
+/** Hex grid only — does not replace the World map tile cache. */
+export function createHexGrid(width: number, height: number, hexSize: number) {
   const Hex = defineHex({
     dimensions: hexSize,
     orientation: Orientation.FLAT,
@@ -192,4 +211,10 @@ export function buildWorld(tiles: TileData[], hexSize: number) {
   })
   const grid = new Grid(Hex, rectangle({ width, height }))
   return { grid, layout: measureGrid(grid), width, height }
+}
+
+export function buildWorld(tiles: TileData[], hexSize: number) {
+  setTiles(tiles)
+  const { width, height } = dimensionsFromTiles(tiles)
+  return createHexGrid(width, height, hexSize)
 }

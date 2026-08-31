@@ -38,6 +38,21 @@ export type UnitRow = {
   bldg_id: number | null
   cost: CostMap | null
   image_path: string | null
+  /** Battlefield footprint in hexes. Null means 1. */
+  hex_size: number | null
+  speed: number
+  move_type_id: number | null
+  health: number
+  dmg_type: string | null
+  min_dmg: number
+  max_dmg: number
+  min_range: number
+  max_range: number
+}
+
+export type MoveTypeRow = {
+  id: number
+  name: string
 }
 
 export type HeroTypeRow = {
@@ -128,6 +143,7 @@ export type ReferenceCatalog = {
   hero_discipline: HeroDisciplineRow[]
   difficulty: DifficultyRow[]
   player_color: PlayerColorRow[]
+  move_type: MoveTypeRow[]
 }
 
 /** TBD until per-building destroy_cost values exist. */
@@ -299,6 +315,25 @@ function asNamed(rows: unknown): Array<{ id: number; name: string }> {
       return { id: asInt(raw.id), name }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
+}
+
+function asMoveTypes(rows: unknown): MoveTypeRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const name =
+        typeof rec.name === 'string'
+          ? rec.name.trim()
+          : typeof rec.value === 'string'
+            ? rec.value.trim()
+            : ''
+      return { id: asInt(rec.id), name }
+    })
+    .filter((row) => row.id > 0 && row.name.length > 0)
+    .sort((a, b) => a.id - b.id)
 }
 
 function asHeroTypes(rows: unknown): HeroTypeRow[] {
@@ -473,11 +508,40 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     },
   )
   const unit = (Array.isArray(payload.unit) ? payload.unit : []).map((row) => {
+    const extra = row as {
+      hex_size?: unknown
+      speed?: unknown
+      move_type_id?: unknown
+      health?: unknown
+      dmg_type?: unknown
+      min_dmg?: unknown
+      max_dmg?: unknown
+      min_range?: unknown
+      max_range?: unknown
+    }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
+    const hexRaw = extra.hex_size
+    const hexNum = hexRaw == null || hexRaw === '' ? null : asInt(hexRaw)
+    const moveRaw = extra.move_type_id
+    const moveId =
+      moveRaw == null || moveRaw === '' ? null : asInt(moveRaw)
+    const dmgType =
+      typeof extra.dmg_type === 'string' ? extra.dmg_type.trim() : ''
+    const maxRangeRaw = extra.max_range
     return {
       ...row,
       cost: asCost(row.cost),
       image_path: image || null,
+      hex_size: hexNum != null && hexNum > 0 ? hexNum : null,
+      speed: asInt(extra.speed),
+      move_type_id: moveId != null && moveId > 0 ? moveId : null,
+      health: asInt(extra.health),
+      dmg_type: dmgType.length > 0 ? dmgType : null,
+      min_dmg: asInt(extra.min_dmg),
+      max_dmg: asInt(extra.max_dmg),
+      min_range: asInt(extra.min_range),
+      max_range:
+        maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw),
     }
   })
   const catalog: ReferenceCatalog = {
@@ -495,6 +559,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     hero_discipline: asHeroDisciplines(payload.hero_discipline),
     difficulty: asDifficulties(payload.difficulty),
     player_color: asPlayerColors(payload.player_color),
+    move_type: asMoveTypes(payload.move_type),
   }
   cachedCatalog = catalog
   emitCatalog()
@@ -600,6 +665,11 @@ export function goldIncomeGrant(building: BuildingRow | null): number {
 
 export function unitCost(unit: UnitRow | null): CostMap {
   return unit ? asCost(unit.cost) : {}
+}
+
+/** Battlefield hexes this unit occupies. Null/missing/anything but 2 is 1. */
+export function unitHexFootprint(unit: UnitRow | null | undefined): 1 | 2 {
+  return unit?.hex_size === 2 ? 2 : 1
 }
 
 export function scaleCost(cost: CostMap, qty: number): CostMap {
@@ -996,4 +1066,14 @@ export function unitForBuilding(
     return null
   }
   return catalog.unit.find((row) => row.bldg_id === buildingId) ?? null
+}
+
+export function unitById(
+  catalog: ReferenceCatalog | null | undefined,
+  id: number | null | undefined,
+): UnitRow | null {
+  if (!catalog || id == null) {
+    return null
+  }
+  return catalog.unit.find((row) => row.id === id) ?? null
 }

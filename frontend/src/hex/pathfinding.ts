@@ -91,21 +91,29 @@ export function approachHex(
 }
 
 /**
- * Lowest-cost path between two passable hexes. Returns null if none.
+ * Same A* as World `findPath`, with caller-supplied enter cost / walkability.
  * Path includes start and destination. Cost is paid on entering a hex.
- * `blocked` is other heroes, towns, and resource nodes for this path only —
- * not baked into terrain. Callers omit the destination when that hex is a
- * walk-onto target (town, mine, or pickup). Heroes are never omitted.
  */
-export function findPath(
+export function findPathOnBoard(
   from: Axial,
   to: Axial,
+  enterCost: (q: number, r: number) => number | null,
   blocked?: ReadonlySet<string>,
+  canEnter?: (q: number, r: number) => boolean,
 ): Axial[] | null {
   if (from.q === to.q && from.r === to.r) {
     return [from]
   }
-  if (!isWalkable(from.q, from.r) || !isPathHexOpen(to.q, to.r, blocked)) {
+  const allowed = (q: number, r: number) => {
+    if (canEnter) {
+      return canEnter(q, r)
+    }
+    if (blocked?.has(key(q, r))) {
+      return false
+    }
+    return enterCost(q, r) != null
+  }
+  if (!allowed(to.q, to.r)) {
     return null
   }
 
@@ -138,13 +146,11 @@ export function findPath(
     }
     open.delete(bestKey)
 
-    for (const delta of AXIAL_NEIGHBORS) {
-      const next = { q: current.q + delta.q, r: current.r + delta.r }
-      if (!isPathHexOpen(next.q, next.r, blocked)) {
+    for (const next of neighborHexes(current)) {
+      if (!allowed(next.q, next.r)) {
         continue
       }
-      const tile = getTile(next.q, next.r)
-      const cost = tile?.movementCostMultiplier
+      const cost = enterCost(next.q, next.r)
       if (cost == null) {
         continue
       }
@@ -162,6 +168,33 @@ export function findPath(
   return null
 }
 
+/**
+ * Lowest-cost path between two passable hexes. Returns null if none.
+ * Path includes start and destination. Cost is paid on entering a hex.
+ * `blocked` is other heroes, towns, and resource nodes for this path only —
+ * not baked into terrain. Callers omit the destination when that hex is a
+ * walk-onto target (town, mine, or pickup). Heroes are never omitted.
+ */
+export function findPath(
+  from: Axial,
+  to: Axial,
+  blocked?: ReadonlySet<string>,
+): Axial[] | null {
+  if (from.q === to.q && from.r === to.r) {
+    return [from]
+  }
+  if (!isWalkable(from.q, from.r) || !isPathHexOpen(to.q, to.r, blocked)) {
+    return null
+  }
+  return findPathOnBoard(
+    from,
+    to,
+    (q, r) => getTile(q, r)?.movementCostMultiplier ?? null,
+    blocked,
+    (q, r) => isPathHexOpen(q, r, blocked),
+  )
+}
+
 function reconstruct(cameFrom: Map<string, Axial>, end: Axial): Axial[] {
   const path: Axial[] = [end]
   let cursor = end
@@ -173,4 +206,71 @@ function reconstruct(cameFrom: Map<string, Axial>, end: Axial): Axial[] {
   }
   path.reverse()
   return path
+}
+
+/**
+ * Every hex reachable within `budget`, paying `enterCost` on entry.
+ * Start hex is omitted. Paths include the start. `blocked` hexes cannot
+ * be entered (the origin is allowed even if listed).
+ */
+export function reachableWithin(
+  from: Axial,
+  budget: number,
+  enterCost: (q: number, r: number) => number | null,
+  blocked?: ReadonlySet<string>,
+): Map<string, Axial[]> {
+  const startKey = key(from.q, from.r)
+  const cameFrom = new Map<string, Axial>()
+  const gScore = new Map<string, number>([[startKey, 0]])
+  const posByKey = new Map<string, Axial>([[startKey, from]])
+  const open = new Map<string, Axial>([[startKey, from]])
+
+  while (open.size > 0) {
+    let bestKey = ''
+    let bestG = Infinity
+    let current: Axial | undefined
+    for (const [openKey, node] of open) {
+      const g = gScore.get(openKey) ?? Infinity
+      if (g < bestG) {
+        bestG = g
+        bestKey = openKey
+        current = node
+      }
+    }
+    if (!current) {
+      break
+    }
+    open.delete(bestKey)
+
+    for (const next of neighborHexes(current)) {
+      const nextKey = key(next.q, next.r)
+      if (blocked?.has(nextKey) && nextKey !== startKey) {
+        continue
+      }
+      const cost = enterCost(next.q, next.r)
+      if (cost == null) {
+        continue
+      }
+      const tentative = bestG + cost
+      if (tentative - 1e-9 > budget) {
+        continue
+      }
+      if (tentative + 1e-9 >= (gScore.get(nextKey) ?? Infinity)) {
+        continue
+      }
+      cameFrom.set(nextKey, current)
+      gScore.set(nextKey, tentative)
+      posByKey.set(nextKey, next)
+      open.set(nextKey, next)
+    }
+  }
+
+  const paths = new Map<string, Axial[]>()
+  for (const [hexKey, pos] of posByKey) {
+    if (hexKey === startKey) {
+      continue
+    }
+    paths.set(hexKey, reconstruct(cameFrom, pos))
+  }
+  return paths
 }

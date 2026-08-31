@@ -22,7 +22,6 @@ public class ReferenceData {
 
     static final List<String> TABLE_NAMES = List.of(
             "resource",
-            "attack_type",
             "move_type",
             "town",
             "hero_type",

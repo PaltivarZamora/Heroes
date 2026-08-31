@@ -30,6 +30,7 @@ public class ReferenceCatalogController {
         body.put("town", decodeRows(referenceData.rows("town"), resourceNameToId));
         body.put("building", decodeRows(referenceData.rows("building"), resourceNameToId));
         body.put("unit", decodeRows(referenceData.rows("unit"), resourceNameToId));
+        body.put("move_type", decodeRows(referenceData.rows("move_type"), resourceNameToId));
         body.put("hero_type", decodeRows(referenceData.rows("hero_type"), resourceNameToId));
         body.put("hero_pool", decodeRows(referenceData.rows("hero_pool"), resourceNameToId));
         body.put("town_layout", decodeRows(referenceData.rows("town_layout"), resourceNameToId));
