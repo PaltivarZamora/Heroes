@@ -27,13 +27,13 @@ import {
   loadAllTerrainTextures,
   pickTerrainVariantIndex,
 } from './terrainTextures'
-import { buildWorld, fetchTestGrid, getTile, getExploredHexes, isExplored, markExplored, restoreExplored, TERRAIN_COLORS } from './world'
+import { buildWorld, fetchTestGrid, getTile, getExploredHexes, isExplored, markExplored, restoreExplored, terrainFillColor } from './world'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 import { getSession, subscribe, updateSession } from '../session/store'
 import { ensureStartingHeroes, hydrateMapObjects } from '../session/create'
 import { HERO_ID } from '../session/types'
-import { fetchCatalog, ownerTint, subscribeCatalog } from '../town/catalog'
+import { fetchCatalog, getCachedCatalog, ownerTint, subscribeCatalog } from '../town/catalog'
 import {
   activePlayer,
   claimMine,
@@ -371,8 +371,15 @@ export function HexMap({
         return
       }
 
-      const texturesByTerrain = await loadAllTerrainTextures()
       await colorsReady
+      if (cancelled) {
+        instance.destroy()
+        return
+      }
+
+      const texturesByTerrain = await loadAllTerrainTextures(
+        getCachedCatalog()?.terrain_type ?? [],
+      )
       if (cancelled) {
         instance.destroy()
         return
@@ -396,7 +403,7 @@ export function HexMap({
           y: corner.y + offsetY,
         }))
         fills.poly(poly)
-        fills.fill({ color: TERRAIN_COLORS[tile.terrain] })
+        fills.fill({ color: terrainFillColor(tile.terrain) })
         strokes.poly(poly)
         strokes.stroke({ width: 1.5, color: 0x111111 })
       })

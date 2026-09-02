@@ -1,16 +1,19 @@
-import type { TerrainType } from '../hex/types'
 import type { GameSession, Hero } from '../session/types'
 import { NECROPOLIS_TOWN_TYPE_ID, slotFromPlayerId } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { unitById } from '../town/catalog'
+import { retaliationCharges, unitById } from '../town/catalog'
+import { stacksWithoutOverlap } from './occupancy'
 
 export type CombatSide = 'atk' | 'def'
 
 export type CombatTile = {
   q: number
   r: number
-  terrain: TerrainType
+  terrain: string
   movementCostMultiplier: number | null
+  blocked: boolean
+  /** From terrain_type.blocks_los. Units never set this. */
+  blocksLos: boolean
 }
 
 export type CombatStack = {
@@ -25,6 +28,8 @@ export type CombatStack = {
   q: number
   r: number
   hasActedThisRound: boolean
+  /** Remaining retaliations this round. Infinity = unlimited. */
+  retaliationsLeft: number
 }
 
 export type CombatBattle = {
@@ -42,7 +47,7 @@ export type CombatBattle = {
  *   16 Bats attacked 12 Worms for ## dmg and ## Worms died.
  *   ## Worms retaliated against 16 Bats for ## dmg and ## Bats died.
  *   Player 1 now has ## Bats and Player 2 has ## Worms.
- * Movement + attack lines are real. Retaliation is not yet.
+ * Movement, attack, and melee retaliation are real.
  */
 export type BattleLog = {
   lines: string[]
@@ -107,6 +112,7 @@ function stackFromArmySlot(
     q: start.q,
     r: start.r,
     hasActedThisRound: false,
+    retaliationsLeft: retaliationCharges(unitById(catalog, unitStack.unit_id)),
   }
 }
 
@@ -145,6 +151,7 @@ function stacksForSide(
       q: start.q,
       r: start.r,
       hasActedThisRound: false,
+      retaliationsLeft: retaliationCharges(unit),
     }
   })
 }
@@ -223,6 +230,7 @@ export function startRound(
   const stacks = battle.stacks.map((stack) => ({
     ...stack,
     hasActedThisRound: false,
+    retaliationsLeft: retaliationCharges(unitById(catalog, stack.unitId)),
   }))
   return {
     ...battle,
@@ -243,10 +251,13 @@ export function createBattle(
 ): CombatBattle {
   const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
   const defender = session.heroes.find((hero) => hero.id === defenderHeroId)
-  const stacks = [
-    ...stacksForSide(session, catalog, attacker, 'atk', starts, 0),
-    ...stacksForSide(session, catalog, defender, 'def', starts, 6),
-  ]
+  const stacks = stacksWithoutOverlap(
+    [
+      ...stacksForSide(session, catalog, attacker, 'atk', starts, 0),
+      ...stacksForSide(session, catalog, defender, 'def', starts, 6),
+    ],
+    catalog,
+  )
   return startRound(
     {
       round: 0,

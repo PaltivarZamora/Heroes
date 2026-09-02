@@ -1,27 +1,11 @@
-export type TerrainType =
-  | 'Stone Path'
-  | 'Dirt Path'
-  | 'Grass'
-  | 'Ash'
-  | 'Rocky'
-  | 'Lava'
-  | 'Desert'
-  | 'Snow'
-  | 'Mud'
-  | 'Swamp'
-  | 'Shallows'
-  | 'Forest'
-  | 'Mountain'
-  | 'Water'
-  | 'Barrier'
-  | 'Void'
-
 export type TileData = {
   q: number
   r: number
-  terrain: TerrainType
-  /** Movement cost multiplier. `null` means impassable. */
+  terrain: string
+  /** Movement cost multiplier. `null` when unused (blocked types). */
   movementCostMultiplier: number | null
+  /** Explicit flag from terrain_type.is_blocked — do not infer from cost. */
+  blocked: boolean
 }
 
 export type MapObjectKind = 'mine' | 'pickup' | 'town'

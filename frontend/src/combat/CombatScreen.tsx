@@ -13,13 +13,14 @@ import {
   hexFloorAnchor,
   neighborhoodTerrains,
   pickCombatTerrain,
+  applyCombatBarriers,
 } from './battlefield'
 import {
   addMaskedTerrainHex,
   loadAllTerrainTextures,
   pickTerrainVariantIndex,
 } from '../hex/terrainTextures'
-import { TERRAIN_COLORS, TERRAIN_MOVE_COST } from '../hex/world'
+import { terrainFillColor } from '../hex/world'
 import { MOVE_STEP_MS } from '../hex/hero'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
 import { getSession, subscribe } from '../session/store'
@@ -27,6 +28,9 @@ import {
   fetchCatalog,
   getCachedCatalog,
   subscribeCatalog,
+  shapePulsesOnMove,
+  terrainByName,
+  unitAttackShape,
   unitById,
 } from '../town/catalog'
 import { heroPortraitUrl, unitPortraitUrl } from '../town/slotArt'
@@ -53,7 +57,14 @@ import {
   stackOccupyingHex,
 } from './movement'
 import { resolveAttack } from './attack'
-import { combatHover, canStrikeThisTurn, type CombatHover } from './target'
+import {
+  actingStand,
+  canStrikeThisTurn,
+  combatHover,
+  pointerHexZone,
+  type CombatHover,
+  type HexZone,
+} from './target'
 import { CombatTargetIcon } from './CombatIcons'
 import {
   commitCombatOutcome,
@@ -210,6 +221,20 @@ function anchorAt(anchors: HexAnchor[], q: number, r: number): HexAnchor | null 
   return anchors.find((row) => row.q === q && row.r === r) ?? null
 }
 
+function stackArtBox(
+  pos: { x: number; y: number },
+  hexPx: number,
+  size: number,
+  side: CombatSide,
+) {
+  const cells = Math.max(1, size)
+  const width = hexPx * cells
+  const height = hexPx
+  const left =
+    side === 'def' ? pos.x + hexPx / 2 - width : pos.x - hexPx / 2
+  return { width, height, left, top: pos.y - height }
+}
+
 function stackViewFromCombat(
   stack: CombatStack,
   catalog: ReturnType<typeof getCachedCatalog>,
@@ -232,11 +257,15 @@ export function CombatScreen({
   const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
   const defender = session.heroes.find((hero) => hero.id === defenderHeroId)
   const canvasHostRef = useRef<HTMLDivElement>(null)
-  const reachApiRef = useRef<{ draw: (keys: string[]) => void } | null>(null)
+  const reachApiRef = useRef<{
+    draw: (gold: string[], red?: string[]) => void
+  } | null>(null)
   const activeApiRef = useRef<{ setKey: (key: string | null) => void } | null>(
     null,
   )
-  const onHexClickRef = useRef<(q: number, r: number) => void>(() => {})
+  const onHexClickRef = useRef<(q: number, r: number, zone: HexZone) => void>(
+    () => {},
+  )
   const onHoverRef = useRef<(hover: CombatHover | null) => void>(() => {})
   const battleRef = useRef<CombatBattle | null>(null)
   const catalogRef = useRef(catalog)
@@ -245,6 +274,12 @@ export function CombatScreen({
   const movingRef = useRef(false)
   const walkGenRef = useRef(0)
   const fieldRef = useRef<FieldView | null>(null)
+  const presentAttackRef = useRef<
+    (
+      resolved: NonNullable<ReturnType<typeof resolveAttack>>,
+      extraLines: string[],
+    ) => void
+  >(() => {})
   const [field, setField] = useState<FieldView | null>(null)
   const [battle, setBattle] = useState<CombatBattle | null>(null)
   const [log, setLog] = useState<BattleLog | null>(null)
@@ -253,6 +288,7 @@ export function CombatScreen({
   const [hoverTarget, setHoverTarget] = useState<CombatHover | null>(null)
   const [opening, setOpening] = useState<OpeningStack[]>([])
   const [summary, setSummary] = useState<CombatSummary | null>(null)
+  const pendingSummaryRef = useRef<CombatSummary | null>(null)
   const appliedRef = useRef(false)
   const openingRef = useRef<OpeningStack[]>([])
   battleRef.current = battle
@@ -262,7 +298,7 @@ export function CombatScreen({
   openingRef.current = opening
   movingRef.current = moving
 
-  onHexClickRef.current = (q, r) => {
+  onHexClickRef.current = (q, r, zone) => {
     if (log || moving || summary || !battle || !catalog || !field) {
       return
     }
@@ -276,23 +312,40 @@ export function CombatScreen({
       battle,
       field.tiles,
       catalog,
+      zone,
     )
     if (!intent) {
       return
     }
-    if (intent.steps.length === 0 && intent.attackTargetId) {
+    const fire = intent.fire || intent.afterMove === 'pulse'
+    const stand = actingStand({ q: stack.q, r: stack.r }, intent.steps)
+    const aim = {
+      targetId: intent.attackTargetId,
+      hex:
+        intent.afterMove === 'pulse'
+          ? stand
+          : (intent.aimHex ?? { q: intent.q, r: intent.r }),
+      stand,
+    }
+    if (intent.steps.length === 0 && fire) {
       const resolved = resolveAttack(
         battle,
         stack.id,
-        intent.attackTargetId,
         catalog,
+        aim,
+        field.tiles,
       )
       if (!resolved) {
         return
       }
       setHoverTarget(null)
-      setBattle(resolved.battle)
-      setLog(resolved.log)
+      presentAttackRef.current(resolved, [])
+      return
+    }
+    if (intent.steps.length === 0) {
+      setHoverTarget(null)
+      setBattle(endStackTurn(battle, stack.id))
+      setLog({ lines: [movementLogLine(stack, catalog, 0)] })
       return
     }
     const gen = (walkGenRef.current += 1)
@@ -312,22 +365,22 @@ export function CombatScreen({
       if (walkGenRef.current !== gen) {
         return
       }
-      if (intent.attackTargetId) {
+      setMoving(false)
+      if (fire) {
         const resolved = resolveAttack(
           latest,
           stack.id,
-          intent.attackTargetId,
           catalog,
+          aim,
+          field.tiles,
         )
         if (resolved) {
-          const lines = [
-            ...(intent.steps.length > 0
+          presentAttackRef.current(
+            resolved,
+            intent.steps.length > 0
               ? [movementLogLine(stack, catalog, intent.steps.length)]
-              : []),
-            ...resolved.log.lines,
-          ]
-          setBattle(resolved.battle)
-          setLog({ lines })
+              : [],
+          )
         } else {
           setBattle(endStackTurn(latest, stack.id))
           setLog({
@@ -340,13 +393,39 @@ export function CombatScreen({
           lines: [movementLogLine(stack, catalog, intent.steps.length)],
         })
       }
-      setMoving(false)
     })()
   }
 
   const finishCombat = (current: CombatBattle) => {
-    if (appliedRef.current || !catalog) {
+    if (!defeatedSide(current)) {
       return false
+    }
+    if (!appliedRef.current && catalog) {
+      const result = commitCombatOutcome(
+        catalog,
+        attackerHeroId,
+        defenderHeroId,
+        current,
+        openingRef.current,
+      )
+      if (result) {
+        appliedRef.current = true
+        pendingSummaryRef.current = result
+      }
+    }
+    const pending = pendingSummaryRef.current
+    if (!pending) {
+      return false
+    }
+    setHoverTarget(null)
+    setLog(null)
+    setSummary(pending)
+    return true
+  }
+
+  const applyOutcomeIfOver = (current: CombatBattle) => {
+    if (appliedRef.current || !catalog || !defeatedSide(current)) {
+      return
     }
     const result = commitCombatOutcome(
       catalog,
@@ -356,14 +435,31 @@ export function CombatScreen({
       openingRef.current,
     )
     if (!result) {
-      return false
+      return
     }
     appliedRef.current = true
-    setHoverTarget(null)
-    setLog(null)
-    setSummary(result)
-    return true
+    pendingSummaryRef.current = result
   }
+
+  presentAttackRef.current = (resolved, extraLines) => {
+    const lines = [...extraLines, ...resolved.log.lines]
+    setBattle(resolved.battle)
+    applyOutcomeIfOver(resolved.battle)
+    if (lines.length > 0) {
+      setLog({ lines })
+      return
+    }
+    const currentCatalog = catalogRef.current
+    if (currentCatalog) {
+      setBattle(advanceTurn(resolved.battle, currentCatalog))
+    }
+  }
+
+  useEffect(() => {
+    if (battle) {
+      applyOutcomeIfOver(battle)
+    }
+  }, [battle, catalog, attackerHeroId, defenderHeroId])
 
   onHoverRef.current = (hover) => {
     setHoverTarget(hover)
@@ -418,6 +514,7 @@ export function CombatScreen({
     setLog(null)
     setSummary(null)
     appliedRef.current = false
+    pendingSummaryRef.current = null
   }, [field, catalog, catalogReady, attackerHeroId, defenderHeroId])
 
   useEffect(() => {
@@ -436,6 +533,22 @@ export function CombatScreen({
     if (canMove || canStrikeThisTurn(stack, battle, field.tiles, catalog)) {
       return
     }
+    const spec = unitAttackShape(unitById(catalog, stack.unitId))
+    if (shapePulsesOnMove(spec.shape)) {
+      const resolved = resolveAttack(
+        battle,
+        stack.id,
+        catalog,
+        { targetId: null, hex: { q: stack.q, r: stack.r }, stand: { q: stack.q, r: stack.r } },
+        field.tiles,
+      )
+      if (resolved) {
+        presentAttackRef.current(resolved, [
+          movementLogLine(stack, catalog, 0),
+        ])
+        return
+      }
+    }
     setBattle(applyMove(battle, stack.id, stack.q, stack.r))
     setLog({ lines: [movementLogLine(stack, catalog, 0)] })
   }, [battle, catalog, field, log, moving, summary])
@@ -445,7 +558,7 @@ export function CombatScreen({
     const current = getSession()
     const att = current.heroes.find((hero) => hero.id === attackerHeroId)
     const def = current.heroes.find((hero) => hero.id === defenderHeroId)
-    if (!canvasHost || !att || !def) {
+    if (!canvasHost || !att || !def || !catalog) {
       return
     }
     let cancelled = false
@@ -483,7 +596,7 @@ export function CombatScreen({
       }
       app = instance
       canvasHost.replaceChildren(instance.canvas)
-      const texturesByTerrain = await loadAllTerrainTextures()
+      const texturesByTerrain = await loadAllTerrainTextures(catalog.terrain_type)
       if (cancelled) {
         instance.destroy()
         return
@@ -494,29 +607,52 @@ export function CombatScreen({
       const activeMark = new Graphics()
       const terrainLayer = new Container()
       const { offsetX, offsetY } = layout
-      const tiles: CombatTile[] = []
+      const rolled: CombatTile[] = []
       const anchors: HexAnchor[] = []
       const hexByKey = new Map<string, Hex>()
+      const colByKey = new Map<string, number>()
       grid.forEach((hex) => {
         const terrain = pickCombatTerrain(pool, seed, hex.q, hex.r)
-        tiles.push({
+        const spec = terrainByName(catalog, terrain)
+        rolled.push({
           q: hex.q,
           r: hex.r,
           terrain,
-          movementCostMultiplier: TERRAIN_MOVE_COST[terrain],
+          movementCostMultiplier: spec?.move_cost ?? null,
+          blocked: spec?.is_blocked ?? true,
+          blocksLos: spec?.blocks_los ?? false,
         })
         const floor = hexFloorAnchor(hex, offsetX, offsetY)
         anchors.push({ q: hex.q, r: hex.r, x: floor.x, y: floor.y })
         hexByKey.set(hexKey(hex.q, hex.r), hex)
+        colByKey.set(hexKey(hex.q, hex.r), hex.col)
+      })
+      const tiles = applyCombatBarriers(
+        rolled,
+        colByKey,
+        [attackerCol, defenderCol],
+        seed,
+        catalog,
+      )
+      for (const tile of tiles) {
+        const hex = hexByKey.get(hexKey(tile.q, tile.r))
+        if (!hex) {
+          continue
+        }
         const poly = hex.corners.map((corner) => ({
           x: corner.x + offsetX,
           y: corner.y + offsetY,
         }))
         fills.poly(poly)
-        fills.fill({ color: TERRAIN_COLORS[terrain] })
-        const variants = texturesByTerrain.get(terrain)
+        fills.fill({ color: terrainFillColor(tile.terrain) })
+        const variants = texturesByTerrain.get(tile.terrain)
         if (variants && variants.length > 0) {
-          const variant = pickTerrainVariantIndex(seed, hex.q, hex.r, variants)
+          const variant = pickTerrainVariantIndex(
+            seed,
+            tile.q,
+            tile.r,
+            variants,
+          )
           addMaskedTerrainHex(
             terrainLayer,
             hex,
@@ -527,14 +663,14 @@ export function CombatScreen({
         }
         strokes.poly(poly)
         strokes.stroke({ width: 2, color: 0x111111 })
-      })
+      }
       const world = new Container()
       world.addChild(fills, terrainLayer, strokes, reach, activeMark)
       instance.stage.addChild(world)
 
-      const drawReach = (keys: string[]) => {
+      const drawReach = (goldKeys: string[], redKeys: string[] = []) => {
         reach.clear()
-        for (const key of keys) {
+        for (const key of goldKeys) {
           const hex = hexByKey.get(key)
           if (!hex) {
             continue
@@ -547,6 +683,20 @@ export function CombatScreen({
           )
           reach.fill({ color: 0xffeb3b, alpha: 0.38 })
           reach.stroke({ width: 2, color: 0xfbc02d })
+        }
+        for (const key of redKeys) {
+          const hex = hexByKey.get(key)
+          if (!hex) {
+            continue
+          }
+          reach.poly(
+            hex.corners.map((corner) => ({
+              x: corner.x + offsetX,
+              y: corner.y + offsetY,
+            })),
+          )
+          reach.fill({ color: 0xe53935, alpha: 0.4 })
+          reach.stroke({ width: 2, color: 0xc62828 })
         }
       }
       reachApiRef.current = { draw: drawReach }
@@ -590,6 +740,22 @@ export function CombatScreen({
           { allowOutside: false },
         )
       }
+      const zoneAt = (event: PointerEvent, hex: Hex): HexZone => {
+        const bounds = canvas.getBoundingClientRect()
+        const corners = hex.corners
+        let cx = 0
+        let cy = 0
+        for (const corner of corners) {
+          cx += corner.x
+          cy += corner.y
+        }
+        const n = Math.max(1, corners.length)
+        return pointerHexZone(
+          event.clientX - bounds.left - offsetX - cx / n,
+          event.clientY - bounds.top - offsetY - cy / n,
+          COMBAT_HEX_SIZE,
+        )
+      }
       let lastHoverKey = ''
       const onPointerMove = (event: PointerEvent) => {
         if (logRef.current || movingRef.current || summaryRef.current) {
@@ -614,7 +780,8 @@ export function CombatScreen({
           onHoverRef.current(null)
           return
         }
-        const hoverKey = `${stack.id}:${stack.q},${stack.r}->${hex.q},${hex.r}`
+        const zone = zoneAt(event, hex)
+        const hoverKey = `${stack.id}:${stack.q},${stack.r}->${hex.q},${hex.r}:${zone}`
         if (hoverKey === lastHoverKey) {
           return
         }
@@ -625,8 +792,12 @@ export function CombatScreen({
           currentBattle,
           tiles,
           currentCatalog,
+          zone,
         )
-        drawReach(intent ? intent.steps.map((step) => hexKey(step.q, step.r)) : [])
+        drawReach(
+          intent ? intent.steps.map((step) => hexKey(step.q, step.r)) : [],
+          intent?.impactKeys ?? [],
+        )
         onHoverRef.current(intent)
       }
       const onPointerLeave = () => {
@@ -639,7 +810,7 @@ export function CombatScreen({
         if (!hex) {
           return
         }
-        onHexClickRef.current(hex.q, hex.r)
+        onHexClickRef.current(hex.q, hex.r, zoneAt(event, hex))
       }
       canvas.addEventListener('pointermove', onPointerMove)
       canvas.addEventListener('pointerleave', onPointerLeave)
@@ -673,7 +844,7 @@ export function CombatScreen({
       fieldRef.current = null
       app?.destroy()
     }
-  }, [attackerHeroId, defenderHeroId])
+  }, [attackerHeroId, defenderHeroId, catalog])
 
   return (
     <div
@@ -691,7 +862,7 @@ export function CombatScreen({
               onExit()
               return
             }
-            if (battle && finishCombat(battle)) {
+            if (battle && finishCombat(battleRef.current ?? battle)) {
               return
             }
             onExit()
@@ -726,15 +897,12 @@ export function CombatScreen({
                     return null
                   }
                   const view = stackViewFromCombat(stack, catalog)
-                  const cells = catalog
-                    ? combatStackCells(stack, catalog)
-                    : 1
-                  const width = field.hexPx * cells
-                  const height = field.hexPx
-                  const left =
-                    cells === 2 && stack.side === 'def'
-                      ? pos.x + field.hexPx / 2 - width
-                      : pos.x - width / 2
+                  const box = stackArtBox(
+                    pos,
+                    field.hexPx,
+                    catalog ? combatStackCells(stack, catalog) : 1,
+                    stack.side,
+                  )
                   const current = activeStack(battle)
                   const speed = unitById(catalog, stack.unitId)?.speed ?? 0
                   return (
@@ -748,10 +916,10 @@ export function CombatScreen({
                       data-active={current?.id === stack.id ? 'true' : 'false'}
                       data-top-health={stack.topHealth}
                       style={{
-                        width,
-                        height,
-                        left,
-                        top: pos.y - height,
+                        width: box.width,
+                        height: box.height,
+                        left: box.left,
+                        top: box.top,
                       }}
                     >
                       <CombatStackArt view={view} />
@@ -777,27 +945,28 @@ export function CombatScreen({
                         (row) =>
                           row.q === hoverTarget.q && row.r === hoverTarget.r,
                       )
-                  const cells =
+                  const box = stackArtBox(
+                    pos,
+                    field.hexPx,
                     occupant && catalog
                       ? combatStackCells(occupant, catalog)
-                      : 1
-                  const width = field.hexPx * cells
-                  const height = field.hexPx
-                  const left =
-                    cells === 2 && occupant?.side === 'def'
-                      ? pos.x + field.hexPx / 2 - width
-                      : pos.x - width / 2
+                      : 1,
+                    occupant?.side ?? 'atk',
+                  )
                   return (
                     <div
                       className="combat-target-icon"
                       style={{
-                        width,
-                        height,
-                        left,
-                        top: pos.y - height,
+                        width: box.width,
+                        height: box.height,
+                        left: box.left,
+                        top: box.top,
                       }}
                     >
-                      <CombatTargetIcon kind={hoverTarget.icon} />
+                      <CombatTargetIcon
+                        kind={hoverTarget.icon}
+                        arrowDeg={hoverTarget.arrowDeg}
+                      />
                     </div>
                   )
                 })()
@@ -811,15 +980,16 @@ export function CombatScreen({
           role="dialog"
           aria-label="Battle log"
           onClick={() => {
-            if (!battle || !catalog) {
+            const current = battleRef.current ?? battle
+            if (!current || !catalog) {
               setLog(null)
               return
             }
-            if (finishCombat(battle)) {
+            if (finishCombat(current)) {
               return
             }
             setLog(null)
-            setBattle(advanceTurn(battle, catalog))
+            setBattle(advanceTurn(current, catalog))
           }}
         >
           <div className="date-notice-card">

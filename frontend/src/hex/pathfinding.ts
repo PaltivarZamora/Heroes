@@ -46,7 +46,10 @@ function pathEnterCost(path: Axial[]): number {
   let cost = 0
   for (let i = 1; i < path.length; i++) {
     const tile = getTile(path[i].q, path[i].r)
-    const step = tile?.movementCostMultiplier
+    if (!tile || tile.blocked) {
+      return Infinity
+    }
+    const step = tile.movementCostMultiplier
     if (step == null) {
       return Infinity
     }
@@ -189,7 +192,13 @@ export function findPath(
   return findPathOnBoard(
     from,
     to,
-    (q, r) => getTile(q, r)?.movementCostMultiplier ?? null,
+    (q, r) => {
+      const tile = getTile(q, r)
+      if (!tile || tile.blocked) {
+        return null
+      }
+      return tile.movementCostMultiplier
+    },
     blocked,
     (q, r) => isPathHexOpen(q, r, blocked),
   )

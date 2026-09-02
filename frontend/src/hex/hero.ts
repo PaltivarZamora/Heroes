@@ -105,7 +105,7 @@ export function movementSteps(
       break
     }
     const tile = getTile(hex.q, hex.r)
-    if (!tile) {
+    if (!tile || tile.blocked) {
       break
     }
     const cost = tile.movementCostMultiplier

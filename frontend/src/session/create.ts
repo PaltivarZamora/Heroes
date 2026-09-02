@@ -461,6 +461,7 @@ export function ensureStartingHeroes(
   fallbackPos: { q: number; r: number },
 ): GameSession {
   const picks = session.game.settings.hero_type_ids
+  const alreadyStarted = session.heroes.length > 0
   let next = assignSpreadStartingTowns(session)
   const occupied = new Set<string>()
   for (const hero of next.heroes) {
@@ -472,6 +473,9 @@ export function ensureStartingHeroes(
   for (let index = 0; index < next.players.length; index += 1) {
     const player = next.players[index]
     if (!player || next.heroes.some((hero) => hero.player_id === player.id)) {
+      continue
+    }
+    if (player.eliminated || alreadyStarted) {
       continue
     }
     const town = next.towns.find((row) => row.player_id === player.id)

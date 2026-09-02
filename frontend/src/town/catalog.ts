@@ -43,16 +43,74 @@ export type UnitRow = {
   speed: number
   move_type_id: number | null
   health: number
+  defense: number
+  resistance: number
   dmg_type: string | null
   min_dmg: number
   max_dmg: number
   min_range: number
   max_range: number
+  /** Battlefield retaliation. Always a resolved spec (null data → default). */
+  retaliation: UnitRetaliation
+  abilities: UnitCombatAbilities
+}
+
+export type UnitRetaliation = {
+  dmgPct: number | 'max'
+  times: number | 'unlimited'
+  preemptive: boolean
+}
+
+export type AttackShapeKind =
+  | 'single'
+  | 'cleave'
+  | 'aoe'
+  | 'pulse'
+  | 'chain'
+  | 'beam'
+  | 'multi'
+  | 'rain'
+  | 'breath'
+
+export type UnitCombatAbilities = {
+  no_enemy_retaliation: boolean
+  shape: AttackShapeKind
+  radius: number
+  jumps: number
+  falloff: number
+  targets: number
+  rows: number
+}
+
+export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
+  dmgPct: 50,
+  times: 1,
+  preemptive: false,
+}
+
+export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
+  no_enemy_retaliation: false,
+  shape: 'single',
+  radius: 1,
+  jumps: 1,
+  falloff: 0,
+  targets: 1,
+  rows: 2,
 }
 
 export type MoveTypeRow = {
   id: number
   name: string
+}
+
+export type TerrainTypeRow = {
+  id: number
+  name: string
+  move_cost: number | null
+  is_blocked: boolean
+  /** Sight, not movement. Water can block walking and still leave LOS open. */
+  blocks_los: boolean
+  variants: number
 }
 
 export type HeroTypeRow = {
@@ -144,6 +202,7 @@ export type ReferenceCatalog = {
   difficulty: DifficultyRow[]
   player_color: PlayerColorRow[]
   move_type: MoveTypeRow[]
+  terrain_type: TerrainTypeRow[]
 }
 
 /** TBD until per-building destroy_cost values exist. */
@@ -336,6 +395,43 @@ function asMoveTypes(rows: unknown): MoveTypeRow[] {
     .sort((a, b) => a.id - b.id)
 }
 
+function asBoolFlag(value: unknown): boolean {
+  if (value === true || value === 1) {
+    return true
+  }
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase()
+    return text === 'true' || text === 't' || text === '1'
+  }
+  return false
+}
+
+function asTerrains(rows: unknown): TerrainTypeRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+      const costRaw = rec.move_cost
+      const cost =
+        costRaw == null || costRaw === ''
+          ? null
+          : Number(costRaw)
+      return {
+        id: asInt(rec.id),
+        name,
+        move_cost: cost != null && Number.isFinite(cost) ? cost : null,
+        is_blocked: asBoolFlag(rec.is_blocked),
+        blocks_los: asBoolFlag(rec.blocks_los),
+        variants: Math.max(0, asInt(rec.variants)),
+      }
+    })
+    .filter((row) => row.id > 0 && row.name.length > 0)
+    .sort((a, b) => a.id - b.id)
+}
+
 function asHeroTypes(rows: unknown): HeroTypeRow[] {
   if (!Array.isArray(rows)) {
     return []
@@ -405,6 +501,112 @@ function asHeroDisciplines(rows: unknown): HeroDisciplineRow[] {
       }
     })
     .filter((row) => row.hero_id > 0 && row.discipline_id > 0)
+}
+
+function asJsonObject(value: unknown): Record<string, unknown> | null {
+  if (value == null) {
+    return null
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return null
+    }
+    try {
+      return asJsonObject(JSON.parse(trimmed))
+    } catch {
+      return null
+    }
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
+function asUnitRetaliation(value: unknown): UnitRetaliation {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return { ...DEFAULT_UNIT_RETALIATION }
+  }
+  const dmgRaw = rec.dmg_pct
+  let dmgPct: number | 'max' = DEFAULT_UNIT_RETALIATION.dmgPct
+  if (typeof dmgRaw === 'string' && dmgRaw.trim().toLowerCase() === 'max') {
+    dmgPct = 'max'
+  } else if (dmgRaw != null && dmgRaw !== '') {
+    const n = Number(dmgRaw)
+    if (Number.isFinite(n)) {
+      dmgPct = Math.min(100, Math.max(0, n))
+    }
+  }
+  const timesRaw = rec.times
+  let times: number | 'unlimited' = DEFAULT_UNIT_RETALIATION.times
+  if (
+    typeof timesRaw === 'string' &&
+    timesRaw.trim().toLowerCase() === 'unlimited'
+  ) {
+    times = 'unlimited'
+  } else if (timesRaw != null && timesRaw !== '') {
+    const n = Number(timesRaw)
+    if (Number.isFinite(n)) {
+      times = Math.max(0, Math.floor(n))
+    }
+  }
+  return {
+    dmgPct,
+    times,
+    preemptive: rec.preemptive === true,
+  }
+}
+
+const ATTACK_SHAPES = new Set<string>([
+  'single',
+  'cleave',
+  'aoe',
+  'pulse',
+  'chain',
+  'beam',
+  'multi',
+  'rain',
+  'breath',
+])
+
+function asAttackShape(raw: string): AttackShapeKind {
+  if (raw === 'screen') {
+    return 'rain'
+  }
+  if (ATTACK_SHAPES.has(raw)) {
+    return raw as AttackShapeKind
+  }
+  return DEFAULT_UNIT_ABILITIES.shape
+}
+
+function asShapeInt(value: unknown, fallback: number): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 1) {
+    return fallback
+  }
+  return Math.floor(n)
+}
+
+function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
+  const rec = asJsonObject(value)
+  const shapeRaw =
+    typeof rec?.shape === 'string' ? rec.shape.trim().toLowerCase() : ''
+  const falloffRaw = rec?.falloff
+  const falloffNum = Number(falloffRaw)
+  return {
+    no_enemy_retaliation: rec?.no_enemy_retaliation === true,
+    shape: asAttackShape(shapeRaw),
+    radius: asShapeInt(rec?.radius, DEFAULT_UNIT_ABILITIES.radius),
+    jumps: asShapeInt(rec?.jumps, DEFAULT_UNIT_ABILITIES.jumps),
+    falloff:
+      Number.isFinite(falloffNum) && falloffNum >= 0
+        ? Math.min(100, falloffNum)
+        : DEFAULT_UNIT_ABILITIES.falloff,
+    targets: asShapeInt(rec?.targets, DEFAULT_UNIT_ABILITIES.targets),
+    rows: asShapeInt(rec?.rows, DEFAULT_UNIT_ABILITIES.rows),
+  }
 }
 
 function asPayload(value: unknown): Record<string, unknown> | null {
@@ -513,11 +715,15 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       speed?: unknown
       move_type_id?: unknown
       health?: unknown
+      defense?: unknown
+      resistance?: unknown
       dmg_type?: unknown
       min_dmg?: unknown
       max_dmg?: unknown
       min_range?: unknown
       max_range?: unknown
+      retaliation?: unknown
+      abilities?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const hexRaw = extra.hex_size
@@ -536,12 +742,16 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       speed: asInt(extra.speed),
       move_type_id: moveId != null && moveId > 0 ? moveId : null,
       health: asInt(extra.health),
+      defense: Math.max(0, asInt(extra.defense)),
+      resistance: Math.max(0, asInt(extra.resistance)),
       dmg_type: dmgType.length > 0 ? dmgType : null,
       min_dmg: asInt(extra.min_dmg),
       max_dmg: asInt(extra.max_dmg),
       min_range: asInt(extra.min_range),
       max_range:
         maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw),
+      retaliation: asUnitRetaliation(extra.retaliation),
+      abilities: asUnitCombatAbilities(extra.abilities),
     }
   })
   const catalog: ReferenceCatalog = {
@@ -560,6 +770,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     difficulty: asDifficulties(payload.difficulty),
     player_color: asPlayerColors(payload.player_color),
     move_type: asMoveTypes(payload.move_type),
+    terrain_type: asTerrains(payload.terrain_type),
   }
   cachedCatalog = catalog
   emitCatalog()
@@ -598,6 +809,12 @@ export async function reloadReferenceData(): Promise<DataStatus> {
     ok: payload.ok,
     tables: Array.isArray(payload.tables) ? payload.tables : [],
   }
+}
+
+/** Re-read Postgres into Spring, then refresh the frontend catalog. */
+export async function refreshCatalogFromDb(): Promise<ReferenceCatalog> {
+  await reloadReferenceData()
+  return fetchCatalog()
 }
 
 export function buildingGrowth(building: BuildingRow | null): number {
@@ -667,9 +884,55 @@ export function unitCost(unit: UnitRow | null): CostMap {
   return unit ? asCost(unit.cost) : {}
 }
 
-/** Battlefield hexes this unit occupies. Null/missing/anything but 2 is 1. */
-export function unitHexFootprint(unit: UnitRow | null | undefined): 1 | 2 {
-  return unit?.hex_size === 2 ? 2 : 1
+/** Battlefield hexes this unit occupies. Null/missing/non-positive is 1. */
+export function unitHexFootprint(unit: UnitRow | null | undefined): number {
+  const n = unit?.hex_size
+  if (n == null || !Number.isFinite(n) || n < 1) {
+    return 1
+  }
+  return Math.floor(n)
+}
+
+export function unitRetaliation(
+  unit: UnitRow | null | undefined,
+): UnitRetaliation {
+  return unit?.retaliation ?? DEFAULT_UNIT_RETALIATION
+}
+
+export function unitBlocksEnemyRetaliation(
+  unit: UnitRow | null | undefined,
+): boolean {
+  return unit?.abilities?.no_enemy_retaliation === true
+}
+
+export function unitAttackShape(
+  unit: UnitRow | null | undefined,
+): UnitCombatAbilities {
+  const raw = unit?.abilities
+  if (!raw) {
+    return DEFAULT_UNIT_ABILITIES
+  }
+  return {
+    ...DEFAULT_UNIT_ABILITIES,
+    ...raw,
+    shape: raw.shape ?? DEFAULT_UNIT_ABILITIES.shape,
+  }
+}
+
+export function shapeIsUntargeted(shape: AttackShapeKind): boolean {
+  return shape === 'rain' || shape === 'multi'
+}
+
+export function shapePulsesOnMove(shape: AttackShapeKind): boolean {
+  return shape === 'pulse'
+}
+
+/** Remaining charges to grant at round start. Infinity = unlimited. */
+export function retaliationCharges(
+  unit: UnitRow | null | undefined,
+): number {
+  const times = unitRetaliation(unit).times
+  return times === 'unlimited' ? Number.POSITIVE_INFINITY : times
 }
 
 export function scaleCost(cost: CostMap, qty: number): CostMap {
@@ -1076,4 +1339,24 @@ export function unitById(
     return null
   }
   return catalog.unit.find((row) => row.id === id) ?? null
+}
+
+export function terrainByName(
+  catalog: ReferenceCatalog | null | undefined,
+  name: string | null | undefined,
+): TerrainTypeRow | null {
+  const key = (name ?? '').trim()
+  if (!catalog || !key) {
+    return null
+  }
+  const underscored = key.replaceAll(' ', '_')
+  const spaced = key.replaceAll('_', ' ')
+  return (
+    catalog.terrain_type.find(
+      (row) =>
+        row.name === key ||
+        row.name === underscored ||
+        row.name === spaced,
+    ) ?? null
+  )
 }

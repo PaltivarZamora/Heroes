@@ -1,11 +1,9 @@
 import { Assets, Graphics, Sprite, Texture, type Container } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
-import type { TerrainType } from './types'
-import { TERRAIN_COLORS } from './world'
+import type { TerrainTypeRow } from '../town/catalog'
 
 /** Slot 1 / 2 / 3 — renormalized among files that actually exist. */
 const VARIANT_WEIGHTS = [50, 35, 15] as const
-const MAX_VARIANTS = 3
 
 export type TerrainTextureVariant = {
   texture: Texture
@@ -73,44 +71,61 @@ async function tryLoadTexture(url: string): Promise<Texture | null> {
 
 async function loadTerrainTextureVariants(
   terrain: string,
+  variantCount: number,
 ): Promise<TerrainTextureVariant[] | null> {
+  const max = Math.max(0, Math.min(VARIANT_WEIGHTS.length, Math.trunc(variantCount)))
   const loaded: TerrainTextureVariant[] = []
-  for (let n = 1; n <= MAX_VARIANTS; n++) {
+  for (let n = 1; n <= max; n += 1) {
     const texture = await tryLoadTexture(terrainTextureUrl(terrain, n))
     if (!texture) {
       continue
     }
-    loaded.push({ texture, weight: VARIANT_WEIGHTS[n - 1] })
+    loaded.push({ texture, weight: VARIANT_WEIGHTS[n - 1]! })
   }
   return loaded.length > 0 ? loaded : null
 }
 
-let cachedByTerrain: Map<TerrainType, TerrainTextureVariant[]> | null = null
-let loadAllPromise: Promise<Map<TerrainType, TerrainTextureVariant[]>> | null =
-  null
+let cachedKey = ''
+let cachedByTerrain: Map<string, TerrainTextureVariant[]> | null = null
+let loadAllPromise: Promise<Map<string, TerrainTextureVariant[]>> | null = null
 
-/** Probe every terrain type; types with no PNGs are omitted (solid-color fallback). */
-export function loadAllTerrainTextures(): Promise<
-  Map<TerrainType, TerrainTextureVariant[]>
-> {
-  if (cachedByTerrain) {
+function typesKey(types: readonly TerrainTypeRow[]): string {
+  return types.map((row) => `${row.name}:${row.variants}`).join('|')
+}
+
+/** Load `{name}_1.png` … `{name}_{variants}.png` for each catalog row. */
+export function loadAllTerrainTextures(
+  types: readonly TerrainTypeRow[] = [],
+): Promise<Map<string, TerrainTextureVariant[]>> {
+  const key = typesKey(types)
+  if (cachedByTerrain && cachedKey === key) {
     return Promise.resolve(cachedByTerrain)
   }
-  if (!loadAllPromise) {
-    loadAllPromise = (async () => {
-      const byTerrain = new Map<TerrainType, TerrainTextureVariant[]>()
-      await Promise.all(
-        (Object.keys(TERRAIN_COLORS) as TerrainType[]).map(async (terrain) => {
-          const variants = await loadTerrainTextureVariants(terrain)
-          if (variants) {
-            byTerrain.set(terrain, variants)
-          }
-        }),
-      )
-      cachedByTerrain = byTerrain
-      return byTerrain
-    })()
+  if (loadAllPromise && cachedKey === key) {
+    return loadAllPromise
   }
+  cachedKey = key
+  loadAllPromise = (async () => {
+    const byTerrain = new Map<string, TerrainTextureVariant[]>()
+    await Promise.all(
+      types.map(async (row) => {
+        const variants = await loadTerrainTextureVariants(row.name, row.variants)
+        if (variants) {
+          byTerrain.set(row.name, variants)
+          const spaced = row.name.replaceAll('_', ' ')
+          const underscored = row.name.replaceAll(' ', '_')
+          if (spaced !== row.name) {
+            byTerrain.set(spaced, variants)
+          }
+          if (underscored !== row.name) {
+            byTerrain.set(underscored, variants)
+          }
+        }
+      }),
+    )
+    cachedByTerrain = byTerrain
+    return byTerrain
+  })()
   return loadAllPromise
 }
 

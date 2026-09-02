@@ -1,30 +1,11 @@
 import { defineHex, Grid, Orientation, rectangle } from 'honeycomb-grid'
 import type { Hex } from 'honeycomb-grid'
-import type { TileData, TerrainType, TestGridResponse } from './types'
+import type { TileData, TestGridResponse } from './types'
 
 const GRID_PADDING = 28
 
-/** Same costs as backend `Terrain` — World map tiles store these on each hex. */
-export const TERRAIN_MOVE_COST: Record<TerrainType, number | null> = {
-  'Stone Path': 0.9,
-  'Dirt Path': 1.0,
-  Grass: 1.1,
-  Ash: 1.25,
-  Rocky: 1.5,
-  Lava: 1.75,
-  Desert: 2.0,
-  Snow: 2.0,
-  Mud: 2.0,
-  Swamp: 2.5,
-  Shallows: 2.5,
-  Forest: null,
-  Mountain: null,
-  Water: null,
-  Barrier: null,
-  Void: null,
-}
-
-export const TERRAIN_COLORS: Record<TerrainType, number> = {
+/** Pixi fill when a type has no PNG. Presentation only — costs come from the catalog. */
+const TERRAIN_FILL: Record<string, number> = {
   'Stone Path': 0xcfd8dc,
   'Dirt Path': 0xc4a574,
   Grass: 0x4caf50,
@@ -43,6 +24,15 @@ export const TERRAIN_COLORS: Record<TerrainType, number> = {
   Void: 0x000000,
 }
 
+export function terrainFillColor(name: string): number {
+  return (
+    TERRAIN_FILL[name] ??
+    TERRAIN_FILL[name.replaceAll('_', ' ')] ??
+    TERRAIN_FILL[name.replaceAll(' ', '_')] ??
+    0x607d8b
+  )
+}
+
 let tilesByCoord = new Map<string, TileData>()
 let explored = new Set<string>()
 
@@ -50,8 +40,41 @@ function coordKey(q: number, r: number): string {
   return `${q},${r}`
 }
 
+function asWorldTile(raw: TileData): TileData {
+  const extra = raw as TileData & {
+    isBlocked?: unknown
+    is_blocked?: unknown
+    movement_cost_multiplier?: unknown
+  }
+  const costRaw = extra.movementCostMultiplier ?? extra.movement_cost_multiplier
+  const cost =
+    costRaw == null || costRaw === ''
+      ? null
+      : Number(costRaw)
+  const flag: unknown = extra.blocked ?? extra.isBlocked ?? extra.is_blocked
+  const blocked =
+    flag === undefined
+      ? cost == null || !Number.isFinite(cost)
+      : flag === true ||
+        flag === 1 ||
+        String(flag).trim().toLowerCase() === 'true'
+  return {
+    q: raw.q,
+    r: raw.r,
+    terrain: String(raw.terrain ?? ''),
+    movementCostMultiplier:
+      cost != null && Number.isFinite(cost) ? cost : null,
+    blocked,
+  }
+}
+
 export function setTiles(tiles: TileData[]): void {
-  tilesByCoord = new Map(tiles.map((tile) => [coordKey(tile.q, tile.r), tile]))
+  tilesByCoord = new Map(
+    tiles.map((tile) => {
+      const next = asWorldTile(tile)
+      return [coordKey(next.q, next.r), next]
+    }),
+  )
 }
 
 export function getTile(q: number, r: number): TileData | undefined {
@@ -60,12 +83,12 @@ export function getTile(q: number, r: number): TileData | undefined {
 
 export function isPassable(q: number, r: number): boolean {
   const tile = getTile(q, r)
-  return tile != null && tile.movementCostMultiplier != null
+  return tile != null && !tile.blocked
 }
 
 export function forEachPassableHex(fn: (q: number, r: number) => void): void {
   for (const tile of tilesByCoord.values()) {
-    if (tile.movementCostMultiplier != null) {
+    if (!tile.blocked) {
       fn(tile.q, tile.r)
     }
   }
@@ -136,6 +159,7 @@ export async function fetchTestGrid(seed?: number): Promise<TestGridResponse> {
       console.log('Failed to fetch test grid: unexpected payload')
       return { seed: 0, tiles: [], objects: [] }
     }
+    payload.tiles = payload.tiles.map(asWorldTile)
     if (!Array.isArray(payload.objects)) {
       payload.objects = []
     }

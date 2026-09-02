@@ -37,7 +37,8 @@ public class ReferenceData {
             "ability_level",
             "hero_discipline",
             "difficulty",
-            "player_color");
+            "player_color",
+            "terrain_type");
 
     private static final Logger log = LoggerFactory.getLogger(ReferenceData.class);
 

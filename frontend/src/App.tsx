@@ -23,7 +23,7 @@ import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
 import { FriendlyTrade } from './town/FriendlyTrade'
 import { CombatScreen } from './combat/CombatScreen'
-import { fetchCatalog, getCachedCatalog } from './town/catalog'
+import { getCachedCatalog, refreshCatalogFromDb } from './town/catalog'
 import { OptionsMenu } from './options/OptionsMenu'
 import type { GameConfig } from './options/gameConfig'
 import { getExploredHexes } from './hex/world'
@@ -175,21 +175,28 @@ function App() {
     }
   }, [])
   const onStartGame = useCallback((config: GameConfig) => {
-    setWelcomeTown(null)
-    setHeroScreen(false)
-    setTrade(null)
-    setCombat(null)
-    setDateNotice(null)
-    lastTownRef.current = null
-    clearCachedGrid()
-    setSession(createSessionFromConfig(config))
-    const catalog = getCachedCatalog()
-    if (catalog) {
-      updateSession((current) =>
-        assignHeroesFromPool(current, catalog.hero_pool),
-      )
-    }
-    setMapEpoch((n) => n + 1)
+    void (async () => {
+      try {
+        await refreshCatalogFromDb()
+      } catch {
+        // Launch with whatever catalog is already cached.
+      }
+      setWelcomeTown(null)
+      setHeroScreen(false)
+      setTrade(null)
+      setCombat(null)
+      setDateNotice(null)
+      lastTownRef.current = null
+      clearCachedGrid()
+      setSession(createSessionFromConfig(config))
+      const catalog = getCachedCatalog()
+      if (catalog) {
+        updateSession((current) =>
+          assignHeroesFromPool(current, catalog.hero_pool),
+        )
+      }
+      setMapEpoch((n) => n + 1)
+    })()
   }, [])
   const cycleTown = useCallback((reverse = false) => {
     const current = getSession()
@@ -406,7 +413,7 @@ function App() {
       }
     }
     void loadStatus()
-    void fetchCatalog()
+    void refreshCatalogFromDb()
       .then((catalog) => {
         if (!cancelled) {
           updateSession((current) =>

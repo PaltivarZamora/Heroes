@@ -2,9 +2,10 @@ import type { TargetIconKind } from './target'
 
 type IconProps = {
   kind: TargetIconKind
+  arrowDeg?: number | null
 }
 
-export function CombatTargetIcon({ kind }: IconProps) {
+function KindSvg({ kind }: { kind: TargetIconKind }) {
   if (kind === 'move') {
     return (
       <svg className="combat-target-svg" viewBox="0 0 32 32" aria-hidden="true">
@@ -23,6 +24,34 @@ export function CombatTargetIcon({ kind }: IconProps) {
           strokeWidth="2.6"
           strokeLinecap="round"
           strokeLinejoin="round"
+        />
+      </svg>
+    )
+  }
+  if (kind === 'aoe') {
+    return (
+      <svg className="combat-target-svg" viewBox="0 0 32 32" aria-hidden="true">
+        <circle
+          cx="16"
+          cy="16"
+          r="11"
+          fill="none"
+          stroke="#80deea"
+          strokeWidth="2"
+        />
+        <circle
+          cx="16"
+          cy="16"
+          r="6"
+          fill="none"
+          stroke="#e0f7fa"
+          strokeWidth="1.8"
+        />
+        <path
+          d="M16 3 V9 M16 23 V29 M3 16 H9 M23 16 H29"
+          stroke="#80deea"
+          strokeWidth="2"
+          strokeLinecap="round"
         />
       </svg>
     )
@@ -67,5 +96,32 @@ export function CombatTargetIcon({ kind }: IconProps) {
       />
       <circle cx="16" cy="16" r="2.2" fill="#ffe082" />
     </svg>
+  )
+}
+
+export function CombatTargetIcon({ kind, arrowDeg }: IconProps) {
+  return (
+    <>
+      <KindSvg kind={kind} />
+      {arrowDeg != null ? (
+        <svg
+          className="combat-wedge-arrow"
+          viewBox="0 0 32 32"
+          aria-hidden="true"
+          style={{
+            transform: `translate(-50%, -50%) rotate(${arrowDeg}deg) translateX(110%)`,
+          }}
+        >
+          <path
+            d="M6 16 H22"
+            fill="none"
+            stroke="#fff59d"
+            strokeWidth="3.2"
+            strokeLinecap="round"
+          />
+          <path d="M18 9 L28 16 L18 23 Z" fill="#fff59d" />
+        </svg>
+      ) : null}
+    </>
   )
 }

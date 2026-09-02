@@ -3,12 +3,14 @@ import type { Axial } from '../hex/hero'
 import { neighborHexes } from '../hex/pathfinding'
 import { HEX_SCALES } from '../hex/hexScale'
 import { pickTerrainVariantIndex } from '../hex/terrainTextures'
-import type { TerrainType } from '../hex/types'
+import type { ReferenceCatalog } from '../town/catalog'
+import { terrainByName } from '../town/catalog'
 import { getTile } from '../hex/world'
+import type { CombatTile } from './battle'
 
 export const COMBAT_COLUMNS = 15
 export const COMBAT_ROWS = 11
-export const COMBAT_HEX_SIZE = HEX_SCALES.Medium
+export const COMBAT_HEX_SIZE = HEX_SCALES.Large
 /** 0-based offset column: one in from the left edge. */
 export const ATTACKER_COL = 1
 /** 0-based offset column: one in from the right edge. */
@@ -67,8 +69,8 @@ export function hexFloorAnchor(hex: Hex, offsetX: number, offsetY: number) {
   return { x: x / corners.length + offsetX, y: bottom + offsetY }
 }
 
-export function neighborhoodTerrains(a: Axial, b: Axial): TerrainType[] {
-  const seen = new Set<TerrainType>()
+export function neighborhoodTerrains(a: Axial, b: Axial): string[] {
+  const seen = new Set<string>()
   const addAt = (pos: Axial) => {
     const tile = getTile(pos.q, pos.r)
     if (tile) {
@@ -87,11 +89,11 @@ export function neighborhoodTerrains(a: Axial, b: Axial): TerrainType[] {
 }
 
 export function pickCombatTerrain(
-  pool: readonly TerrainType[],
+  pool: readonly string[],
   seed: number,
   q: number,
   r: number,
-): TerrainType {
+): string {
   const list = pool.length > 0 ? pool : (['Grass'] as const)
   const index = pickTerrainVariantIndex(
     seed,
@@ -115,4 +117,71 @@ export function combatEncounterSeed(
       (defender.r * 50331653)) >>>
     0
   )
+}
+
+const BARRIER_COUNT_MIN = 10
+const BARRIER_COUNT_MAX = 15
+
+function u32(n: number): number {
+  return n >>> 0
+}
+
+function barrierRand(seed: number, n: number): number {
+  let h = u32(
+    Math.imul(seed, 0x9e3779b1) ^ Math.imul(n + 0x7f4a7c15, 0x85ebca6b),
+  )
+  h = u32((h ^ (h >>> 16)) * 0x7feb352d)
+  h = u32((h ^ (h >>> 15)) * 0x846ca68b)
+  return u32(h ^ (h >>> 16))
+}
+
+/**
+ * Overlay 10–15 Barrier hexes after terrain is assigned. Skips army
+ * placement columns so starting stacks are never boxed in.
+ */
+export function applyCombatBarriers(
+  tiles: CombatTile[],
+  colByKey: ReadonlyMap<string, number>,
+  reservedCols: readonly number[],
+  seed: number,
+  catalog: ReferenceCatalog,
+): CombatTile[] {
+  const reserved = new Set(reservedCols)
+  const eligible: number[] = []
+  for (let i = 0; i < tiles.length; i += 1) {
+    const tile = tiles[i]!
+    const col = colByKey.get(`${tile.q},${tile.r}`)
+    if (col == null || reserved.has(col)) {
+      continue
+    }
+    eligible.push(i)
+  }
+  if (eligible.length === 0) {
+    return tiles
+  }
+  for (let i = eligible.length - 1; i > 0; i -= 1) {
+    const j = barrierRand(seed, i + 1) % (i + 1)
+    const tmp = eligible[i]!
+    eligible[i] = eligible[j]!
+    eligible[j] = tmp
+  }
+  const span = BARRIER_COUNT_MAX - BARRIER_COUNT_MIN + 1
+  const count = Math.min(
+    eligible.length,
+    BARRIER_COUNT_MIN + (barrierRand(seed, 0) % span),
+  )
+  const barrier = terrainByName(catalog, 'Barrier')
+  const next = tiles.slice()
+  for (let n = 0; n < count; n += 1) {
+    const i = eligible[n]!
+    const tile = next[i]!
+    next[i] = {
+      ...tile,
+      terrain: barrier?.name ?? 'Barrier',
+      movementCostMultiplier: barrier?.move_cost ?? null,
+      blocked: barrier?.is_blocked ?? true,
+      blocksLos: barrier?.blocks_los ?? true,
+    }
+  }
+  return next
 }

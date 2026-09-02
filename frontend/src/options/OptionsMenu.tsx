@@ -11,7 +11,7 @@ import {
 } from '../session/saves'
 import { getSession, setSession } from '../session/store'
 import type { GameSession } from '../session/types'
-import { fetchCatalog, reloadReferenceData } from '../town/catalog'
+import { fetchCatalog, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
 import { getExploredHexes } from '../hex/world'
@@ -229,6 +229,11 @@ export function OptionsMenu({
       const detail = await fetchSave(selectedId)
       if (!isGameSession(detail.gameState)) {
         throw new Error('That save is corrupt and was not loaded.')
+      }
+      try {
+        await refreshCatalogFromDb()
+      } catch {
+        // Load the save even if the catalog refresh fails.
       }
       setSession(withExploredDefaults(detail.gameState))
       clearCachedGrid()

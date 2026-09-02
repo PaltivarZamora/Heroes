@@ -38,9 +38,13 @@ export function snapshotOpening(stacks: CombatStack[]): OpeningStack[] {
   }))
 }
 
+function sideHasLiving(battle: CombatBattle, side: CombatSide): boolean {
+  return battle.stacks.some((stack) => stack.side === side && stack.qty > 0)
+}
+
 export function defeatedSide(battle: CombatBattle): CombatSide | null {
-  const atkLive = battle.stacks.some((stack) => stack.side === 'atk')
-  const defLive = battle.stacks.some((stack) => stack.side === 'def')
+  const atkLive = sideHasLiving(battle, 'atk')
+  const defLive = sideHasLiving(battle, 'def')
   if (!atkLive && defLive) {
     return 'atk'
   }
@@ -159,7 +163,7 @@ export function applyCombatOutcome(
   const winnerId = winnerSide === 'atk' ? attackerHeroId : defenderHeroId
   const loser = session.heroes.find((hero) => hero.id === loserId)
   const winner = session.heroes.find((hero) => hero.id === winnerId)
-  if (!loser || !winner) {
+  if (!loser) {
     return null
   }
   const summary: CombatSummary = {
@@ -168,11 +172,14 @@ export function applyCombatOutcome(
     loserHeroName: loser.name,
     winnerPlayer:
       winnerSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
-    winnerHeroName: winner.name,
+    winnerHeroName: winner?.name ?? 'Hero',
     loserLosses: lossesFor(loserSide, opening, battle, catalog),
     winnerLosses: lossesFor(winnerSide, opening, battle, catalog),
   }
-  let next = applyWinnerArmy(session, winner, winnerSide, battle)
+  let next = session
+  if (winner) {
+    next = applyWinnerArmy(next, winner, winnerSide, battle)
+  }
   next = removeDefeatedHero(next, loser)
   next = withEliminations(next)
   return { session: next, summary }

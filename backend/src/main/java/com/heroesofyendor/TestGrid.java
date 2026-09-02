@@ -41,14 +41,21 @@ final class TestGrid {
         Random rng = new Random(seed);
         int width = SIZE.width();
         int height = SIZE.height();
-        Terrain[][] cells = paintSegments(width, height, rng);
+        List<Terrain> pool = Terrain.generationPool(data);
+        Terrain[][] cells = paintSegments(width, height, rng, pool);
         List<TileData> tiles = new ArrayList<>(width * height);
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
                 Terrain terrain = cells[row][col];
                 int q = col;
                 int r = row - offsetFromZero(col);
-                tiles.add(new TileData(q, r, terrain.label(), terrain.movementCost()));
+                tiles.add(
+                        new TileData(
+                                q,
+                                r,
+                                terrain.label(),
+                                terrain.movementCost(),
+                                terrain.blocked()));
             }
         }
         List<MapObjectData> objects = placeObjects(cells, rng, data);
@@ -314,7 +321,8 @@ final class TestGrid {
         return new MapObjectData(q, r, kind, resourceId, marker, null, null);
     }
 
-    private static Terrain[][] paintSegments(int width, int height, Random rng) {
+    private static Terrain[][] paintSegments(
+            int width, int height, Random rng, List<Terrain> pool) {
         Terrain[][] cells = new Terrain[height][width];
         for (int row = 0; row < height; row++) {
             Terrain previous = null;
@@ -328,7 +336,7 @@ final class TestGrid {
                 int remaining = width - col;
                 int segW = segmentWidth(rng, remaining);
                 int segH = segmentHeight(rng, cells, row, col, segW, height);
-                Terrain terrain = pickTerrain(rng, previous);
+                Terrain terrain = pickTerrain(rng, previous, pool);
                 for (int dr = 0; dr < segH; dr++) {
                     for (int c = col; c < col + segW; c++) {
                         cells[row + dr][c] = terrain;
@@ -374,25 +382,16 @@ final class TestGrid {
     }
 
     /** Adjacent segments in a row use different types so one terrain cannot wall the row. */
-    private static Terrain pickTerrain(Random rng, Terrain avoid) {
-        Terrain[] pool = generationPool();
-        int index = rng.nextInt(pool.length);
-        Terrain picked = pool[index];
-        if (avoid != null && picked == avoid && pool.length > 1) {
-            picked = pool[(index + 1) % pool.length];
+    private static Terrain pickTerrain(Random rng, Terrain avoid, List<Terrain> pool) {
+        if (pool.isEmpty()) {
+            throw new IllegalStateException("terrain_type is empty");
+        }
+        int index = rng.nextInt(pool.size());
+        Terrain picked = pool.get(index);
+        if (avoid != null && picked == avoid && pool.size() > 1) {
+            picked = pool.get((index + 1) % pool.size());
         }
         return picked;
-    }
-
-    /** Temporary: Barrier and Void are left out of new maps. */
-    private static Terrain[] generationPool() {
-        List<Terrain> pool = new ArrayList<>();
-        for (Terrain terrain : Terrain.values()) {
-            if (terrain.inGenerationPool()) {
-                pool.add(terrain);
-            }
-        }
-        return pool.toArray(Terrain[]::new);
     }
 
     /**

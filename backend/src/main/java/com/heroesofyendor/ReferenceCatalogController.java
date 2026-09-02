@@ -41,6 +41,7 @@ public class ReferenceCatalogController {
         body.put("hero_discipline", decodeRows(referenceData.rows("hero_discipline"), resourceNameToId));
         body.put("difficulty", decodeRows(referenceData.rows("difficulty"), resourceNameToId));
         body.put("player_color", decodeRows(referenceData.rows("player_color"), resourceNameToId));
+        body.put("terrain_type", decodeRows(referenceData.rows("terrain_type"), resourceNameToId));
         return body;
     }
 

@@ -1,13 +1,28 @@
 import { spendMovement, type Axial } from '../hex/hero'
 import { findPathOnBoard, neighborHexes, reachableWithin } from '../hex/pathfinding'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { unitById, unitHexFootprint } from '../town/catalog'
+import { unitById } from '../town/catalog'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
+import {
+  combatBodySize,
+  footprintFits,
+  footprintStep,
+  occupancyKey,
+  occupiedHexes,
+  stackFootprint,
+} from './occupancy'
+
+export {
+  combatBodySize as combatStackCells,
+  occupiedHexes,
+  stackFootprint,
+  stackOccupyingHex,
+} from './occupancy'
 
 export type MoveKind = 'ground' | 'flying' | 'hover' | 'submerge'
 
 export function hexKey(q: number, r: number): string {
-  return `${q},${r}`
+  return occupancyKey(q, r)
 }
 
 export function moveKindForUnit(
@@ -63,6 +78,15 @@ export function combatEnterCost(
   if (!tile) {
     return null
   }
+  if (tile.blocked) {
+    if (
+      kind === 'submerge' &&
+      (tile.terrain === 'Water' || tile.terrain === 'Shallows')
+    ) {
+      return 1
+    }
+    return null
+  }
   if (kind === 'flying' || kind === 'hover') {
     return 1
   }
@@ -73,69 +97,6 @@ export function combatEnterCost(
     return tile.movementCostMultiplier
   }
   return tile.movementCostMultiplier
-}
-
-/**
- * How many battlefield hexes this stack occupies. Defenders stay 2-wide
- * from the BR 4-5c visual test; everyone else follows `unit.hex_size`.
- */
-export function combatStackCells(
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-): 1 | 2 {
-  if (stack.side === 'def') {
-    return 2
-  }
-  return unitHexFootprint(unitById(catalog, stack.unitId))
-}
-
-/** Primary hex plus the inward extra hex for a 2-hex footprint. */
-export function stackFootprint(
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-): Axial[] {
-  const origin = { q: stack.q, r: stack.r }
-  if (combatStackCells(stack, catalog) === 1) {
-    return [origin]
-  }
-  const extra =
-    stack.side === 'def'
-      ? { q: stack.q - 1, r: stack.r }
-      : { q: stack.q + 1, r: stack.r }
-  return [origin, extra]
-}
-
-export function occupiedHexes(
-  stacks: CombatStack[],
-  catalog: ReferenceCatalog,
-  exceptId?: string,
-): Set<string> {
-  const blocked = new Set<string>()
-  for (const stack of stacks) {
-    if (stack.id === exceptId) {
-      continue
-    }
-    for (const hex of stackFootprint(stack, catalog)) {
-      blocked.add(hexKey(hex.q, hex.r))
-    }
-  }
-  return blocked
-}
-
-export function stackOccupyingHex(
-  stacks: CombatStack[],
-  q: number,
-  r: number,
-  catalog: ReferenceCatalog,
-): CombatStack | null {
-  const key = hexKey(q, r)
-  return (
-    stacks.find((stack) =>
-      stackFootprint(stack, catalog).some(
-        (hex) => hexKey(hex.q, hex.r) === key,
-      ),
-    ) ?? null
-  )
 }
 
 function tileMap(tiles: CombatTile[]): Map<string, CombatTile> {
@@ -149,9 +110,44 @@ function stackEnterCost(
   return (q, r) => combatEnterCost(tiles.get(hexKey(q, r)), kind)
 }
 
+export type FootprintSpec = {
+  size: number
+  step: Axial
+  ignore: ReadonlySet<string>
+}
+
+export function footprintSpecFor(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): FootprintSpec {
+  const size = combatBodySize(stack, catalog)
+  const step = footprintStep(stack.side)
+  const ignore = new Set(
+    stackFootprint(stack, catalog).map((hex) => hexKey(hex.q, hex.r)),
+  )
+  return { size, step, ignore }
+}
+
+function standFits(
+  origin: Axial,
+  enterCost: (q: number, r: number) => number | null,
+  occupied: ReadonlySet<string>,
+  spec?: FootprintSpec,
+): boolean {
+  return footprintFits(
+    origin,
+    spec?.size ?? 1,
+    spec?.step ?? { q: 0, r: 0 },
+    occupied,
+    enterCost,
+    spec?.ignore,
+  )
+}
+
 /**
  * Gold-preview steps toward `to`, truncated at remaining Speed — same rule as
- * World `movementSteps`. Occupied hexes are not landed on.
+ * World `movementSteps`. Occupied hexes are not landed on. A multi-hex
+ * mover also cannot stand where any of its extra hexes would overlap.
  */
 export function combatPathSteps(
   from: Axial,
@@ -160,6 +156,7 @@ export function combatPathSteps(
   tiles: CombatTile[],
   kind: MoveKind,
   occupied: ReadonlySet<string>,
+  spec?: FootprintSpec,
 ): Axial[] {
   if (budget <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return []
@@ -188,6 +185,9 @@ export function combatPathSteps(
     if (cost == null || mp + 1e-9 < cost) {
       break
     }
+    if (!standFits(hex, enterCost, occupied, spec)) {
+      break
+    }
     steps.push(hex)
     mp = spendMovement(mp, cost)
   }
@@ -204,13 +204,18 @@ export function combatReachable(
   tiles: CombatTile[],
   kind: MoveKind,
   occupied: ReadonlySet<string>,
+  spec?: FootprintSpec,
 ): Map<string, Axial[]> {
   const enterCost = stackEnterCost(tileMap(tiles), kind)
   const paths = reachableWithin(from, budget, enterCost, occupied)
   const out = new Map<string, Axial[]>()
   out.set(hexKey(from.q, from.r), [])
   for (const [key, path] of paths) {
-    out.set(key, path.slice(1))
+    const steps = path.slice(1)
+    if (steps.some((hex) => !standFits(hex, enterCost, occupied, spec))) {
+      continue
+    }
+    out.set(key, steps)
   }
   return out
 }
@@ -225,12 +230,10 @@ export function canCombatStep(
   const kind = moveKindForUnit(unit, catalog)
   const occupied = occupiedHexes(battle.stacks, catalog, stack.id)
   const enterCost = stackEnterCost(tileMap(tiles), kind)
-  return neighborHexes({ q: stack.q, r: stack.r }).some((next) => {
-    if (occupied.has(hexKey(next.q, next.r))) {
-      return false
-    }
-    return enterCost(next.q, next.r) != null
-  })
+  const spec = footprintSpecFor(stack, catalog)
+  return neighborHexes({ q: stack.q, r: stack.r }).some((next) =>
+    standFits(next, enterCost, occupied, spec),
+  )
 }
 
 export function movementLogLine(

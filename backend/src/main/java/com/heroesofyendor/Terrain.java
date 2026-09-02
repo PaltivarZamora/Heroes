@@ -1,48 +1,101 @@
 package com.heroesofyendor;
 
-/**
- * Adventure-map terrain. {@code movementCost} {@code null} means impassable.
- */
-public enum Terrain {
-    STONE_PATH("Stone Path", 0.9),
-    DIRT_PATH("Dirt Path", 1.0),
-    GRASS("Grass", 1.1),
-    ASH("Ash", 1.25),
-    ROCKY("Rocky", 1.5),
-    LAVA("Lava", 1.75),
-    DESERT("Desert", 2.0),
-    SNOW("Snow", 2.0),
-    MUD("Mud", 2.0),
-    SWAMP("Swamp", 2.5),
-    SHALLOWS("Shallows", 2.5),
-    FOREST("Forest", null),
-    MOUNTAIN("Mountain", null),
-    WATER("Water", null),
-    BARRIER("Barrier", null),
-    VOID("Void", null);
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
-    private final String label;
-    private final Double movementCost;
+/** One row from {@code terrain_type}. World generation and tiles read this, not an enum. */
+public final class Terrain {
 
-    Terrain(String label, Double movementCost) {
-        this.label = label;
-        this.movementCost = movementCost;
+    private final String name;
+    private final Double moveCost;
+    private final boolean blocked;
+
+    private Terrain(String name, Double moveCost, boolean blocked) {
+        this.name = name;
+        this.moveCost = moveCost;
+        this.blocked = blocked;
+    }
+
+    public static List<Terrain> all(ReferenceData data) {
+        List<Terrain> out = new ArrayList<>();
+        for (Map<String, Object> row : data.rows("terrain_type")) {
+            Terrain terrain = fromRow(row);
+            if (terrain != null) {
+                out.add(terrain);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    public static List<Terrain> generationPool(ReferenceData data) {
+        List<Terrain> pool = new ArrayList<>();
+        for (Terrain terrain : all(data)) {
+            if (terrain.inGenerationPool()) {
+                pool.add(terrain);
+            }
+        }
+        return List.copyOf(pool);
+    }
+
+    private static Terrain fromRow(Map<String, Object> row) {
+        String name = text(row.get("name"));
+        if (name.isEmpty()) {
+            return null;
+        }
+        return new Terrain(name, asDouble(row.get("move_cost")), asBool(row.get("is_blocked")));
     }
 
     public String label() {
-        return label;
+        return name;
     }
 
     public Double movementCost() {
-        return movementCost;
+        return moveCost;
+    }
+
+    public boolean blocked() {
+        return blocked;
     }
 
     public boolean isPassable() {
-        return movementCost != null;
+        return !blocked;
     }
 
-    /** Barrier and Void stay in the enum but are not painted onto new maps for now. */
+    /** Barrier and Void stay in the table but are not painted onto new world maps. */
     public boolean inGenerationPool() {
-        return this != BARRIER && this != VOID;
+        return !name.equalsIgnoreCase("Barrier") && !name.equalsIgnoreCase("Void");
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : value.toString().trim();
+    }
+
+    private static Double asDouble(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.doubleValue();
+        }
+        try {
+            return Double.parseDouble(value.toString().trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean asBool(Object value) {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        if (value instanceof Number n) {
+            return n.intValue() != 0;
+        }
+        if (value == null) {
+            return false;
+        }
+        String text = value.toString().trim();
+        return text.equalsIgnoreCase("true") || text.equalsIgnoreCase("t") || text.equals("1");
     }
 }
