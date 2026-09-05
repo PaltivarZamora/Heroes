@@ -82,6 +82,20 @@ export type Hero = {
   movement_remaining: number
   army: HeroArmy
   learned_abilities: number[]
+  /** Live level. Starts at 1; persists for this hero identity. */
+  current_level: number
+  /** Live XP. Starts at 0; persists for this hero identity. */
+  current_xp: number
+  /** Live Mana pool. Always present; unused classes sit at their intel-based max. */
+  current_mana: number
+  /** Live Energy pool. Always present; unused classes sit at their strength-based max. */
+  current_energy: number
+}
+
+/** Per-name XP/level that survives death → tavern → re-hire. */
+export type HeroProgress = {
+  current_level: number
+  current_xp: number
 }
 
 export type UnitStack = {
@@ -118,6 +132,8 @@ export type GameSession = {
   towns: Town[]
   building_states: BuildingState[]
   heroes: Hero[]
+  /** Name-keyed level/XP; survives a hero leaving the map. */
+  hero_progress: Record<string, HeroProgress>
   units: UnitStack[]
   nodes: Node[]
   mobs: Mob[]

@@ -17,6 +17,7 @@ const TERRAIN_FILL: Record<string, number> = {
   Mud: 0x5d4037,
   Swamp: 0x6b8e23,
   Shallows: 0x81d4fa,
+  Moat: 0x1565c0,
   Forest: 0x1b5e20,
   Mountain: 0x4e342e,
   Water: 0x2196f3,

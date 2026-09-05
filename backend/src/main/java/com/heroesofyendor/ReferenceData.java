@@ -28,17 +28,26 @@ public class ReferenceData {
             "skill",
             "building",
             "unit",
+            "unit_tag",
+            "condition",
             "town_name_pool",
             "hero_pool",
             "town_layout",
             "market",
             "ability",
+            "ability_resource",
+            "ability_cooldown",
+            "ability_target",
+            "ability_type",
             "discipline",
             "ability_level",
             "hero_discipline",
             "difficulty",
             "player_color",
-            "terrain_type");
+            "terrain_type",
+            "app_config",
+            "levels",
+            "hero_levels");
 
     private static final Logger log = LoggerFactory.getLogger(ReferenceData.class);
 

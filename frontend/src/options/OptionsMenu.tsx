@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { clearCachedGrid, setHeroMovementRemaining } from '../hex/HexMap'
-import { MAX_MOVEMENT_POINTS } from '../hex/hero'
+import { clearCachedGrid, getSelectedMapHeroId, setHeroMovementRemaining } from '../hex/HexMap'
 import type { DataStatus } from '../hex/debug'
 import {
   createSave,
@@ -11,7 +10,8 @@ import {
 } from '../session/saves'
 import { getSession, setSession } from '../session/store'
 import type { GameSession } from '../session/types'
-import { fetchCatalog, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
+import { normalizeHeroProgress, restoreAllHeroMovement } from '../session/accessors'
+import { fetchCatalog, getCachedCatalog, heroMovementPoints, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
 import { getExploredHexes } from '../hex/world'
@@ -49,7 +49,7 @@ function withCurrentFog(session: GameSession): GameSession {
 }
 
 function withExploredDefaults(session: GameSession): GameSession {
-  return {
+  return normalizeHeroProgress({
     ...session,
     activePlayerIndex:
       typeof session.activePlayerIndex === 'number' &&
@@ -74,7 +74,7 @@ function withExploredDefaults(session: GameSession): GameSession {
         ? row.offered_abilities
         : [],
     })),
-  }
+  })
 }
 
 function defaultSaveName(): string {
@@ -261,6 +261,16 @@ export function OptionsMenu({
       const status = await reloadReferenceData()
       onDataStatus(status)
       await fetchCatalog()
+      setSession(restoreAllHeroMovement(getSession()))
+      const session = getSession()
+      const selectedId = getSelectedMapHeroId()
+      const liveHero =
+        (selectedId
+          ? session.heroes.find((row) => row.id === selectedId)
+          : undefined) ?? session.heroes[0]
+      if (liveHero) {
+        setHeroMovementRemaining(liveHero.movement_remaining)
+      }
       if (status.ok) {
         setNotice('Reference data reloaded')
       }
@@ -334,9 +344,17 @@ export function OptionsMenu({
           <button
             type="button"
             role="menuitem"
-            onClick={() => setSteps(MAX_MOVEMENT_POINTS)}
+            onClick={() => {
+              const session = getSession()
+              const selectedId = getSelectedMapHeroId()
+              const liveHero =
+                (selectedId
+                  ? session.heroes.find((row) => row.id === selectedId)
+                  : undefined) ?? session.heroes[0]
+              setSteps(heroMovementPoints(getCachedCatalog(), liveHero))
+            }}
           >
-            Reset Steps to 10
+            Reset Steps to Speed
           </button>
         </div>
       ) : null}

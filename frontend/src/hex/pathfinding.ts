@@ -10,6 +10,9 @@ const AXIAL_NEIGHBORS: Axial[] = [
   { q: 0, r: 1 },
 ]
 
+/** Catalog move_cost 99: enter by dumping remaining MP, not a literal 99 cost. */
+const DUMP_REMAINING_MOVE_COST = 99
+
 /** Cheapest walkable terrain — admissible A* heuristic scale. */
 const MIN_STEP_COST = 0.9
 
@@ -220,13 +223,15 @@ function reconstruct(cameFrom: Map<string, Axial>, end: Axial): Axial[] {
 /**
  * Every hex reachable within `budget`, paying `enterCost` on entry.
  * Start hex is omitted. Paths include the start. `blocked` hexes cannot
- * be entered (the origin is allowed even if listed).
+ * be entered (the origin is allowed even if listed). `stopOnly` hexes
+ * can be entered as a destination but are not used as transit.
  */
 export function reachableWithin(
   from: Axial,
   budget: number,
   enterCost: (q: number, r: number) => number | null,
   blocked?: ReadonlySet<string>,
+  stopOnly?: ReadonlySet<string>,
 ): Map<string, Axial[]> {
   const startKey = key(from.q, from.r)
   const cameFrom = new Map<string, Axial>()
@@ -250,6 +255,9 @@ export function reachableWithin(
       break
     }
     open.delete(bestKey)
+    if (stopOnly?.has(bestKey) && bestKey !== startKey) {
+      continue
+    }
 
     for (const next of neighborHexes(current)) {
       const nextKey = key(next.q, next.r)
@@ -260,7 +268,17 @@ export function reachableWithin(
       if (cost == null) {
         continue
       }
-      const tentative = bestG + cost
+      const remaining = budget - bestG
+      const stepCost =
+        cost === DUMP_REMAINING_MOVE_COST
+          ? remaining > 1e-9
+            ? remaining
+            : null
+          : cost
+      if (stepCost == null) {
+        continue
+      }
+      const tentative = bestG + stepCost
       if (tentative - 1e-9 > budget) {
         continue
       }

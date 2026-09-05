@@ -28,6 +28,19 @@ function KindSvg({ kind }: { kind: TargetIconKind }) {
       </svg>
     )
   }
+  if (kind === 'hero') {
+    return (
+      <svg className="combat-target-svg" viewBox="0 0 32 32" aria-hidden="true">
+        <path
+          d="M16 4 L19 12 L28 12 L21 17 L24 26 L16 21 L8 26 L11 17 L4 12 L13 12 Z"
+          fill="#81c784"
+          stroke="#c8e6c9"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )
+  }
   if (kind === 'aoe') {
     return (
       <svg className="combat-target-svg" viewBox="0 0 32 32" aria-hidden="true">

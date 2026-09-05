@@ -4,7 +4,7 @@ import { neighborHexes } from '../hex/pathfinding'
 import { HEX_SCALES } from '../hex/hexScale'
 import { pickTerrainVariantIndex } from '../hex/terrainTextures'
 import type { ReferenceCatalog } from '../town/catalog'
-import { terrainByName } from '../town/catalog'
+import { terrainByName, terrainIsRandomEligible } from '../town/catalog'
 import { getTile } from '../hex/world'
 import type { CombatTile } from './battle'
 
@@ -15,6 +15,55 @@ export const COMBAT_HEX_SIZE = HEX_SCALES.Large
 export const ATTACKER_COL = 1
 /** 0-based offset column: one in from the right edge. */
 export const DEFENDER_COL = COMBAT_COLUMNS - 2
+/** Outer-edge column for the attacker Hero portrait. */
+export const ATTACKER_HERO_COL = 0
+/** Outer-edge column for the defender Hero portrait. */
+export const DEFENDER_HERO_COL = COMBAT_COLUMNS - 1
+/** First row (top) — both Heroes share this row. */
+export const HERO_ROW = 0
+
+/** Siege zones, 0-based. Brief columns 1–15 map here as 0–14. */
+export const SIEGE_MOAT_COL = 10
+export const SIEGE_WALL_COL = 11
+export const SIEGE_INTERIOR_COL_START = 12
+export const SIEGE_CATAPULT_COL = 0
+export const SIEGE_CATAPULT_ROW = COMBAT_ROWS - 1
+const SIEGE_STONE_FLOOR = 'Stone_Path'
+
+const SIEGE_MOAT_TERRAIN = 'Moat'
+
+/** 0-based row → column delta from SIEGE_WALL_COL. +1 right, −1 left. */
+const WALL_COL_OFFSET_BY_ROW = [1, 0, 0, -1, -1, -2, -1, -1, 0, 0, 1]
+
+/** 0-based row → column delta from SIEGE_MOAT_COL. Independent of the wall table. */
+const MOAT_COL_OFFSET_BY_ROW = [1, 0, 0, -1, -1, -2, -1, -1, 0, 0, 1]
+
+export function siegeWallColForRow(row: number): number {
+  return SIEGE_WALL_COL + (WALL_COL_OFFSET_BY_ROW[row] ?? 0)
+}
+
+export function siegeMoatColForRow(row: number): number {
+  return SIEGE_MOAT_COL + (MOAT_COL_OFFSET_BY_ROW[row] ?? 0)
+}
+
+/** Wall + town interior are town floor. Moat is placed per-row (tapered). */
+export function siegeTileTerrain(
+  col: number,
+  row: number,
+  sampled: string,
+): string {
+  if (col === siegeMoatColForRow(row)) {
+    return SIEGE_MOAT_TERRAIN
+  }
+  if (
+    col === siegeWallColForRow(row) ||
+    col >= SIEGE_WALL_COL ||
+    col >= SIEGE_INTERIOR_COL_START
+  ) {
+    return SIEGE_STONE_FLOOR
+  }
+  return sampled
+}
 
 const COMBAT_GRID_PADDING = 28
 
@@ -93,8 +142,20 @@ export function pickCombatTerrain(
   seed: number,
   q: number,
   r: number,
+  catalog?: ReferenceCatalog | null,
 ): string {
-  const list = pool.length > 0 ? pool : (['Grass'] as const)
+  const eligible = pool.filter((name) =>
+    terrainIsRandomEligible(terrainByName(catalog, name)),
+  )
+  const fallback = (catalog?.terrain_type ?? [])
+    .filter(terrainIsRandomEligible)
+    .map((row) => row.name)
+  const list =
+    eligible.length > 0
+      ? eligible
+      : fallback.length > 0
+        ? fallback
+        : (['Grass'] as const)
   const index = pickTerrainVariantIndex(
     seed,
     q,

@@ -1,7 +1,7 @@
 import type { Axial } from '../hex/hero'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById, unitHexFootprint } from '../town/catalog'
-import type { CombatSide, CombatStack } from './battle'
+import { isHeroStack, type CombatSide, type CombatStack } from './battle'
 
 export function occupancyKey(q: number, r: number): string {
   return `${q},${r}`
@@ -41,6 +41,9 @@ export function combatBodySize(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
+  if (isHeroStack(stack)) {
+    return 1
+  }
   return unitHexFootprint(unitById(catalog, stack.unitId))
 }
 
@@ -78,14 +81,40 @@ export function occupiedFromBodies(
   return blocked
 }
 
+function stackName(stack: CombatStack, catalog: ReferenceCatalog): string {
+  return (unitById(catalog, stack.unitId)?.name ?? '').trim().toLowerCase()
+}
+
+/** Drawbridge never occupies — units must be able to stop on it. */
+function occupiesHex(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  ignoreWalls = false,
+): boolean {
+  const name = stackName(stack, catalog)
+  if (name === 'drawbridge') {
+    return false
+  }
+  if (ignoreWalls && (name === 'wall' || name === 'shooter')) {
+    return false
+  }
+  return true
+}
+
 export function occupiedHexes(
   stacks: CombatStack[],
   catalog: ReferenceCatalog,
   exceptId?: string,
   extras: OccupancyBody[] = [],
+  ignoreWalls = false,
 ): Set<string> {
   return occupiedFromBodies(
-    [...stacks.map((stack) => bodyFromStack(stack, catalog)), ...extras],
+    [
+      ...stacks
+        .filter((stack) => occupiesHex(stack, catalog, ignoreWalls))
+        .map((stack) => bodyFromStack(stack, catalog)),
+      ...extras,
+    ],
     exceptId,
   )
 }
@@ -130,7 +159,9 @@ export function stackOccupyingHex(
   extras: OccupancyBody[] = [],
 ): CombatStack | null {
   const bodies = [
-    ...stacks.map((stack) => bodyFromStack(stack, catalog)),
+    ...stacks
+      .filter((stack) => occupiesHex(stack, catalog, false))
+      .map((stack) => bodyFromStack(stack, catalog)),
     ...extras,
   ]
   const hit = occupyingBody(bodies, q, r)

@@ -188,6 +188,41 @@ export function learnedAbilitiesAtTier(
   return abilitiesFor(catalog, disciplineId, levelId).filter((row) => have.has(row.id))
 }
 
+/** Every ability across a class's two disciplines (Basic/Advanced/Expert). */
+export function classAbilityIds(
+  catalog: ReferenceCatalog,
+  classId: number | null,
+): number[] {
+  if (classId == null) {
+    return []
+  }
+  const ids: number[] = []
+  for (const discipline of classDisciplines(catalog, classId)) {
+    for (const tier of LIBRARY_TIERS) {
+      for (const ability of abilitiesFor(catalog, discipline.id, tier)) {
+        ids.push(ability.id)
+      }
+    }
+  }
+  return ids
+}
+
+/**
+ * Combat-only display list. Empty learned (test/dummy heroes) shows every
+ * class ability so the popup can be exercised without Library grinding.
+ * Does not write to the hero or change Library learning.
+ */
+export function combatDisplayLearnedIds(
+  catalog: ReferenceCatalog,
+  hero: { class_id: number | null; learned_abilities?: number[] },
+): number[] {
+  const learned = hero.learned_abilities ?? []
+  if (learned.length > 0) {
+    return learned
+  }
+  return classAbilityIds(catalog, hero.class_id)
+}
+
 export function tierLabel(
   catalog: ReferenceCatalog,
   levelId: number,

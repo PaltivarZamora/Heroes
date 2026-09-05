@@ -5,7 +5,7 @@ import {
   type DataStatus,
   type HeroHudState,
 } from './hex/debug'
-import { formatMovementPoints, MAX_MOVEMENT_POINTS, HERO_MARKER_LABEL } from './hex/hero'
+import { formatMovementPoints, HERO_MARKER_LABEL } from './hex/hero'
 import {
   DEFAULT_HEX_SCALE,
   HEX_SCALES,
@@ -23,7 +23,7 @@ import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
 import { FriendlyTrade } from './town/FriendlyTrade'
 import { CombatScreen } from './combat/CombatScreen'
-import { getCachedCatalog, refreshCatalogFromDb } from './town/catalog'
+import { getCachedCatalog, heroMovementPoints, refreshCatalogFromDb } from './town/catalog'
 import { OptionsMenu } from './options/OptionsMenu'
 import type { GameConfig } from './options/gameConfig'
 import { getExploredHexes } from './hex/world'
@@ -121,7 +121,8 @@ function App() {
   } | null>(null)
   const [combat, setCombat] = useState<{
     attackerHeroId: string
-    defenderHeroId: string
+    defenderHeroId: string | null
+    siegeTownId?: string
   } | null>(null)
   const [dateNotice, setDateNotice] = useState<{
     title: string
@@ -157,6 +158,24 @@ function App() {
     setTrade(null)
     setHeroScreen(false)
     setCombat({ attackerHeroId: self.id, defenderHeroId: other.id })
+  }, [])
+  const onSiegeTown = useCallback((townId: string) => {
+    const current = getSession()
+    const selfId = getSelectedMapHeroId()
+    const self = selfId
+      ? current.heroes.find((row) => row.id === selfId)
+      : undefined
+    if (!self) {
+      return
+    }
+    setWelcomeTown(null)
+    setTrade(null)
+    setHeroScreen(false)
+    setCombat({
+      attackerHeroId: self.id,
+      defenderHeroId: null,
+      siegeTownId: townId,
+    })
   }, [])
   const onEndTurn = useCallback(() => {
     setWelcomeTown(null)
@@ -288,6 +307,12 @@ function App() {
           return
         }
         if (combat) {
+          if (
+            document.querySelector('.combat-screen[data-hero-cast]') ||
+            document.querySelector('.combat-inspect-popup')
+          ) {
+            return
+          }
           event.preventDefault()
           setCombat(null)
           return
@@ -430,19 +455,20 @@ function App() {
   const hexSize = HEX_SCALES[hexScale]
   const mapLabel = mapInfo ? mapSizeLabel(mapInfo.width, mapInfo.height) : '…'
   const seedLabel = mapInfo ? String(mapInfo.seed) : '…'
-  const stepsRemaining = hero?.remaining ?? MAX_MOVEMENT_POINTS
+  const selectedHero = hero?.id
+    ? session.heroes.find((row) => row.id === hero.id)
+    : session.heroes[0]
+  const heroSpeed = heroMovementPoints(getCachedCatalog(), selectedHero)
+  const stepsRemaining = hero?.remaining ?? heroSpeed
   const stepsLabel = formatMovementPoints(
     stepsRemaining,
-    Math.max(MAX_MOVEMENT_POINTS, stepsRemaining),
+    Math.max(heroSpeed, stepsRemaining),
   )
   const resourceLines = formatResourceLines(wallet)
   const calendarLabel = formatCalendar(calendar)
   const hasActedToday = welcomeTown
     ? hasTownBuiltToday(session, welcomeTown.id)
     : false
-  const selectedHero = hero?.id
-    ? session.heroes.find((row) => row.id === hero.id)
-    : session.heroes[0]
   const heroName = selectedHero?.name ?? HERO_MARKER_LABEL
 
   const debugText = formatDebugText({
@@ -544,6 +570,7 @@ function App() {
         onResources={onResources}
         onTownWelcome={onTownWelcome}
         onHeroMeet={onHeroMeet}
+        onSiegeTown={onSiegeTown}
       />
       {dateNotice ? (
         <div
@@ -563,6 +590,7 @@ function App() {
         <CombatScreen
           attackerHeroId={combat.attackerHeroId}
           defenderHeroId={combat.defenderHeroId}
+          siegeTownId={combat.siegeTownId}
           onExit={() => setCombat(null)}
         />
       ) : null}

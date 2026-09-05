@@ -4,7 +4,6 @@ import type { Hex } from 'honeycomb-grid'
 import { clampCamera, PAN_SPEED_PX_PER_SEC } from './camera'
 import {
   CLICK_PAN_THRESHOLD_PX,
-  MAX_MOVEMENT_POINTS,
   MOVE_STEP_MS,
   PLAYER_1_COLOR,
   findPassableStart,
@@ -33,7 +32,7 @@ import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 import { getSession, subscribe, updateSession } from '../session/store'
 import { ensureStartingHeroes, hydrateMapObjects } from '../session/create'
 import { HERO_ID } from '../session/types'
-import { fetchCatalog, getCachedCatalog, ownerTint, subscribeCatalog } from '../town/catalog'
+import { fetchCatalog, getCachedCatalog, heroMovementPoints, ownerTint, subscribeCatalog } from '../town/catalog'
 import {
   activePlayer,
   claimMine,
@@ -55,6 +54,7 @@ type HexMapProps = {
   onResources: (wallet: ResourceWallet) => void
   onTownWelcome: (townName: string, townId: string) => void
   onHeroMeet: (targetHeroId: string) => void
+  onSiegeTown: (townId: string) => void
 }
 
 type HeroState = HeroHudState
@@ -121,13 +121,17 @@ const UNEXPLORED_COLOR = 0x3a3a3a
 
 /**
  * Explored map objects to path around. Heroes are always blocked.
- * Towns and resource nodes are blocked unless they are `walkOnto`
- * (the clicked destination).
+ * Enemy-owned towns stay blocked (approach adjacent; never walk on).
+ * Own/unowned towns and resource nodes are blocked unless they are
+ * `walkOnto` (the clicked destination).
  */
 function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
   const blocked = new Set<string>()
   const ontoKey =
     walkOnto != null ? `${walkOnto.q},${walkOnto.r}` : ''
+  const playerId =
+    getSession().heroes.find((hero) => hero.id === selectedMapHeroId)
+      ?.player_id ?? null
   const add = (q: number, r: number) => {
     if (q === mover.q && r === mover.r) {
       return
@@ -146,6 +150,18 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     add(hero.position.q, hero.position.r)
   }
   for (const town of session.towns) {
+    const enemyOwned =
+      town.player_id != null &&
+      playerId != null &&
+      town.player_id !== playerId
+    if (enemyOwned) {
+      if (
+        !(town.position.q === mover.q && town.position.r === mover.r)
+      ) {
+        blocked.add(`${town.position.q},${town.position.r}`)
+      }
+      continue
+    }
     add(town.position.q, town.position.r)
   }
   for (const node of session.nodes) {
@@ -173,6 +189,19 @@ function otherHeroAt(q: number, r: number, selfId: string) {
       hero.position.r === r &&
       heroVisibleOnMap(hero),
   )
+}
+
+function enemyOwnedTownAt(q: number, r: number, selfId: string) {
+  const session = getSession()
+  const self = session.heroes.find((hero) => hero.id === selfId)
+  if (!self) {
+    return undefined
+  }
+  const town = findTownAt(session, q, r)
+  if (!town?.player_id || town.player_id === self.player_id) {
+    return undefined
+  }
+  return town
 }
 
 function liveNodeAt(q: number, r: number) {
@@ -222,12 +251,14 @@ export function HexMap({
   onResources,
   onTownWelcome,
   onHeroMeet,
+  onSiegeTown,
 }: HexMapProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const tilesRef = useRef<TestGridResponse | null>(null)
   const heroRef = useRef<HeroState | null>(null)
   const walletRef = useRef<ResourceWallet>(snapshotWallet(wallet))
   const onHeroMeetRef = useRef(onHeroMeet)
+  const onSiegeTownRef = useRef(onSiegeTown)
 
   useEffect(() => {
     walletRef.current = snapshotWallet(wallet)
@@ -236,6 +267,10 @@ export function HexMap({
   useEffect(() => {
     onHeroMeetRef.current = onHeroMeet
   }, [onHeroMeet])
+
+  useEffect(() => {
+    onSiegeTownRef.current = onSiegeTown
+  }, [onSiegeTown])
 
   useEffect(() => {
     applyHeroMarkerLabel?.(heroName)
@@ -301,7 +336,7 @@ export function HexMap({
             id: HERO_ID,
             q: start.q,
             r: start.r,
-            remaining: MAX_MOVEMENT_POINTS,
+            remaining: heroMovementPoints(getCachedCatalog(), null),
           }
         }
       }
@@ -501,6 +536,14 @@ export function HexMap({
         }
         const obj = entry.data
         if (obj.kind === 'town') {
+          const existing = findTownAt(getSession(), q, r)
+          const heroId = selectedMapHeroId ?? heroRef.current?.id
+          const hero = heroId
+            ? getSession().heroes.find((row) => row.id === heroId)
+            : undefined
+          if (existing?.player_id && existing.player_id !== hero?.player_id) {
+            return
+          }
           updateSession((current) =>
             claimTown(current, q, r, {
               name: obj.name ?? undefined,
@@ -858,17 +901,23 @@ export function HexMap({
         }
         const occupant = otherHeroAt(hex.q, hex.r, hero.id)
         const town = findTownAt(getSession(), hex.q, hex.r)
+        const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
         const node = liveNodeAt(hex.q, hex.r)
-        const walkOnto = !occupant && (town || node) ? hex : null
+        const walkOnto = !occupant && !enemyTown && (town || node) ? hex : null
         const hoverBlocked = obstacleHexes(hero, walkOnto)
         const hoverKey = `${hero.q},${hero.r},${hero.remaining}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|${[...hoverBlocked].sort().join(';')}`
         if (hoverKey === lastHoverKey) {
           return
         }
         lastHoverKey = hoverKey
-        const dest = occupant
-          ? approachHex(hero, occupant.position, hoverBlocked)
-          : hex
+        const dest =
+          occupant || enemyTown
+            ? approachHex(
+                hero,
+                occupant?.position ?? enemyTown!.position,
+                hoverBlocked,
+              )
+            : hex
         if (!dest || (dest.q === hero.q && dest.r === hero.r)) {
           preview.clear()
           return
@@ -1055,6 +1104,53 @@ export function HexMap({
             return
           }
           tryMoveTo(dest, meet)
+          return
+        }
+        const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
+        if (enemyTown) {
+          const siege = () => {
+            const mover = heroRef.current
+            const live = findTownAt(getSession(), enemyTown.position.q, enemyTown.position.r)
+            if (!mover || !live?.player_id) {
+              return
+            }
+            const self = getSession().heroes.find((row) => row.id === mover.id)
+            if (!self || live.player_id === self.player_id) {
+              return
+            }
+            if (hexDistance(mover, live.position) > 1) {
+              return
+            }
+            mover.remaining = spendHeroInteract(mover.remaining)
+            onHeroState({
+              id: mover.id,
+              q: mover.q,
+              r: mover.r,
+              remaining: mover.remaining,
+            })
+            updateSession((current) =>
+              syncHero(
+                current,
+                { q: mover.q, r: mover.r },
+                mover.remaining,
+                mover.id,
+              ),
+            )
+            onSiegeTownRef.current(live.id)
+          }
+          if (hexDistance(hero, enemyTown.position) <= 1) {
+            siege()
+            return
+          }
+          const dest = approachHex(
+            hero,
+            enemyTown.position,
+            obstacleHexes(hero),
+          )
+          if (!dest) {
+            return
+          }
+          tryMoveTo(dest, siege)
           return
         }
         const town = findTownAt(getSession(), hex.q, hex.r)

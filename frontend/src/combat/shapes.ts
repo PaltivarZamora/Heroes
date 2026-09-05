@@ -4,6 +4,7 @@ import type { ReferenceCatalog, UnitCombatAbilities } from '../town/catalog'
 import { unitById, unitAttackShape } from '../town/catalog'
 import { moveStack, type CombatBattle, type CombatStack, type CombatTile } from './battle'
 import { occupancyKey, stackOccupyingHex } from './occupancy'
+import { isUntargetableStack, liveWallLosKeys } from './siege'
 
 export type ShapeHit = {
   hex: Axial
@@ -69,14 +70,16 @@ export function hexLine(from: Axial, to: Axial): Axial[] {
 }
 
 /**
- * Clear sight along Beam's hex-line. Only terrain with `blocksLos`
- * obstructs; units never do. Endpoints are the attacker and the
- * candidate — they are not treated as blockers.
+ * Clear sight along Beam's hex-line. Barrier terrain and live
+ * Wall/Shooter/Drawbridge stacks block; other units do not.
+ * Endpoints (attacker and candidate) are not treated as blockers.
  */
 export function hasLineOfSight(
   from: Axial,
   to: Axial,
   tiles: CombatTile[],
+  stacks: CombatStack[] = [],
+  catalog?: ReferenceCatalog,
 ): boolean {
   const line = hexLine(from, to)
   if (line.length <= 2) {
@@ -87,6 +90,11 @@ export function hasLineOfSight(
       .filter((tile) => tile.blocksLos)
       .map((tile) => occupancyKey(tile.q, tile.r)),
   )
+  if (catalog) {
+    for (const key of liveWallLosKeys(stacks, catalog, tiles)) {
+      blocked.add(key)
+    }
+  }
   for (let i = 1; i < line.length - 1; i += 1) {
     if (blocked.has(keyOf(line[i]!))) {
       return false
@@ -239,6 +247,9 @@ function hexHits(
     if (isFriendly(stack, side)) {
       continue
     }
+    if (stack && isUntargetableStack(stack, catalog)) {
+      continue
+    }
     if (stack) {
       if (seen.has(stack.id)) {
         continue
@@ -255,13 +266,16 @@ function losEnemies(
   side: CombatStack['side'],
   from: Axial,
   tiles: CombatTile[],
+  catalog: ReferenceCatalog,
 ): CombatStack[] {
-  return enemies(battle, side).filter((row) =>
-    hasLineOfSight(from, { q: row.q, r: row.r }, tiles),
+  return enemies(battle, side).filter(
+    (row) =>
+      !isUntargetableStack(row, catalog) &&
+      hasLineOfSight(from, { q: row.q, r: row.r }, tiles, battle.stacks, catalog),
   )
 }
 
-function geometricHexes(
+export function geometricHexes(
   spec: UnitCombatAbilities,
   from: Axial,
   aim: Axial,
@@ -269,6 +283,7 @@ function geometricHexes(
   board: ReadonlySet<string>,
   side: CombatStack['side'],
   tiles: CombatTile[],
+  catalog: ReferenceCatalog,
 ): Axial[] {
   switch (spec.shape) {
     case 'cleave':
@@ -283,7 +298,7 @@ function geometricHexes(
       return uniqueHexes(breathHexes(from, aim, spec.rows), board)
     case 'rain':
       return uniqueHexes(
-        losEnemies(battle, side, from, tiles).map((row) => ({
+        losEnemies(battle, side, from, tiles, catalog).map((row) => ({
           q: row.q,
           r: row.r,
         })),
@@ -320,11 +335,15 @@ export function previewImpactKeys(
     board,
     acting.attacker.side,
     tiles,
+    catalog,
   )
   const keys: string[] = []
   for (const hex of hexes) {
     const stack = occupant(acting.battle, hex, catalog)
     if (isFriendly(stack, acting.attacker.side)) {
+      continue
+    }
+    if (stack && isUntargetableStack(stack, catalog)) {
       continue
     }
     keys.push(keyOf(hex))
@@ -350,7 +369,11 @@ export function resolveShapeHits(
 
   if (spec.shape === 'chain') {
     const first = target
-    if (!first || first.side === side) {
+    if (
+      !first ||
+      first.side === side ||
+      isUntargetableStack(first, catalog)
+    ) {
       return []
     }
     const hits: ShapeHit[] = [
@@ -359,7 +382,7 @@ export function resolveShapeHits(
     let prevId = first.id
     const total = Math.max(1, spec.jumps)
     for (let i = 1; i < total; i += 1) {
-      const pool = losEnemies(field, side, from, tiles).filter(
+      const pool = losEnemies(field, side, from, tiles, catalog).filter(
         (row) => row.id !== prevId,
       )
       const next = pickOne(pool, random)
@@ -374,7 +397,7 @@ export function resolveShapeHits(
   }
 
   if (spec.shape === 'multi') {
-    const pool = losEnemies(field, side, from, tiles)
+    const pool = losEnemies(field, side, from, tiles, catalog)
     const hits: ShapeHit[] = []
     const n = Math.max(1, spec.targets)
     for (let i = 0; i < n; i += 1) {
@@ -388,7 +411,7 @@ export function resolveShapeHits(
   }
 
   return hexHits(
-    geometricHexes(spec, from, aim, field, board, side, tiles),
+    geometricHexes(spec, from, aim, field, board, side, tiles, catalog),
     field,
     catalog,
     side,

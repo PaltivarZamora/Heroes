@@ -1,16 +1,16 @@
 ﻿import { startCalendar } from '../hex/calendar'
 import { emptyWallet, RESOURCES } from '../hex/resources'
-import { HERO_MARKER_LABEL, MAX_MOVEMENT_POINTS } from '../hex/hero'
+import { HERO_MARKER_LABEL } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { forEachPassableHex, isPassable } from '../hex/world'
-import { getCachedCatalog } from '../town/catalog'
+import { getCachedCatalog, heroMovementPoints, heroResourcePools } from '../town/catalog'
 import type { GameConfig } from '../options/gameConfig'
 import {
   mapObjectResourceId,
   mapObjectTownTypeId,
   type MapObjectData,
 } from '../hex/types'
-import { assignHeroesFromPool } from './accessors'
+import { assignHeroesFromPool, progressForHeroName, withNamedProgress } from './accessors'
 import {
   ARMY_STACK_SLOTS,
   BUILDING_SLOT_COUNT,
@@ -71,6 +71,7 @@ export function createInitialSession(): GameSession {
     towns: [],
     building_states: [],
     heroes: [],
+    hero_progress: {},
     units: [],
     nodes: [],
     mobs: [],
@@ -107,6 +108,7 @@ export function createSessionFromConfig(config: GameConfig): GameSession {
     towns: [],
     building_states: [],
     heroes: [],
+    hero_progress: {},
     units: [],
     nodes: [],
     mobs: [],
@@ -239,12 +241,21 @@ export function addHumanHero(
     class_id: null,
     image_path: null,
     position: { ...position },
-    movement_remaining: MAX_MOVEMENT_POINTS,
+    movement_remaining: heroMovementPoints(getCachedCatalog(), {
+      class_id: null,
+      current_level: 1,
+    }),
     army: {
       slot_0: HERO_MARKER_LABEL,
       slots_1_to_6: emptyStackSlots(),
     },
     learned_abilities: [],
+    current_level: 1,
+    current_xp: 0,
+    ...heroResourcePools(getCachedCatalog(), {
+      class_id: null,
+      current_level: 1,
+    }),
   }
   const withHero: GameSession = {
     ...session,
@@ -304,6 +315,7 @@ function spawnPlayerHero(
     }
   }
   const id = nextStartingHeroId(session)
+  const live = progressForHeroName(session, name)
   const hero: Hero = {
     id,
     player_id: playerId,
@@ -311,22 +323,35 @@ function spawnPlayerHero(
     class_id: classId,
     image_path: imagePath,
     position: { ...position },
-    movement_remaining: MAX_MOVEMENT_POINTS,
+    movement_remaining: heroMovementPoints(getCachedCatalog(), {
+      class_id: classId,
+      current_level: live.current_level,
+    }),
     army: {
       slot_0: name,
       slots_1_to_6: emptyStackSlots(),
     },
     learned_abilities: [],
+    current_level: live.current_level,
+    current_xp: live.current_xp,
+    ...heroResourcePools(getCachedCatalog(), {
+      class_id: classId,
+      current_level: live.current_level,
+    }),
   }
-  const withHero: GameSession = {
-    ...session,
-    heroes: [...session.heroes, hero],
-    players: session.players.map((player) =>
-      player.id === playerId
-        ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
-        : player,
-    ),
-  }
+  const withHero: GameSession = withNamedProgress(
+    {
+      ...session,
+      heroes: [...session.heroes, hero],
+      players: session.players.map((player) =>
+        player.id === playerId
+          ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
+          : player,
+      ),
+    },
+    name,
+    live,
+  )
   if (hero.class_id != null || !catalog) {
     return withHero
   }

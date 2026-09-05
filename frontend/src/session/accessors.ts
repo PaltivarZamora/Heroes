@@ -9,12 +9,13 @@ import {
   snapshotWallet,
   type ResourceWallet,
 } from '../hex/resources'
-import { MAX_MOVEMENT_POINTS } from '../hex/hero'
 import type { SlotState } from '../town/townSlots'
 import {
   buildingById,
   buildingGrowth,
   goldIncomeGrant,
+  heroMovementPoints,
+  heroResourcePools,
   isArmySlot,
   isLibraryBuilding,
   resourceYieldGrant,
@@ -47,6 +48,7 @@ import {
   type BuildingState,
   type GameSession,
   type Hero,
+  type HeroProgress,
   type Node,
   type Player,
   type Town,
@@ -178,6 +180,115 @@ export function endTurn(session: GameSession): GameSession {
 }
 
 const PLACEHOLDER_HERO_NAME = 'X1'
+export const STARTING_HERO_LEVEL = 1
+export const STARTING_HERO_XP = 0
+
+export function emptyHeroProgress(): Record<string, HeroProgress> {
+  return {}
+}
+
+function asHeroLevel(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n) || n < 1) {
+    return fallback
+  }
+  return Math.floor(n)
+}
+
+function asHeroXp(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n) || n < 0) {
+    return fallback
+  }
+  return Math.floor(n)
+}
+
+function asHeroPoolAmount(value: unknown, fallback: number): number {
+  if (value == null || value === '') {
+    return fallback
+  }
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n) || n < 0) {
+    return fallback
+  }
+  return Math.floor(n)
+}
+
+export function progressForHeroName(
+  session: GameSession,
+  name: string,
+): HeroProgress {
+  const saved = session.hero_progress?.[name]
+  return {
+    current_level: asHeroLevel(saved?.current_level, STARTING_HERO_LEVEL),
+    current_xp: asHeroXp(saved?.current_xp, STARTING_HERO_XP),
+  }
+}
+
+export function withNamedProgress(
+  session: GameSession,
+  name: string,
+  live: HeroProgress,
+): GameSession {
+  if (!name || name === PLACEHOLDER_HERO_NAME) {
+    return session
+  }
+  const existing = session.hero_progress?.[name]
+  if (existing) {
+    return session
+  }
+  return {
+    ...session,
+    hero_progress: {
+      ...(session.hero_progress ?? {}),
+      [name]: live,
+    },
+  }
+}
+
+export function normalizeHeroProgress(
+  session: GameSession,
+): GameSession {
+  const progress: Record<string, HeroProgress> = {}
+  const raw = session.hero_progress
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [name, row] of Object.entries(raw)) {
+      if (!name || name === PLACEHOLDER_HERO_NAME) {
+        continue
+      }
+      progress[name] = {
+        current_level: asHeroLevel(row?.current_level, STARTING_HERO_LEVEL),
+        current_xp: asHeroXp(row?.current_xp, STARTING_HERO_XP),
+      }
+    }
+  }
+  const heroes = session.heroes.map((hero) => {
+    const fromHero = {
+      current_level: asHeroLevel(
+        hero.current_level,
+        progress[hero.name]?.current_level ?? STARTING_HERO_LEVEL,
+      ),
+      current_xp: asHeroXp(
+        hero.current_xp,
+        progress[hero.name]?.current_xp ?? STARTING_HERO_XP,
+      ),
+    }
+    const pools = heroResourcePools(getCachedCatalog(), {
+      class_id: hero.class_id,
+      current_level: fromHero.current_level,
+    })
+    if (hero.name && hero.name !== PLACEHOLDER_HERO_NAME) {
+      progress[hero.name] = progress[hero.name] ?? fromHero
+    }
+    return {
+      ...hero,
+      ...fromHero,
+      current_mana: asHeroPoolAmount(hero.current_mana, pools.current_mana),
+      current_energy: asHeroPoolAmount(hero.current_energy, pools.current_energy),
+    }
+  })
+  return { ...session, heroes, hero_progress: progress }
+}
 export const HIRE_HERO_GOLD_COST: Record<number, number> = {
   [GOLD_RESOURCE_ID]: 1000,
 }
@@ -208,6 +319,7 @@ export function assignHeroesFromPool(
   }
   let nextAvailable = available
   let changed = false
+  let progress = { ...(session.hero_progress ?? {}) }
   const heroes = session.heroes.map((hero) => {
     if (!heroNeedsPool(hero) || nextAvailable.length === 0) {
       return hero
@@ -216,6 +328,11 @@ export function assignHeroesFromPool(
       nextAvailable[Math.floor(Math.random() * nextAvailable.length)]
     nextAvailable = nextAvailable.filter((row) => row.id !== pick.id)
     changed = true
+    const live = progress[pick.name] ?? {
+      current_level: STARTING_HERO_LEVEL,
+      current_xp: STARTING_HERO_XP,
+    }
+    progress[pick.name] = live
     return {
       ...hero,
       name: pick.name,
@@ -223,9 +340,19 @@ export function assignHeroesFromPool(
       image_path: pick.image_path,
       army: { ...hero.army, slot_0: pick.name },
       learned_abilities: hero.learned_abilities ?? [],
+      current_level: live.current_level,
+      current_xp: live.current_xp,
+      movement_remaining: heroMovementPoints(getCachedCatalog(), {
+        class_id: pick.class_id,
+        current_level: live.current_level,
+      }),
+      ...heroResourcePools(getCachedCatalog(), {
+        class_id: pick.class_id,
+        current_level: live.current_level,
+      }),
     }
   })
-  const withNames = changed ? { ...session, heroes } : session
+  const withNames = changed ? { ...session, heroes, hero_progress: progress } : session
   return withNames
 }
 
@@ -258,6 +385,7 @@ export function hireHeroFromPool(
   if (spent.error) {
     return spent
   }
+  const live = progressForHeroName(spent.session, pick.name)
   const hero: Hero = {
     id: nextHeroId(spent.session),
     player_id: actingPlayerId(spent.session) ?? HUMAN_PLAYER_ID,
@@ -265,23 +393,36 @@ export function hireHeroFromPool(
     class_id: pick.class_id,
     image_path: pick.image_path,
     position: { ...town.position },
-    movement_remaining: MAX_MOVEMENT_POINTS,
     army: {
       slot_0: pick.name,
       slots_1_to_6: Array.from({ length: ARMY_STACK_SLOTS }, () => null),
     },
     learned_abilities: [],
+    current_level: live.current_level,
+    current_xp: live.current_xp,
+    movement_remaining: heroMovementPoints(getCachedCatalog(), {
+      class_id: pick.class_id,
+      current_level: live.current_level,
+    }),
+    ...heroResourcePools(getCachedCatalog(), {
+      class_id: pick.class_id,
+      current_level: live.current_level,
+    }),
   }
   return {
-    session: {
-      ...spent.session,
-      heroes: [...spent.session.heroes, hero],
-      players: spent.session.players.map((player) =>
-        player.id === hero.player_id
-          ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
-          : player,
-      ),
-    },
+    session: withNamedProgress(
+      {
+        ...spent.session,
+        heroes: [...spent.session.heroes, hero],
+        players: spent.session.players.map((player) =>
+          player.id === hero.player_id
+            ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
+            : player,
+        ),
+      },
+      pick.name,
+      live,
+    ),
     error: null,
   }
 }
@@ -757,6 +898,70 @@ function nextStackId(session: GameSession): string {
     n += 1
   }
   return `unit-${n}`
+}
+
+export function nextUnitStackId(session: GameSession): string {
+  return nextStackId(session)
+}
+
+export function addHeroStackQty(
+  session: GameSession,
+  stackId: string,
+  qty: number,
+): GameSession {
+  if (qty <= 0) {
+    return session
+  }
+  return {
+    ...session,
+    units: session.units.map((row) =>
+      row.id === stackId ? { ...row, qty: row.qty + qty } : row,
+    ),
+  }
+}
+
+export function insertHeroArmyStack(
+  session: GameSession,
+  heroId: string,
+  slot: number,
+  stack: { id: string; unitId: number; qty: number },
+): GameSession {
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero || stack.qty <= 0 || slot < 0 || slot >= ARMY_STACK_SLOTS) {
+    return session
+  }
+  const slots = [...hero.army.slots_1_to_6]
+  while (slots.length < ARMY_STACK_SLOTS) {
+    slots.push(null)
+  }
+  const existingId = slots[slot]
+  const existing = existingId
+    ? session.units.find((row) => row.id === existingId)
+    : null
+  if (existing && existing.unit_id === stack.unitId) {
+    return addHeroStackQty(session, existing.id, stack.qty)
+  }
+  if (existingId) {
+    return session
+  }
+  slots[slot] = stack.id
+  const row: UnitStack = {
+    id: stack.id,
+    unit_id: stack.unitId,
+    qty: stack.qty,
+    town_id: null,
+    hero_id: heroId,
+    mob_id: null,
+  }
+  return {
+    ...session,
+    units: [...session.units, row],
+    heroes: session.heroes.map((entry) =>
+      entry.id === heroId
+        ? { ...entry, army: { ...entry.army, slots_1_to_6: slots } }
+        : entry,
+    ),
+  }
 }
 
 export type ArmyRowId = 'garrison' | 'hero'
@@ -1467,7 +1672,7 @@ export function restorePlayerHeroMovement(
     ...session,
     heroes: session.heroes.map((hero) =>
       hero.player_id === playerId
-        ? { ...hero, movement_remaining: MAX_MOVEMENT_POINTS }
+        ? { ...hero, movement_remaining: heroMovementPoints(getCachedCatalog(), hero) }
         : hero,
     ),
   }
@@ -1478,7 +1683,7 @@ export function restoreAllHeroMovement(session: GameSession): GameSession {
     ...session,
     heroes: session.heroes.map((hero) => ({
       ...hero,
-      movement_remaining: MAX_MOVEMENT_POINTS,
+      movement_remaining: heroMovementPoints(getCachedCatalog(), hero),
     })),
   }
 }

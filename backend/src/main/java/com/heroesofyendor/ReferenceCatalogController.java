@@ -30,18 +30,27 @@ public class ReferenceCatalogController {
         body.put("town", decodeRows(referenceData.rows("town"), resourceNameToId));
         body.put("building", decodeRows(referenceData.rows("building"), resourceNameToId));
         body.put("unit", decodeRows(referenceData.rows("unit"), resourceNameToId));
+        body.put("unit_tag", decodeRows(referenceData.rows("unit_tag"), resourceNameToId));
+        body.put("condition", decodeRows(referenceData.rows("condition"), resourceNameToId));
         body.put("move_type", decodeRows(referenceData.rows("move_type"), resourceNameToId));
         body.put("hero_type", decodeRows(referenceData.rows("hero_type"), resourceNameToId));
         body.put("hero_pool", decodeRows(referenceData.rows("hero_pool"), resourceNameToId));
         body.put("town_layout", decodeRows(referenceData.rows("town_layout"), resourceNameToId));
         body.put("market", decodeRows(referenceData.rows("market"), resourceNameToId));
         body.put("ability", decodeRows(referenceData.rows("ability"), resourceNameToId));
+        body.put("ability_resource", decodeRows(referenceData.rows("ability_resource"), resourceNameToId));
+        body.put("ability_cooldown", decodeRows(referenceData.rows("ability_cooldown"), resourceNameToId));
+        body.put("ability_target", decodeRows(referenceData.rows("ability_target"), resourceNameToId));
+        body.put("ability_type", decodeRows(referenceData.rows("ability_type"), resourceNameToId));
         body.put("discipline", decodeRows(referenceData.rows("discipline"), resourceNameToId));
         body.put("ability_level", decodeRows(referenceData.rows("ability_level"), resourceNameToId));
         body.put("hero_discipline", decodeRows(referenceData.rows("hero_discipline"), resourceNameToId));
         body.put("difficulty", decodeRows(referenceData.rows("difficulty"), resourceNameToId));
         body.put("player_color", decodeRows(referenceData.rows("player_color"), resourceNameToId));
         body.put("terrain_type", decodeRows(referenceData.rows("terrain_type"), resourceNameToId));
+        body.put("app_config", decodeRows(referenceData.rows("app_config"), resourceNameToId));
+        body.put("levels", decodeRows(referenceData.rows("levels"), resourceNameToId));
+        body.put("hero_levels", decodeRows(referenceData.rows("hero_levels"), resourceNameToId));
         return body;
     }
 

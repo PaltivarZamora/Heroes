@@ -2,14 +2,9 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatResourceLine, RESOURCES } from '../hex/resources'
 import { humanPlayer, walletFromSession } from '../session/accessors'
 import { getSession, subscribe } from '../session/store'
-import { getCachedCatalog, heroTypeName, subscribeCatalog } from './catalog'
-import {
-  LIBRARY_TIERS,
-  classDisciplines,
-  learnedAbilitiesAtTier,
-  tierLabel,
-} from './libraryRules'
-import { AbilityTip } from './AbilityTip'
+import { getCachedCatalog, formatHeroLevelLine, heroEffectiveStats, heroTypeName, subscribeCatalog } from './catalog'
+import { classDisciplines } from './libraryRules'
+import { HeroAbilitiesPanel } from './HeroAbilitiesPanel'
 import { ReservedCorner } from './ReservedCorner'
 import {
   GENERIC_EMPTY_ART_FILENAME,
@@ -17,6 +12,16 @@ import {
   itemArtUrl,
 } from './slotArt'
 
+const STAT_CELLS: Array<{ key: keyof ReturnType<typeof heroEffectiveStats>; label: string }> = [
+  { key: 'speed', label: 'Speed' },
+  { key: 'stamina', label: 'Stamina' },
+  { key: 'strength', label: 'Strength' },
+  { key: 'intel', label: 'Intelligence' },
+  { key: 'defense', label: 'Defense' },
+  { key: 'resist', label: 'Resistance' },
+  { key: 'crit_pct', label: 'Crit Chance' },
+  { key: 'crit_amt', label: 'Crit Amount' },
+]
 const PAPERDOLL_FILE = 'paperdoll.png'
 const EQUIP_SLOTS = 6
 const PACK_SLOTS = 15
@@ -124,6 +129,17 @@ export function HeroScreen({
   const portraitSlots = Array.from({ length: 14 }, (_, index) => ownedIds[index] ?? null)
   const typeName = catalog ? heroTypeName(catalog, hero?.class_id ?? null) : ''
   const abilitiesTitle = typeName ? `${typeName} Abilities` : 'Abilities'
+  const level = hero?.current_level ?? 1
+  const xp = hero?.current_xp ?? 0
+  const identityLine = formatHeroLevelLine(
+    catalog,
+    hero?.name ?? 'Hero',
+    level,
+    xp,
+  )
+  const stats = catalog
+    ? heroEffectiveStats(catalog, hero?.class_id ?? null, level)
+    : null
 
   return (
     <div
@@ -147,59 +163,33 @@ export function HeroScreen({
       </header>
       <div className="hero-screen-body">
         <section className="hero-screen-panel hero-screen-abilities" aria-label={abilitiesTitle}>
-          <h2>{abilitiesTitle}</h2>
-          {disciplines.length > 0 ? (
-            <div
-              className={
-                disciplines.length === 1
-                  ? 'hero-discipline-tabs hero-discipline-tabs-solo'
-                  : 'hero-discipline-tabs'
-              }
-            >
-              {disciplines.map((discipline) => (
-                <button
-                  key={discipline.id}
-                  type="button"
-                  className={discipline.id === disciplineId ? 'active' : undefined}
-                  onClick={() => setDisciplineId(discipline.id)}
-                >
-                  {discipline.name}
-                </button>
+          <div className="hero-stats-block">
+            <h2>Hero Stats</h2>
+            <div className="hero-stats-grid">
+              {STAT_CELLS.map((cell) => (
+                <div key={cell.key} className="hero-stats-cell">
+                  <span className="hero-stats-label">{cell.label}</span>
+                  <span className="hero-stats-value">
+                    {stats ? stats[cell.key] : '—'}
+                  </span>
+                </div>
               ))}
             </div>
+          </div>
+          <h2>{abilitiesTitle}</h2>
+          {catalog ? (
+            <HeroAbilitiesPanel
+              catalog={catalog}
+              learned={learned}
+              disciplines={disciplines}
+              disciplineId={disciplineId}
+              onDisciplineId={setDisciplineId}
+            />
           ) : null}
-          {catalog && disciplineId != null
-            ? LIBRARY_TIERS.map((level) => {
-                const rows = learnedAbilitiesAtTier(
-                  catalog,
-                  learned,
-                  disciplineId,
-                  level,
-                )
-                return (
-                  <div key={level} className="hero-ability-tier">
-                    <h3>{tierLabel(catalog, level)}</h3>
-                    {rows.length === 0 ? (
-                      <p className="hero-ability-empty">None learned</p>
-                    ) : (
-                      <ul className="hero-ability-list">
-                        {rows.map((ability) => (
-                          <li key={ability.id}>
-                            <AbilityTip description={ability.description}>
-                              <span className="hero-ability-name">{ability.name}</span>
-                            </AbilityTip>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )
-              })
-            : null}
         </section>
         <section className="hero-screen-panel hero-screen-right" aria-label="Hero">
           <div className="hero-screen-identity">
-            <h2>{hero?.name ?? 'Hero'}</h2>
+            <h2>{identityLine}</h2>
           </div>
           <div className="hero-paperdoll-wrap" aria-hidden="true">
             <div className="hero-equip-col">

@@ -14,6 +14,10 @@ function terrainTextureUrl(terrain: string, n: number): string {
   return `/assets/terrain/${terrain.replaceAll(' ', '_')}_${n}.png`
 }
 
+function isMoatTerrainName(terrain: string): boolean {
+  return terrain.replaceAll(' ', '_').toLowerCase() === 'moat'
+}
+
 function u32(n: number): number {
   return n >>> 0
 }
@@ -52,12 +56,55 @@ export function pickTerrainVariantIndex(
   return variants.length - 1
 }
 
-async function tryLoadTexture(url: string): Promise<Texture | null> {
+function punchBlackToAlpha(image: HTMLImageElement): Texture | null {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, image.naturalWidth)
+  canvas.height = Math.max(1, image.naturalHeight)
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) {
+    return null
+  }
+  ctx.drawImage(image, 0, 0)
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const data = pixels.data
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i]! + data[i + 1]! + data[i + 2]! < 24) {
+      data[i + 3] = 0
+    }
+  }
+  ctx.putImageData(pixels, 0, 0)
+  return Texture.from(canvas)
+}
+
+export function loadTextureUrl(
+  url: string,
+  punchBlack = false,
+): Promise<Texture | null> {
+  return tryLoadTexture(url, punchBlack)
+}
+
+async function tryLoadTexture(
+  url: string,
+  punchBlack = false,
+): Promise<Texture | null> {
   try {
     const response = await fetch(url, { method: 'HEAD' })
     const contentType = response.headers.get('content-type') ?? ''
     if (!response.ok || !contentType.startsWith('image/')) {
       return null
+    }
+    if (punchBlack) {
+      try {
+        const image = new Image()
+        image.src = url
+        await image.decode()
+        const punched = punchBlackToAlpha(image)
+        if (punched && punched.width >= 1 && punched.height >= 1) {
+          return punched
+        }
+      } catch {
+        // Fall through to a normal load so the file still shows.
+      }
     }
     const texture = await Assets.load<Texture>(url)
     if (texture.width < 1 || texture.height < 1) {
@@ -75,8 +122,19 @@ async function loadTerrainTextureVariants(
 ): Promise<TerrainTextureVariant[] | null> {
   const max = Math.max(0, Math.min(VARIANT_WEIGHTS.length, Math.trunc(variantCount)))
   const loaded: TerrainTextureVariant[] = []
+  const moat = isMoatTerrainName(terrain)
   for (let n = 1; n <= max; n += 1) {
-    const texture = await tryLoadTexture(terrainTextureUrl(terrain, n))
+    const urls = [terrainTextureUrl(terrain, n)]
+    if (moat) {
+      urls.push(terrainTextureUrl('Necropolis_Moat', n))
+    }
+    let texture: Texture | null = null
+    for (const url of urls) {
+      texture = await tryLoadTexture(url, moat)
+      if (texture) {
+        break
+      }
+    }
     if (!texture) {
       continue
     }
@@ -90,7 +148,7 @@ let cachedByTerrain: Map<string, TerrainTextureVariant[]> | null = null
 let loadAllPromise: Promise<Map<string, TerrainTextureVariant[]>> | null = null
 
 function typesKey(types: readonly TerrainTypeRow[]): string {
-  return types.map((row) => `${row.name}:${row.variants}`).join('|')
+  return `v2|${types.map((row) => `${row.name}:${row.variants}`).join('|')}`
 }
 
 /** Load `{name}_1.png` … `{name}_{variants}.png` for each catalog row. */
@@ -139,6 +197,7 @@ export function addMaskedTerrainHex(
   offsetX: number,
   offsetY: number,
   texture: Texture,
+  fit: 'cover' | 'contain' = 'cover',
 ): void {
   const corners = hex.corners.map((corner) => ({
     x: corner.x + offsetX,
@@ -170,8 +229,10 @@ export function addMaskedTerrainHex(
   const tw = Math.max(1, texture.width)
   const th = Math.max(1, texture.height)
   const scale =
-    Math.max(hex.width / tw, hex.height / th) *
-    (1 + (MASK_EXPAND_PX * 2) / Math.max(hex.width, 1))
+    fit === 'contain'
+      ? Math.min(hex.width / tw, hex.height / th)
+      : Math.max(hex.width / tw, hex.height / th) *
+        (1 + (MASK_EXPAND_PX * 2) / Math.max(hex.width, 1))
 
   const sprite = new Sprite({
     texture,

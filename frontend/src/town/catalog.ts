@@ -40,7 +40,10 @@ export type UnitRow = {
   image_path: string | null
   /** Battlefield footprint in hexes. Null means 1. */
   hex_size: number | null
-  speed: number
+  /** Null speed = never acts (no initiative, no log). */
+  speed: number | null
+  /** Attack-in-place only; Speed may still be set for turn order. */
+  stationary: boolean
   move_type_id: number | null
   health: number
   defense: number
@@ -53,6 +56,8 @@ export type UnitRow = {
   /** Battlefield retaliation. Always a resolved spec (null data → default). */
   retaliation: UnitRetaliation
   abilities: UnitCombatAbilities
+  /** Catalog `unit_tag.id` values from unit.tags. */
+  tags: number[]
 }
 
 export type UnitRetaliation = {
@@ -72,6 +77,8 @@ export type AttackShapeKind =
   | 'rain'
   | 'breath'
 
+export type AutoTargetKind = 'random_wall_segment' | 'random_enemy'
+
 export type UnitCombatAbilities = {
   no_enemy_retaliation: boolean
   shape: AttackShapeKind
@@ -80,6 +87,14 @@ export type UnitCombatAbilities = {
   falloff: number
   targets: number
   rows: number
+  autoTarget: AutoTargetKind | null
+  skipIfNone: boolean
+  /** Catalog condition.id inflicted on a successful attack. */
+  inflictsCondition: number | null
+  /** Which unit stat the target rolls to resist that condition. */
+  resistStat: 'resistance' | 'defense' | null
+  /** Forced turns remaining when the condition lands. */
+  conditionDuration: number
 }
 
 export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
@@ -96,11 +111,22 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   falloff: 0,
   targets: 1,
   rows: 2,
+  autoTarget: null,
+  skipIfNone: false,
+  inflictsCondition: null,
+  resistStat: null,
+  conditionDuration: 1,
 }
 
 export type MoveTypeRow = {
   id: number
   name: string
+}
+
+export type AppConfigRow = {
+  key: string
+  value: string
+  description: string | null
 }
 
 export type TerrainTypeRow = {
@@ -111,12 +137,50 @@ export type TerrainTypeRow = {
   /** Sight, not movement. Water can block walking and still leave LOS open. */
   blocks_los: boolean
   variants: number
+  /** Hand-placed only when false (Barrier, Void). */
+  random_eligible: boolean
+  /** Flat HP loss (Moat). Not combat damage — no Defense/Resistance. */
+  entry_damage: number | null
 }
 
 export type HeroTypeRow = {
   id: number
   name: string
   town_id: number
+  speed: number
+  strength: number
+  intel: number
+  defense: number
+  resist: number
+  crit_pct: number
+  crit_amt: number
+  stamina: number
+}
+
+export const HERO_STAT_KEYS = [
+  'speed',
+  'stamina',
+  'strength',
+  'intel',
+  'defense',
+  'resist',
+  'crit_pct',
+  'crit_amt',
+] as const
+
+export type HeroStatKey = (typeof HERO_STAT_KEYS)[number]
+
+export type HeroStats = Record<HeroStatKey, number>
+
+export type LevelRow = {
+  id: number
+  xp: number
+}
+
+export type HeroLevelRow = {
+  hero_type_id: number
+  level_id: number
+  stat_bumps: Partial<HeroStats>
 }
 
 export type HeroPoolRow = {
@@ -143,6 +207,39 @@ export type AbilityRow = {
   level_id: number
   name: string
   description: string
+  /** ability_resource.id — 1=Energy, 2=Mana. */
+  resource_id: number
+  /** Flat spend from that resource. 10/25/50 by tier. */
+  cost: number
+  /** ability_cooldown.id — 0=None, 1=Once, 2=Daily. */
+  cooldown_id: number
+  /** ability_target.id. Null = not designed yet. */
+  target_id: number | null
+  /** ability_type.id. Null = not designed yet. */
+  ability_type_id: number | null
+  /** Effect payload. Null = not designed yet; skip, not an error. */
+  stats: Record<string, unknown> | null
+}
+
+export type AbilityResourceRow = {
+  id: number
+  value: string
+}
+
+export type AbilityCooldownRow = {
+  id: number
+  value: string
+  description: string
+}
+
+export type AbilityTargetRow = {
+  id: number
+  value: string
+}
+
+export type AbilityTypeRow = {
+  id: number
+  value: string
 }
 
 export type DisciplineRow = {
@@ -196,6 +293,12 @@ export type ReferenceCatalog = {
   town_layout: TownLayoutRow[]
   market: MarketRow[]
   ability: AbilityRow[]
+  ability_resource: AbilityResourceRow[]
+  ability_cooldown: AbilityCooldownRow[]
+  ability_target: AbilityTargetRow[]
+  ability_type: AbilityTypeRow[]
+  unit_tag: AbilityTargetRow[]
+  condition: AbilityTargetRow[]
   discipline: DisciplineRow[]
   ability_level: AbilityLevelRow[]
   hero_discipline: HeroDisciplineRow[]
@@ -203,6 +306,9 @@ export type ReferenceCatalog = {
   player_color: PlayerColorRow[]
   move_type: MoveTypeRow[]
   terrain_type: TerrainTypeRow[]
+  app_config: AppConfigRow[]
+  levels: LevelRow[]
+  hero_levels: HeroLevelRow[]
 }
 
 /** TBD until per-building destroy_cost values exist. */
@@ -263,6 +369,14 @@ function asHeroPool(rows: unknown): HeroPoolRow[] {
 function asInt(value: unknown, fallback = 0): number {
   const n = Number(value)
   return Number.isFinite(n) ? Math.trunc(n) : fallback
+}
+
+function asOptionalId(value: unknown): number | null {
+  if (value == null || value === '') {
+    return null
+  }
+  const n = asInt(value)
+  return n > 0 ? n : null
 }
 
 function asIdList(value: unknown): number[] {
@@ -395,6 +509,22 @@ function asMoveTypes(rows: unknown): MoveTypeRow[] {
     .sort((a, b) => a.id - b.id)
 }
 
+function asAppConfig(rows: unknown): AppConfigRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const key = typeof rec.key === 'string' ? rec.key.trim() : ''
+      const value = rec.value == null ? '' : String(rec.value)
+      const description =
+        typeof rec.description === 'string' ? rec.description : null
+      return { key, value, description }
+    })
+    .filter((row) => row.key.length > 0)
+}
+
 function asBoolFlag(value: unknown): boolean {
   if (value === true || value === 1) {
     return true
@@ -419,6 +549,11 @@ function asTerrains(rows: unknown): TerrainTypeRow[] {
         costRaw == null || costRaw === ''
           ? null
           : Number(costRaw)
+      const dmgRaw = rec.entry_damage
+      const dmg =
+        dmgRaw == null || dmgRaw === ''
+          ? null
+          : Number(dmgRaw)
       return {
         id: asInt(rec.id),
         name,
@@ -426,6 +561,14 @@ function asTerrains(rows: unknown): TerrainTypeRow[] {
         is_blocked: asBoolFlag(rec.is_blocked),
         blocks_los: asBoolFlag(rec.blocks_los),
         variants: Math.max(0, asInt(rec.variants)),
+        random_eligible:
+          rec.random_eligible == null || rec.random_eligible === ''
+            ? true
+            : asBoolFlag(rec.random_eligible),
+        entry_damage:
+          dmg != null && Number.isFinite(dmg) && dmg > 0
+            ? Math.trunc(dmg)
+            : null,
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
@@ -438,15 +581,67 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
   }
   return rows
     .map((row) => {
-      const raw = row as Partial<HeroTypeRow>
-      const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+      const rec = row as Record<string, unknown>
+      const name = typeof rec.name === 'string' ? rec.name.trim() : ''
       return {
-        id: asInt(raw.id),
+        id: asInt(rec.id),
         name,
-        town_id: asInt(raw.town_id),
+        town_id: asInt(rec.town_id),
+        speed: asInt(rec.speed, 10),
+        strength: asInt(rec.strength, 10),
+        intel: asInt(rec.intel, 10),
+        defense: asInt(rec.defense, 10),
+        resist: asInt(rec.resist, 10),
+        crit_pct: asInt(rec.crit_pct, 10),
+        crit_amt: asInt(rec.crit_amt, 10),
+        stamina: asInt(rec.stamina, 10),
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
+}
+
+function asLevels(rows: unknown): LevelRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      return { id: asInt(rec.id), xp: asInt(rec.xp) }
+    })
+    .filter((row) => row.id > 0)
+    .sort((a, b) => a.id - b.id)
+}
+
+function asStatBumps(value: unknown): Partial<HeroStats> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  const rec = value as Record<string, unknown>
+  const bumps: Partial<HeroStats> = {}
+  for (const key of HERO_STAT_KEYS) {
+    if (rec[key] == null || rec[key] === '') {
+      continue
+    }
+    bumps[key] = asInt(rec[key])
+  }
+  return bumps
+}
+
+function asHeroLevels(rows: unknown): HeroLevelRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      return {
+        hero_type_id: asInt(rec.hero_type_id),
+        level_id: asInt(rec.level_id),
+        stat_bumps: asStatBumps(rec.stat_bumps),
+      }
+    })
+    .filter((row) => row.hero_type_id > 0 && row.level_id > 0)
 }
 
 function asAbilities(rows: unknown): AbilityRow[] {
@@ -455,19 +650,149 @@ function asAbilities(rows: unknown): AbilityRow[] {
   }
   return rows
     .map((row) => {
-      const raw = row as Partial<AbilityRow>
-      const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+      const rec = row as Record<string, unknown>
+      const name = typeof rec.name === 'string' ? rec.name.trim() : ''
       const description =
-        typeof raw.description === 'string' ? raw.description.trim() : ''
+        typeof rec.description === 'string' ? rec.description.trim() : ''
       return {
-        id: asInt(raw.id),
-        discipline_id: asInt(raw.discipline_id),
-        level_id: asInt(raw.level_id),
+        id: asInt(rec.id),
+        discipline_id: asInt(rec.discipline_id),
+        level_id: asInt(rec.level_id),
         name,
         description,
+        resource_id: asInt(rec.resource_id),
+        cost: asInt(rec.cost),
+        cooldown_id: asInt(rec.cooldown_id),
+        target_id: asOptionalId(rec.target_id),
+        ability_type_id: asOptionalId(rec.ability_type_id),
+        stats: asJsonObject(rec.stats),
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
+}
+
+function fillDesignedAbilities(
+  abilities: AbilityRow[],
+  targets: AbilityTargetRow[],
+  types: AbilityTypeRow[],
+): AbilityRow[] {
+  const friendSingle =
+    targets.find(
+      (row) => row.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_single',
+    )?.id ?? 1
+  const buffType =
+    types.find((row) => row.value.trim().toLowerCase() === 'buff')?.id ?? 2
+  return abilities.map((row) => {
+    if (row.name === 'Vampiric Strike') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: { ...(row.stats ?? {}), revive_on_dmg_dealt: true },
+      }
+    }
+    if (row.name === 'Raise Skeleton') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          kill_pct_stat: 4,
+          kill_tag: 2,
+          summon_tag: 12,
+          persists_on_summon: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Summon Bound Spirit') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 222,
+          persists_on_summon: false,
+          summon_qty_int_stat: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    return row
+  })
+}
+
+function asAbilityResources(rows: unknown): AbilityResourceRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const value =
+        typeof rec.value === 'string'
+          ? rec.value.trim()
+          : typeof rec.name === 'string'
+            ? rec.name.trim()
+            : ''
+      return { id: asInt(rec.id), value }
+    })
+    .filter((row) => row.id > 0 && row.value.length > 0)
+    .sort((a, b) => a.id - b.id)
+}
+
+function asAbilityCooldowns(rows: unknown): AbilityCooldownRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const value =
+        typeof rec.value === 'string'
+          ? rec.value.trim()
+          : typeof rec.name === 'string'
+            ? rec.name.trim()
+            : ''
+      const description =
+        typeof rec.description === 'string' ? rec.description.trim() : ''
+      return { id: asInt(rec.id), value, description }
+    })
+    .filter((row) => row.id >= 0 && row.value.length > 0)
+    .sort((a, b) => a.id - b.id)
+}
+
+function asNamedValues(rows: unknown): { id: number; value: string }[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const value =
+        typeof rec.value === 'string'
+          ? rec.value.trim()
+          : typeof rec.name === 'string'
+            ? rec.name.trim()
+            : ''
+      return { id: asInt(rec.id), value }
+    })
+    .filter((row) => row.id > 0 && row.value.length > 0)
+    .sort((a, b) => a.id - b.id)
 }
 
 function asAbilityLevels(rows: unknown): AbilityLevelRow[] {
@@ -501,6 +826,20 @@ function asHeroDisciplines(rows: unknown): HeroDisciplineRow[] {
       }
     })
     .filter((row) => row.hero_id > 0 && row.discipline_id > 0)
+}
+
+function asIntIds(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const ids: number[] = []
+  for (const entry of value) {
+    const n = typeof entry === 'number' ? entry : Number(entry)
+    if (Number.isInteger(n) && n > 0) {
+      ids.push(n)
+    }
+  }
+  return ids
 }
 
 function asJsonObject(value: unknown): Record<string, unknown> | null {
@@ -581,12 +920,24 @@ function asAttackShape(raw: string): AttackShapeKind {
   return DEFAULT_UNIT_ABILITIES.shape
 }
 
+export function parseAttackShape(raw: string): AttackShapeKind {
+  return asAttackShape(raw.trim().toLowerCase())
+}
+
 function asShapeInt(value: unknown, fallback: number): number {
   const n = Number(value)
   if (!Number.isFinite(n) || n < 1) {
     return fallback
   }
   return Math.floor(n)
+}
+
+function asAutoTarget(value: unknown): AutoTargetKind | null {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (text === 'random_wall_segment' || text === 'random_enemy') {
+    return text
+  }
+  return null
 }
 
 function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
@@ -606,7 +957,20 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
         : DEFAULT_UNIT_ABILITIES.falloff,
     targets: asShapeInt(rec?.targets, DEFAULT_UNIT_ABILITIES.targets),
     rows: asShapeInt(rec?.rows, DEFAULT_UNIT_ABILITIES.rows),
+    autoTarget: asAutoTarget(rec?.target),
+    skipIfNone: rec?.skip_if_none === true,
+    inflictsCondition: asOptionalId(rec?.inflicts_condition),
+    resistStat: asResistStat(rec?.resist_stat),
+    conditionDuration: asShapeInt(rec?.duration, DEFAULT_UNIT_ABILITIES.conditionDuration),
   }
+}
+
+function asResistStat(value: unknown): 'resistance' | 'defense' | null {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (text === 'resistance' || text === 'defense') {
+    return text
+  }
+  return null
 }
 
 function asPayload(value: unknown): Record<string, unknown> | null {
@@ -713,6 +1077,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     const extra = row as {
       hex_size?: unknown
       speed?: unknown
+      stationary?: unknown
       move_type_id?: unknown
       health?: unknown
       defense?: unknown
@@ -724,6 +1089,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       max_range?: unknown
       retaliation?: unknown
       abilities?: unknown
+      tags?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const hexRaw = extra.hex_size
@@ -739,7 +1105,11 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       cost: asCost(row.cost),
       image_path: image || null,
       hex_size: hexNum != null && hexNum > 0 ? hexNum : null,
-      speed: asInt(extra.speed),
+      speed:
+        extra.speed == null || extra.speed === ''
+          ? null
+          : asInt(extra.speed),
+      stationary: asBoolFlag(extra.stationary),
       move_type_id: moveId != null && moveId > 0 ? moveId : null,
       health: asInt(extra.health),
       defense: Math.max(0, asInt(extra.defense)),
@@ -752,6 +1122,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
         maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw),
       retaliation: asUnitRetaliation(extra.retaliation),
       abilities: asUnitCombatAbilities(extra.abilities),
+      tags: asIntIds(extra.tags),
     }
   })
   const catalog: ReferenceCatalog = {
@@ -764,6 +1135,24 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     town_layout: asTownLayout(payload.town_layout),
     market: asMarket(payload.market),
     ability: asAbilities(payload.ability),
+    ability_resource: asAbilityResources(
+      (payload as { ability_resource?: unknown }).ability_resource,
+    ),
+    ability_cooldown: asAbilityCooldowns(
+      (payload as { ability_cooldown?: unknown }).ability_cooldown,
+    ),
+    ability_target: asNamedValues(
+      (payload as { ability_target?: unknown }).ability_target,
+    ),
+    ability_type: asNamedValues(
+      (payload as { ability_type?: unknown }).ability_type,
+    ),
+    unit_tag: asNamedValues(
+      (payload as { unit_tag?: unknown }).unit_tag,
+    ),
+    condition: asNamedValues(
+      (payload as { condition?: unknown }).condition,
+    ),
     discipline: asNamed(payload.discipline),
     ability_level: asAbilityLevels(payload.ability_level),
     hero_discipline: asHeroDisciplines(payload.hero_discipline),
@@ -771,7 +1160,17 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     player_color: asPlayerColors(payload.player_color),
     move_type: asMoveTypes(payload.move_type),
     terrain_type: asTerrains(payload.terrain_type),
+    app_config: asAppConfig(
+      (payload as { app_config?: unknown }).app_config,
+    ),
+    levels: asLevels((payload as { levels?: unknown }).levels),
+    hero_levels: asHeroLevels((payload as { hero_levels?: unknown }).hero_levels),
   }
+  catalog.ability = fillDesignedAbilities(
+    catalog.ability,
+    catalog.ability_target,
+    catalog.ability_type,
+  )
   cachedCatalog = catalog
   emitCatalog()
   return catalog
@@ -917,6 +1316,33 @@ export function unitAttackShape(
     ...raw,
     shape: raw.shape ?? DEFAULT_UNIT_ABILITIES.shape,
   }
+}
+
+export function unitAutoTarget(
+  unit: UnitRow | null | undefined,
+): AutoTargetKind | null {
+  const fromAbilities = unitAttackShape(unit).autoTarget
+  if (fromAbilities) {
+    return fromAbilities
+  }
+  const name = (unit?.name ?? '').trim().toLowerCase()
+  if (name === 'siege' || name === 'catapult') {
+    return 'random_wall_segment'
+  }
+  if (name === 'shooter') {
+    return 'random_enemy'
+  }
+  return null
+}
+
+export function conditionName(
+  catalog: ReferenceCatalog,
+  conditionId: number,
+): string {
+  return (
+    catalog.condition.find((row) => row.id === conditionId)?.value ??
+    `condition ${conditionId}`
+  )
 }
 
 export function shapeIsUntargeted(shape: AttackShapeKind): boolean {
@@ -1213,6 +1639,186 @@ export function heroTypeName(
   return catalog.hero_type.find((row) => row.id === classId)?.name ?? ''
 }
 
+const DEFAULT_HERO_STAT = 10
+
+function emptyHeroStats(): HeroStats {
+  return {
+    speed: DEFAULT_HERO_STAT,
+    stamina: DEFAULT_HERO_STAT,
+    strength: DEFAULT_HERO_STAT,
+    intel: DEFAULT_HERO_STAT,
+    defense: DEFAULT_HERO_STAT,
+    resist: DEFAULT_HERO_STAT,
+    crit_pct: DEFAULT_HERO_STAT,
+    crit_amt: DEFAULT_HERO_STAT,
+  }
+}
+
+export function heroTypeBaseStats(
+  row: HeroTypeRow | null | undefined,
+): HeroStats {
+  if (!row) {
+    return emptyHeroStats()
+  }
+  return {
+    speed: row.speed,
+    stamina: row.stamina,
+    strength: row.strength,
+    intel: row.intel,
+    defense: row.defense,
+    resist: row.resist,
+    crit_pct: row.crit_pct,
+    crit_amt: row.crit_amt,
+  }
+}
+
+/** Base hero_type stats plus hero_levels.stat_bumps up through current_level. */
+export function heroEffectiveStats(
+  catalog: ReferenceCatalog,
+  classId: number | null,
+  currentLevel: number,
+): HeroStats {
+  const type =
+    classId != null
+      ? catalog.hero_type.find((row) => row.id === classId)
+      : undefined
+  const stats = heroTypeBaseStats(type)
+  if (classId == null) {
+    return stats
+  }
+  const cap = Math.max(1, Math.floor(currentLevel))
+  for (const row of catalog.hero_levels) {
+    if (row.hero_type_id !== classId || row.level_id > cap) {
+      continue
+    }
+    for (const key of HERO_STAT_KEYS) {
+      const bump = row.stat_bumps[key]
+      if (typeof bump === 'number' && Number.isFinite(bump)) {
+        stats[key] += bump
+      }
+    }
+  }
+  return stats
+}
+
+/** XP total required to reach `levelId`, or null if that row is missing. */
+export function xpToReachLevel(
+  catalog: ReferenceCatalog,
+  levelId: number,
+): number | null {
+  const row = catalog.levels.find((entry) => entry.id === levelId)
+  if (!row) {
+    return null
+  }
+  return row.xp
+}
+
+export function formatHeroLevelLine(
+  catalog: ReferenceCatalog | null,
+  name: string,
+  currentLevel: number,
+  currentXp: number,
+): string {
+  const level = Math.max(1, Math.floor(currentLevel))
+  const xp = Math.max(0, Math.floor(currentXp))
+  const nextXp = catalog ? xpToReachLevel(catalog, level + 1) : null
+  if (nextXp == null) {
+    return `${name} - Lvl ${level} - XP ${xp}`
+  }
+  return `${name} - Lvl ${level} - XP ${xp}/${nextXp}`
+}
+
+/** World-map movement budget: effective Speed. Fallback 10 if unknown. */
+export function heroMovementPoints(
+  catalog: ReferenceCatalog | null | undefined,
+  hero:
+    | { class_id: number | null; current_level?: number }
+    | null
+    | undefined,
+): number {
+  if (!catalog || !hero) {
+    return DEFAULT_HERO_STAT
+  }
+  return Math.max(
+    0,
+    heroEffectiveStats(catalog, hero.class_id, hero.current_level ?? 1)
+      .speed,
+  )
+}
+
+export function abilityMult(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'ability_mult', 4)))
+}
+
+export function regenPure(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'regen_pure', 4)))
+}
+
+export function regenHybrid(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'regen_hybrid', 2)))
+}
+
+/** Starting / missing-save Mana and Energy. Energy = strength × ability_mult; Mana = intel × ability_mult. */
+export function heroResourcePools(
+  catalog: ReferenceCatalog | null | undefined,
+  hero:
+    | { class_id: number | null; current_level?: number }
+    | null
+    | undefined,
+): { current_mana: number; current_energy: number } {
+  const stats =
+    catalog && hero
+      ? heroEffectiveStats(catalog, hero.class_id, hero.current_level ?? 1)
+      : emptyHeroStats()
+  const mult = abilityMult(catalog)
+  return {
+    current_energy: Math.max(0, stats.strength * mult),
+    current_mana: Math.max(0, stats.intel * mult),
+  }
+}
+
+export function abilityTooltip(
+  catalog: ReferenceCatalog | null | undefined,
+  ability: AbilityRow,
+): string {
+  const extra = abilityCastLine(catalog, ability)
+  if (!extra) {
+    return ability.description
+  }
+  if (!ability.description) {
+    return extra
+  }
+  return `${ability.description}\n${extra}`
+}
+
+function abilityCastLine(
+  catalog: ReferenceCatalog | null | undefined,
+  ability: AbilityRow,
+): string {
+  const resource = catalog?.ability_resource.find(
+    (row) => row.id === ability.resource_id,
+  )?.value
+  const cooldown = catalog?.ability_cooldown.find(
+    (row) => row.id === ability.cooldown_id,
+  )
+  const parts: string[] = []
+  if (resource) {
+    parts.push(`${ability.cost} ${resource}`)
+  } else if (ability.cost > 0) {
+    parts.push(String(ability.cost))
+  }
+  if (cooldown && cooldown.id !== 0) {
+    parts.push(cooldown.value)
+  }
+  return parts.join(' · ')
+}
+
 function buildingsInSlot(
   catalog: ReferenceCatalog,
   slotId: number,
@@ -1339,6 +1945,54 @@ export function unitById(
     return null
   }
   return catalog.unit.find((row) => row.id === id) ?? null
+}
+
+export function unitHasTag(
+  unit: UnitRow | null | undefined,
+  tagId: number,
+): boolean {
+  return Boolean(unit?.tags?.includes(tagId))
+}
+
+export function unitsWithTag(
+  catalog: ReferenceCatalog,
+  tagId: number,
+): UnitRow[] {
+  return catalog.unit.filter((row) => unitHasTag(row, tagId))
+}
+
+export function unitIsStationary(
+  unit: UnitRow | null | undefined,
+): boolean {
+  return unit?.stationary === true
+}
+
+/** Null speed never acts — not the same as speed 0. */
+export function unitTakesTurns(unit: UnitRow | null | undefined): boolean {
+  return unit != null && unit.speed != null
+}
+
+export function appConfigNumber(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  fallback: number,
+): number {
+  const raw = catalog?.app_config.find((row) => row.key === key)?.value
+  const n = raw == null || raw === '' ? NaN : Number(raw)
+  return Number.isFinite(n) ? n : fallback
+}
+
+/** Catalog convention: always enterable, dumps remaining MP. Not a literal cost. */
+export const DUMP_REMAINING_MOVE_COST = 99
+
+/** World/combat random sampling: eligible flag and not Moat-style cost 99. */
+export function terrainIsRandomEligible(
+  row: TerrainTypeRow | null | undefined,
+): boolean {
+  if (!row || !row.random_eligible) {
+    return false
+  }
+  return row.move_cost !== DUMP_REMAINING_MOVE_COST
 }
 
 export function terrainByName(

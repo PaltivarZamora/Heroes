@@ -10,11 +10,13 @@ public final class Terrain {
     private final String name;
     private final Double moveCost;
     private final boolean blocked;
+    private final boolean randomEligible;
 
-    private Terrain(String name, Double moveCost, boolean blocked) {
+    private Terrain(String name, Double moveCost, boolean blocked, boolean randomEligible) {
         this.name = name;
         this.moveCost = moveCost;
         this.blocked = blocked;
+        this.randomEligible = randomEligible;
     }
 
     public static List<Terrain> all(ReferenceData data) {
@@ -43,7 +45,11 @@ public final class Terrain {
         if (name.isEmpty()) {
             return null;
         }
-        return new Terrain(name, asDouble(row.get("move_cost")), asBool(row.get("is_blocked")));
+        return new Terrain(
+                name,
+                asDouble(row.get("move_cost")),
+                asBool(row.get("is_blocked")),
+                asBool(row.get("random_eligible"), true));
     }
 
     public String label() {
@@ -62,9 +68,12 @@ public final class Terrain {
         return !blocked;
     }
 
-    /** Barrier and Void stay in the table but are not painted onto new world maps. */
+    /** Random world/combat sampling: random_eligible and not move_cost 99 (Moat). */
     public boolean inGenerationPool() {
-        return !name.equalsIgnoreCase("Barrier") && !name.equalsIgnoreCase("Void");
+        if (!randomEligible) {
+            return false;
+        }
+        return moveCost == null || moveCost.doubleValue() != 99.0;
     }
 
     private static String text(Object value) {
@@ -86,16 +95,23 @@ public final class Terrain {
     }
 
     private static boolean asBool(Object value) {
+        return asBool(value, false);
+    }
+
+    private static boolean asBool(Object value, boolean whenMissing) {
+        if (value == null) {
+            return whenMissing;
+        }
         if (value instanceof Boolean b) {
             return b;
         }
         if (value instanceof Number n) {
             return n.intValue() != 0;
         }
-        if (value == null) {
-            return false;
-        }
         String text = value.toString().trim();
+        if (text.isEmpty()) {
+            return whenMissing;
+        }
         return text.equalsIgnoreCase("true") || text.equalsIgnoreCase("t") || text.equals("1");
     }
 }
