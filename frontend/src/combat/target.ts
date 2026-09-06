@@ -16,6 +16,7 @@ import {
   type AttackIconKind,
 } from './attack'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
+import { stackMoveSpeed, stackMaxRange } from './battle'
 import {
   combatPathSteps,
   combatReachable,
@@ -100,7 +101,9 @@ function moverStats(
   const unit = unitById(catalog, stack.unitId)
   const kind = moveKindForUnit(unit, catalog)
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
-  const budget = unitIsStationary(unit) ? 0 : (unit?.speed ?? 0)
+  const budget = unitIsStationary(unit)
+    ? 0
+    : (stackMoveSpeed(stack, catalog) ?? 0)
   const from = { q: stack.q, r: stack.r }
   const spec = footprintSpecFor(stack, catalog)
   const passableMoat = openBridgeMoatKeys(battle, catalog, tiles)
@@ -150,7 +153,7 @@ export function bestAttackStand(
   for (const [key, steps] of reachable) {
     const [qs, rs] = key.split(',')
     const from = { q: Number(qs), r: Number(rs) }
-    if (!attackRangeFrom(from, target, catalog, attacker.unitId)) {
+    if (!attackRangeFrom(from, target, catalog, attacker)) {
       continue
     }
     if (!hasLineOfSight(from, aim, tiles, stacks, catalog)) {
@@ -200,7 +203,7 @@ function bestBreathStand(
   for (const [key, steps] of reachable) {
     const [qs, rs] = key.split(',')
     const from = { q: Number(qs), r: Number(rs) }
-    if (!attackRangeFrom(from, target, catalog, attacker.unitId)) {
+    if (!attackRangeFrom(from, target, catalog, attacker)) {
       continue
     }
     if (!hasLineOfSight(from, aim, tiles, stacks, catalog)) {
@@ -294,7 +297,7 @@ export function canStrikeThisTurn(
     stopOnly,
   )
   if (spec.shape === 'beam' || spec.shape === 'aoe') {
-    const maxRange = unit?.max_range ?? 1
+    const maxRange = stackMaxRange(attacker, catalog)
     return tiles.some(
       (tile) =>
         bestRangeStand(
@@ -466,7 +469,7 @@ export function combatHover(
     passableMoat,
     stopOnly,
   )
-  const maxRange = unit?.max_range ?? 1
+  const maxRange = stackMaxRange(attacker, catalog)
 
   if (isSelf) {
     if (shapePulsesOnMove(shape.shape)) {
@@ -534,7 +537,7 @@ export function combatHover(
       foe.qty > 0 &&
       foe.side !== attacker.side &&
       !isUntargetableStack(foe, catalog) &&
-      attackRangeFrom(hover, foe, catalog, attacker.unitId) &&
+      attackRangeFrom(hover, foe, catalog, attacker) &&
       hasLineOfSight(hover, { q: foe.q, r: foe.r }, tiles, battle.stacks, catalog) &&
       (shape.shape !== 'breath' ||
         breathHitsTarget(hover, aim, shape.rows))

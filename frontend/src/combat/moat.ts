@@ -1,8 +1,9 @@
 import type { ReferenceCatalog } from '../town/catalog'
 import { terrainByName, unitById } from '../town/catalog'
 import { applyStackDamage } from './attack'
+import { applyBreaksOnDamage } from './condition'
 import type { CombatBattle, CombatTile } from './battle'
-import { noteUnitDeaths } from './battle'
+import { noteUnitDeaths, stackMaxHealth } from './battle'
 import { hexKey, moveKindForUnit } from './movement'
 import { isSiegeEngineUnit, isWallSegmentUnit, openBridgeMoatKeys } from './siege'
 
@@ -52,7 +53,7 @@ export function applyMoatEntryDamage(
   if (damage <= 0) {
     return noop(battle)
   }
-  const full = Math.max(1, unit?.health ?? 1)
+  const full = stackMaxHealth(stack, catalog)
   const applied = applyStackDamage(stack, damage, full)
   const name = unit?.name ?? 'Unknown'
   const terrainName = (spec?.name ?? tile.terrain).replaceAll('_', ' ')
@@ -60,8 +61,12 @@ export function applyMoatEntryDamage(
   if (applied.killed > 0) {
     line += ` and ${applied.killed} ${name} died`
   }
-  const stacks = applied.stack
-    ? battle.stacks.map((row) => (row.id === stackId ? applied.stack! : row))
+  const broken =
+    applied.stack && damage > 0
+      ? applyBreaksOnDamage(applied.stack, catalog)
+      : { stack: applied.stack, lines: [] as string[] }
+  const stacks = broken.stack
+    ? battle.stacks.map((row) => (row.id === stackId ? broken.stack! : row))
     : battle.stacks.filter((row) => row.id !== stackId)
   let nextBattle: CombatBattle = { ...battle, stacks }
   if (applied.killed > 0) {
@@ -69,7 +74,7 @@ export function applyMoatEntryDamage(
   }
   return {
     battle: nextBattle,
-    lines: [`${line}.`],
+    lines: [`${line}.`, ...broken.lines],
     hitKeys: [hexKey(stack.q, stack.r)],
   }
 }

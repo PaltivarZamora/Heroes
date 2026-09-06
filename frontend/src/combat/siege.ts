@@ -223,7 +223,7 @@ export function isSiegeEngineWallTarget(
   return isWallSegmentUnit(unitById(catalog, stack.unitId))
 }
 
-/** Live wall-column stacks block sight until quantity hits 0. */
+/** Live stacks that block sight. Drawbridge stays on closedDrawbridgeKeys. */
 export function liveWallLosKeys(
   stacks: CombatStack[],
   catalog: ReferenceCatalog,
@@ -236,10 +236,12 @@ export function liveWallLosKeys(
       continue
     }
     const unit = unitById(catalog, stack.unitId)
-    if (!isWallSegmentUnit(unit) || isDrawbridgeUnit(unit)) {
+    if (isDrawbridgeUnit(unit)) {
       continue
     }
-    keys.add(`${stack.q},${stack.r}`)
+    if (unit?.blocks_los === true || isWallSegmentUnit(unit)) {
+      keys.add(`${stack.q},${stack.r}`)
+    }
   }
   return keys
 }

@@ -71,8 +71,8 @@ export function hexLine(from: Axial, to: Axial): Axial[] {
 
 /**
  * Clear sight along Beam's hex-line. Barrier terrain and live
- * Wall/Shooter/Drawbridge stacks block; other units do not.
- * Endpoints (attacker and candidate) are not treated as blockers.
+ * `unit.blocks_los` stacks (Wall, Rift) plus closed Drawbridge block;
+ * other units do not. Endpoints are not treated as blockers.
  */
 export function hasLineOfSight(
   from: Axial,

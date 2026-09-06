@@ -5,17 +5,24 @@ import { classDisciplines } from '../town/libraryRules'
 import { HeroAbilitiesPanel } from '../town/HeroAbilitiesPanel'
 import type { Hero } from '../session/types'
 import {
+  abilityCooldownMessage,
+  abilityCooldownReady,
   canAffordAbility,
   disciplineResourceId,
   poolCurrent,
   poolMax,
   resourceLabel,
 } from './heroCast'
+import { abilityMeetsCastGate } from './summon'
+import type { CombatBattle, CombatSide } from './battle'
 
 type HeroAbilityPopupProps = {
   catalog: ReferenceCatalog
   hero: Hero
   learned: number[]
+  canCast: boolean
+  battle: CombatBattle
+  casterSide: CombatSide
   onCancel: () => void
   onChoose: (ability: AbilityRow) => void
 }
@@ -24,6 +31,9 @@ export function HeroAbilityPopup({
   catalog,
   hero,
   learned,
+  canCast,
+  battle,
+  casterSide,
   onCancel,
   onChoose,
 }: HeroAbilityPopupProps) {
@@ -96,7 +106,13 @@ export function HeroAbilityPopup({
           disciplineId={disciplineId}
           onDisciplineId={setDisciplineId}
           onSelectAbility={onChoose}
-          canSelectAbility={(ability) => canAffordAbility(hero, ability)}
+          canSelectAbility={(ability) =>
+            canCast &&
+            canAffordAbility(hero, ability) &&
+            abilityCooldownReady(hero, ability) &&
+            abilityMeetsCastGate(catalog, ability, battle, casterSide)
+          }
+          unavailableMessage={(ability) => abilityCooldownMessage(hero, ability)}
         />
       </div>
     </div>

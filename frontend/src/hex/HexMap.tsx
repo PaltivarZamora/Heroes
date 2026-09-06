@@ -371,9 +371,11 @@ export function HexMap({
       )
       const after = getSession()
       const actor = activePlayer(after)
-      const ownHero = actor
-        ? after.heroes.find((hero) => hero.player_id === actor.id)
-        : after.heroes[0]
+      const ownHeroes = actor
+        ? after.heroes.filter((hero) => hero.player_id === actor.id)
+        : after.heroes
+      const ownHero =
+        ownHeroes.find((hero) => hero.id === selectedMapHeroId) ?? ownHeroes[0]
       if (ownHero) {
         selectedMapHeroId = ownHero.id
         heroRef.current = {
@@ -781,7 +783,14 @@ export function HexMap({
         const session = getSession()
         const actor = activePlayer(session)
         const row = session.heroes.find((hero) => hero.id === id)
-        if (!row || !actor || row.player_id !== actor.id) {
+        if (!row) {
+          return
+        }
+        if (
+          actor &&
+          row.player_id !== actor.id &&
+          !actor.hero_ids.includes(row.id)
+        ) {
           return
         }
         selectedMapHeroId = row.id
@@ -804,6 +813,9 @@ export function HexMap({
         placeHeroMarkers()
       }
       selectMapHero = switchToMapHero
+      if (selectedMapHeroId && selectedMapHeroId !== heroRef.current?.id) {
+        switchToMapHero(selectedMapHeroId)
+      }
 
       applyHotseatView = () => {
         const session = getSession()
@@ -813,11 +825,13 @@ export function HexMap({
         paintTexturedHexes()
         walletRef.current = walletFromSession(session)
         emitResources()
-        const ownHero = player
-          ? session.heroes.find((hero) => hero.player_id === player.id)
-          : undefined
-        if (ownHero) {
-          switchToMapHero(ownHero.id)
+        const ownHeroes = player
+          ? session.heroes.filter((hero) => hero.player_id === player.id)
+          : []
+        const keep =
+          ownHeroes.find((hero) => hero.id === selectedMapHeroId) ?? ownHeroes[0]
+        if (keep) {
+          switchToMapHero(keep.id)
           return
         }
         selectedMapHeroId = null

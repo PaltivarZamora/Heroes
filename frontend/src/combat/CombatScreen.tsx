@@ -49,6 +49,7 @@ import type { UnitStackView } from '../town/unitStack'
 import {
   activeStack,
   advanceTurn,
+  applyOwnSilenceAfterTurn,
   createBattle,
   endStackTurn,
   moveStack,
@@ -59,6 +60,7 @@ import {
   type CombatTile,
   type SiegeSetup,
   isHeroStack,
+  stackCombatSpeed,
 } from './battle'
 import {
   canCombatStep,
@@ -72,7 +74,10 @@ import {
   applyConsumedCondition,
   fearConditionId,
   isFeared,
+  isPolymorphed,
   pickFleeSteps,
+  polymorphConditionName,
+  POLYMORPH_ART_FILENAME,
 } from './condition'
 import {
   resolveAbility,
@@ -94,13 +99,16 @@ import { CombatTargetIcon } from './CombatIcons'
 import { HeroAbilityPopup } from './HeroAbilityPopup'
 import { StackInspectPopup } from './StackInspectPopup'
 import {
+  abilityCooldownReady,
   canAffordAbility,
   deductAbilityCost,
   markHeroActed,
   ownHeroAtHex,
+  recordAbilityCast,
   type HeroCast,
 } from './heroCast'
 import { combatDisplayLearnedIds } from '../town/libraryRules'
+import { abilityMeetsCastGate } from './summon'
 import {
   commitCombatOutcome,
   defeatedSide,
@@ -278,6 +286,20 @@ function anchorAt(anchors: HexAnchor[], q: number, r: number): HexAnchor | null 
   return anchors.find((row) => row.q === q && row.r === r) ?? null
 }
 
+/** Bottom of the screen first so higher tokens overlap lower ones and keep qty visible. */
+function stacksBottomUp(stacks: CombatStack[], anchors: HexAnchor[]): CombatStack[] {
+  return [...stacks].sort((a, b) => {
+    const ya = anchorAt(anchors, a.q, a.r)?.y ?? 0
+    const yb = anchorAt(anchors, b.q, b.r)?.y ?? 0
+    if (yb !== ya) {
+      return yb - ya
+    }
+    const xa = anchorAt(anchors, a.q, a.r)?.x ?? 0
+    const xb = anchorAt(anchors, b.q, b.r)?.x ?? 0
+    return xa - xb
+  })
+}
+
 function stackArtBox(
   pos: { x: number; y: number },
   hexPx: number,
@@ -304,9 +326,20 @@ function stackViewFromCombat(
       : townName && isSiegeEngineUnit(unit)
         ? siegeEngineArt(townName)
         : null
+  let filename = siegeArt || unit?.image_path?.trim() || null
+  if (!siegeArt && catalog) {
+    if (isPolymorphed(stack, catalog)) {
+      filename = POLYMORPH_ART_FILENAME
+    } else if (stack.silenced) {
+      const alt = unit?.image_path_alt?.trim()
+      if (alt) {
+        filename = alt
+      }
+    }
+  }
   return {
     empty: false,
-    filename: siegeArt || unit?.image_path?.trim() || null,
+    filename,
     qty: stack.qty,
   }
 }
@@ -369,6 +402,7 @@ export function CombatScreen({
       extraLines: string[],
       alreadyActed?: boolean,
       advanceIfSilent?: boolean,
+      wasteExtraTurn?: boolean,
     ) => void
   >(() => {})
   const finishHeroCastRef = useRef<
@@ -422,7 +456,7 @@ export function CombatScreen({
         return
       }
       const valid = new Set(
-        abilityValidHexKeys(catalog, ability, heroStack.side, battle),
+        abilityValidHexKeys(catalog, ability, heroStack.side, battle, field.tiles),
       )
       if (!valid.has(hexKey(q, r))) {
         return
@@ -447,17 +481,24 @@ export function CombatScreen({
       stackOccupyingHex(battle.stacks, q, r, catalog) ??
       battle.stacks.find((row) => row.q === q && row.r === r) ??
       null
-    if (acting && !acting.hasActedThisRound && !isFeared(acting, catalog)) {
-      const heroStack = ownHeroAtHex(battle, catalog, q, r, acting.side)
-      if (heroStack) {
-        setHoverTarget(null)
-        reachApiRef.current?.draw([])
-        setHeroCast({ stackId: heroStack.id, abilityId: null })
-        return
-      }
+    if (
+      occupant &&
+      isHeroStack(occupant) &&
+      acting &&
+      occupant.side === acting.side
+    ) {
+      setHoverTarget(null)
+      reachApiRef.current?.draw([])
+      setHeroCast({ stackId: occupant.id, abilityId: null })
+      return
     }
     const stack = acting
-    if (stack && !stack.hasActedThisRound && !isFeared(stack, catalog)) {
+    if (
+      stack &&
+      !stack.hasActedThisRound &&
+      !isFeared(stack, catalog) &&
+      !isPolymorphed(stack, catalog)
+    ) {
       const intent = combatHover(
         stack,
         { q, r },
@@ -610,6 +651,24 @@ export function CombatScreen({
     if (!battle || !catalog || !field) {
       return
     }
+    const heroRow = battle.stacks.find((row) => row.id === heroStackId)
+    if (heroRow?.hasActedThisRound) {
+      setHeroCast(null)
+      return
+    }
+    if (!abilityMeetsCastGate(catalog, ability, battle, casterSide)) {
+      setHeroCast(null)
+      return
+    }
+    const liveCaster =
+      getSession().heroes.find((row) => row.id === caster.id) ?? caster
+    if (
+      !canAffordAbility(liveCaster, ability) ||
+      !abilityCooldownReady(liveCaster, ability)
+    ) {
+      setHeroCast(null)
+      return
+    }
     const resolved = resolveAbility(
       battle,
       catalog,
@@ -637,7 +696,9 @@ export function CombatScreen({
       return {
         ...withArmy,
         heroes: withArmy.heroes.map((row) =>
-          row.id === caster.id ? deductAbilityCost(row, ability) : row,
+          row.id === caster.id
+            ? recordAbilityCast(deductAbilityCost(row, ability), ability.id)
+            : row,
         ),
       }
     })
@@ -657,6 +718,7 @@ export function CombatScreen({
     extraLines,
     alreadyActed = false,
     advanceIfSilent = false,
+    wasteExtraTurn = false,
   ) => {
     const cat = catalogRef.current
     const tiles = field?.tiles ?? []
@@ -664,16 +726,22 @@ export function CombatScreen({
       return
     }
     const tick = applyMoatEntryDamage(current, stackId, cat, tiles)
-    const next = alreadyActed
+    const ended = alreadyActed
       ? tick.battle
-      : endStackTurn(tick.battle, stackId)
+      : endStackTurn(tick.battle, stackId, wasteExtraTurn)
+    const silenced = applyOwnSilenceAfterTurn(ended, stackId, cat)
+    const next = silenced.battle
     if (tick.hitKeys.length > 0) {
       setHitFlash({
         n: Date.now(),
         groups: [{ keys: tick.hitKeys, color: 'red' }],
       })
     }
-    const lines = [...extraLines, ...tick.lines]
+    const lines = [
+      ...extraLines,
+      ...tick.lines,
+      ...(silenced.line ? [silenced.line] : []),
+    ]
     setBattle(next)
     applyOutcomeIfOver(next)
     if (lines.length > 0) {
@@ -681,7 +749,13 @@ export function CombatScreen({
       return
     }
     if (advanceIfSilent) {
-      setBattle(advanceTurn(next, cat))
+      const advanced = advanceTurn(next, cat)
+      setBattle(advanced)
+      applyOutcomeIfOver(advanced)
+      if (advanced.roundLog && advanced.roundLog.length > 0) {
+        setLog({ lines: advanced.roundLog, holdTurn: true })
+        setBattle({ ...advanced, roundLog: [] })
+      }
     }
   }
 
@@ -693,6 +767,13 @@ export function CombatScreen({
       cat && actor
         ? applyMoatEntryDamage(resolved.battle, actor.id, cat, tiles)
         : { battle: resolved.battle, lines: [] as string[], hitKeys: [] as string[] }
+    const ended = actor
+      ? endStackTurn(tick.battle, actor.id)
+      : tick.battle
+    const silenced =
+      cat && actor
+        ? applyOwnSilenceAfterTurn(ended, actor.id, cat)
+        : { battle: ended, line: null as string | null }
     const groups = [
       { keys: resolved.hitKeys, color: resolved.hitColor },
       { keys: resolved.healKeys, color: 'green' as HitFlashColor },
@@ -701,15 +782,25 @@ export function CombatScreen({
     if (groups.length > 0) {
       setHitFlash({ n: Date.now(), groups })
     }
-    const lines = [...extraLines, ...resolved.log.lines, ...tick.lines]
-    setBattle(tick.battle)
-    applyOutcomeIfOver(tick.battle)
+    const lines = [
+      ...extraLines,
+      ...resolved.log.lines,
+      ...tick.lines,
+      ...(silenced.line ? [silenced.line] : []),
+    ]
+    setBattle(silenced.battle)
+    applyOutcomeIfOver(silenced.battle)
     if (lines.length > 0) {
       setLog({ lines })
       return
     }
     if (cat) {
-      setBattle(advanceTurn(tick.battle, cat))
+      const advanced = advanceTurn(silenced.battle, cat)
+      setBattle(advanced)
+      if (advanced.roundLog && advanced.roundLog.length > 0) {
+        setLog({ lines: advanced.roundLog, holdTurn: true })
+        setBattle({ ...advanced, roundLog: [] })
+      }
     }
   }
 
@@ -784,6 +875,13 @@ export function CombatScreen({
       field.heroStarts,
     )
     const snap = snapshotOpening(created.stacks)
+    updateSession((current) => ({
+      ...current,
+      heroes: current.heroes.map((hero) => ({
+        ...hero,
+        used_abilities_this_battle: [],
+      })),
+    }))
     setBattle(created)
     setOpening(snap)
     openingRef.current = snap
@@ -850,7 +948,7 @@ export function CombatScreen({
     }
     reachApiRef.current?.draw(
       [],
-      abilityValidHexKeys(catalog, ability, heroStack.side, battle),
+      abilityValidHexKeys(catalog, ability, heroStack.side, battle, field?.tiles),
     )
   }, [battle, catalog, heroCast])
 
@@ -905,7 +1003,7 @@ export function CombatScreen({
       return
     }
     const unit = unitById(catalog, stack.unitId)
-    const speed = unit?.speed ?? 0
+    const speed = stackCombatSpeed(stack, catalog) ?? 0
     const canMove =
       !unitIsStationary(unit) &&
       speed > 0 &&
@@ -914,11 +1012,25 @@ export function CombatScreen({
       unitTakesTurns(unit) &&
       !unitAutoTarget(unit) &&
       !isFeared(stack, catalog) &&
+      !isPolymorphed(stack, catalog) &&
       (canMove || canStrikeThisTurn(stack, battle, field.tiles, catalog))
     if (playerActs) {
       return
     }
     const timer = window.setTimeout(() => {
+      if (isPolymorphed(stack, catalog)) {
+        const name = unit?.name ?? 'Unknown'
+        const label = polymorphConditionName(catalog)
+        presentTurnEndRef.current(
+          battle,
+          stack.id,
+          [`${stack.qty} ${name} skip this turn (${label}).`],
+          false,
+          false,
+          true,
+        )
+        return
+      }
       if (isFeared(stack, catalog)) {
         const name = unit?.name ?? 'Unknown'
         const fearId = fearConditionId(catalog)
@@ -934,6 +1046,7 @@ export function CombatScreen({
             stack.id,
             [`${stack.qty} ${name} cannot flee.`],
             false,
+            true,
             true,
           )
           return
@@ -961,8 +1074,15 @@ export function CombatScreen({
               `${stack.qty} ${name} flee in terror.`,
               movementLogLine(stack, catalog, steps.length),
             ],
+            false,
+            false,
+            true,
           )
         })()
+        return
+      }
+      if (stack.silenced) {
+        presentTurnEndRef.current(battle, stack.id, [], false, true)
         return
       }
       if (!unitTakesTurns(unit)) {
@@ -1372,6 +1492,7 @@ export function CombatScreen({
             ability,
             heroStack.side,
             currentBattle,
+            tiles,
           )
           const impact = abilityAimImpactKeys(
             currentCatalog,
@@ -1402,7 +1523,12 @@ export function CombatScreen({
           return
         }
         const stack = activeStack(currentBattle)
-        if (!stack || stack.hasActedThisRound || isFeared(stack, currentCatalog)) {
+        if (
+          !stack ||
+          stack.hasActedThisRound ||
+          isFeared(stack, currentCatalog) ||
+          isPolymorphed(stack, currentCatalog)
+        ) {
           drawReach([])
           lastHoverKey = ''
           onHoverRef.current(null)
@@ -1470,6 +1596,7 @@ export function CombatScreen({
                 ability,
                 heroStack.side,
                 currentBattle,
+                tiles,
               ),
             )
             return
@@ -1567,7 +1694,7 @@ export function CombatScreen({
           >
             <div ref={canvasHostRef} className="combat-field-canvas" />
             {field && battle
-              ? battle.stacks.map((stack) => {
+              ? stacksBottomUp(battle.stacks, field.anchors).map((stack) => {
                   const pos = anchorAt(field.anchors, stack.q, stack.r)
                   if (!pos) {
                     return null
@@ -1587,7 +1714,9 @@ export function CombatScreen({
                   const unit = hero ? null : unitById(catalog, stack.unitId)
                   const fixture = isSiegeFixtureArt(unit)
                   const current = activeStack(battle)
-                  const speed = unit?.speed ?? 0
+                  const speed = catalog
+                    ? (stackCombatSpeed(stack, catalog) ?? 0)
+                    : 0
                   return (
                     <div
                       key={stack.id}
@@ -1715,7 +1844,12 @@ export function CombatScreen({
             const hold = log.holdTurn
             setLog(null)
             if (!hold) {
-              setBattle(advanceTurn(current, catalog))
+              const advanced = advanceTurn(current, catalog)
+              setBattle(advanced)
+              if (advanced.roundLog && advanced.roundLog.length > 0) {
+                setLog({ lines: advanced.roundLog, holdTurn: true })
+                setBattle({ ...advanced, roundLog: [] })
+              }
             }
           }}
         >
@@ -1776,13 +1910,21 @@ export function CombatScreen({
                 catalog={catalog}
                 hero={hero}
                 learned={combatDisplayLearnedIds(catalog, hero)}
+                canCast={!stack.hasActedThisRound}
+                battle={battle}
+                casterSide={stack.side}
                 onCancel={() => {
                   setHeroCast(null)
                   setHoverTarget(null)
                   reachApiRef.current?.draw([])
                 }}
                 onChoose={(ability) => {
-                  if (!canAffordAbility(hero, ability)) {
+                  if (
+                    stack.hasActedThisRound ||
+                    !canAffordAbility(hero, ability) ||
+                    !abilityCooldownReady(hero, ability) ||
+                    !abilityMeetsCastGate(catalog, ability, battle, stack.side)
+                  ) {
                     return
                   }
                   if (!abilityNeedsHexTarget(catalog, ability)) {

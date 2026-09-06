@@ -252,6 +252,8 @@ export function addHumanHero(
     learned_abilities: [],
     current_level: 1,
     current_xp: 0,
+    used_abilities_this_battle: [],
+    used_abilities_today: [],
     ...heroResourcePools(getCachedCatalog(), {
       class_id: null,
       current_level: 1,
@@ -334,6 +336,8 @@ function spawnPlayerHero(
     learned_abilities: [],
     current_level: live.current_level,
     current_xp: live.current_xp,
+    used_abilities_this_battle: [],
+    used_abilities_today: [],
     ...heroResourcePools(getCachedCatalog(), {
       class_id: classId,
       current_level: live.current_level,

@@ -4,10 +4,11 @@ import {
   conditionName,
   unitAttackShape,
   unitById,
+  unitHasTag,
   unitIsStationary,
 } from '../town/catalog'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
-import { isHeroStack } from './battle'
+import { isHeroStack, stackMoveSpeed, stackDefense, stackResistance } from './battle'
 import {
   combatReachable,
   footprintSpecFor,
@@ -19,6 +20,21 @@ import {
 import { isCreatureArmyUnit, openBridgeMoatKeys } from './siege'
 
 export const FEAR_CONDITION_ID = 1
+export const POLYMORPH_ART_FILENAME = 'Polymorph_1.png'
+
+export type ConditionExtra = {
+  roundTick?: boolean
+  breaksOnDamage?: boolean
+  breakChancePctStat?: number
+}
+
+export type InflictSpec = {
+  conditionId: number
+  resistStat: 'resistance' | 'defense' | null
+  duration: number
+  requiredTag?: number | null
+  extra?: ConditionExtra
+}
 
 export function conditionRemaining(
   stack: CombatStack,
@@ -42,6 +58,29 @@ export function isFeared(
   return conditionRemaining(stack, id) > 0
 }
 
+export function polymorphConditionId(catalog: ReferenceCatalog): number {
+  const named = catalog.condition.find(
+    (row) => row.value.trim().toLowerCase() === 'polymorph',
+  )
+  return named?.id ?? 0
+}
+
+export function isPolymorphed(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  const id = polymorphConditionId(catalog)
+  return id > 0 && conditionRemaining(stack, id) > 0
+}
+
+export function polymorphConditionName(catalog: ReferenceCatalog): string {
+  const id = polymorphConditionId(catalog)
+  if (id > 0) {
+    return conditionName(catalog, id)
+  }
+  return 'Polymorph'
+}
+
 export function applyConsumedCondition(
   battle: CombatBattle,
   stackId: string,
@@ -55,27 +94,40 @@ export function applyConsumedCondition(
   }
 }
 
+export function clearCondition(
+  stack: CombatStack,
+  conditionId: number,
+): CombatStack {
+  const conditions = { ...(stack.conditions ?? {}) }
+  delete conditions[conditionId]
+  const conditionExtra = { ...(stack.conditionExtra ?? {}) }
+  delete conditionExtra[conditionId]
+  return { ...stack, conditions, conditionExtra }
+}
+
 export function consumeCondition(
   stack: CombatStack,
   conditionId: number,
 ): CombatStack {
   const left = conditionRemaining(stack, conditionId) - 1
-  const next = { ...(stack.conditions ?? {}) }
   if (left <= 0) {
-    delete next[conditionId]
-  } else {
-    next[conditionId] = left
+    return clearCondition(stack, conditionId)
   }
-  return { ...stack, conditions: next }
+  return {
+    ...stack,
+    conditions: { ...(stack.conditions ?? {}), [conditionId]: left },
+  }
 }
 
-function liveResistance(
+export function liveResistance(
   stack: CombatStack,
   catalog: ReferenceCatalog,
   stat: 'resistance' | 'defense',
 ): number {
-  const unit = unitById(catalog, stack.unitId)
-  const base = stat === 'defense' ? (unit?.defense ?? 0) : (unit?.resistance ?? 0)
+  const base =
+    stat === 'defense'
+      ? stackDefense(stack, catalog)
+      : stackResistance(stack, catalog)
   const pct =
     stat === 'defense'
       ? (stack.mitigationPct?.defense ?? 0)
@@ -84,6 +136,64 @@ function liveResistance(
     return Math.max(0, base)
   }
   return Math.max(0, Math.floor((base * (100 + pct)) / 100))
+}
+
+function canReceiveCondition(
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  requiredTag?: number | null,
+): boolean {
+  if (
+    target.indestructible ||
+    isHeroStack(target) ||
+    !isCreatureArmyUnit(unitById(catalog, target.unitId))
+  ) {
+    return false
+  }
+  if (requiredTag != null && requiredTag > 0) {
+    return unitHasTag(unitById(catalog, target.unitId), requiredTag)
+  }
+  return true
+}
+
+export function tryInflictSpec(
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  spec: InflictSpec,
+  random: () => number = Math.random,
+): { stack: CombatStack; lines: string[] } {
+  if (spec.conditionId <= 0 || !canReceiveCondition(target, catalog, spec.requiredTag)) {
+    return { stack: target, lines: [] }
+  }
+  const name = unitById(catalog, target.unitId)?.name ?? 'Unknown'
+  const label = conditionName(catalog, spec.conditionId)
+  if (spec.resistStat) {
+    const chance = Math.min(100, liveResistance(target, catalog, spec.resistStat))
+    if (Math.floor(random() * 100) < chance) {
+      return {
+        stack: target,
+        lines: [`${target.qty} ${name} resisted ${label}.`],
+      }
+    }
+  }
+  const duration = Math.max(1, spec.duration)
+  let next: CombatStack = {
+    ...target,
+    conditions: { ...(target.conditions ?? {}), [spec.conditionId]: duration },
+  }
+  if (spec.extra) {
+    next = {
+      ...next,
+      conditionExtra: {
+        ...(target.conditionExtra ?? {}),
+        [spec.conditionId]: spec.extra,
+      },
+    }
+  }
+  return {
+    stack: next,
+    lines: [`${target.qty} ${name} are afflicted with ${label}.`],
+  }
 }
 
 export function tryInflictCondition(
@@ -97,33 +207,84 @@ export function tryInflictCondition(
   if (conditionId == null || conditionId <= 0) {
     return { stack: target, lines: [] }
   }
-  if (
-    target.indestructible ||
-    isHeroStack(target) ||
-    !isCreatureArmyUnit(unitById(catalog, target.unitId))
-  ) {
-    return { stack: target, lines: [] }
+  return tryInflictSpec(
+    target,
+    catalog,
+    {
+      conditionId,
+      resistStat: spec.resistStat,
+      duration: spec.conditionDuration,
+    },
+    random,
+  )
+}
+
+export function applyBreaksOnDamage(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): { stack: CombatStack; lines: string[] } {
+  const extra = stack.conditionExtra ?? {}
+  const lines: string[] = []
+  let next = stack
+  for (const [rawId, spec] of Object.entries(extra)) {
+    if (!spec?.breaksOnDamage) {
+      continue
+    }
+    const conditionId = Number(rawId)
+    if (!Number.isInteger(conditionId) || conditionRemaining(next, conditionId) <= 0) {
+      continue
+    }
+    const name = unitById(catalog, next.unitId)?.name ?? 'Unknown'
+    const label = conditionName(catalog, conditionId)
+    lines.push(`${next.qty} ${name} break free of ${label}.`)
+    next = clearCondition(next, conditionId)
   }
-  const name = unitById(catalog, target.unitId)?.name ?? 'Unknown'
-  const label = conditionName(catalog, conditionId)
-  if (spec.resistStat) {
-    const chance = Math.min(100, liveResistance(target, catalog, spec.resistStat))
-    if (Math.floor(random() * 100) < chance) {
-      return {
-        stack: target,
-        lines: [`${target.qty} ${name} resisted ${label}.`],
+  return { stack: next, lines }
+}
+
+export function tickRoundConditions(
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+  random: () => number,
+): { stacks: CombatStack[]; lines: string[] } {
+  const lines: string[] = []
+  const next = stacks.map((stack) => {
+    let live = stack
+    for (const [rawId, spec] of Object.entries(stack.conditionExtra ?? {})) {
+      if (!spec?.roundTick) {
+        continue
+      }
+      const conditionId = Number(rawId)
+      if (!Number.isInteger(conditionId) || conditionRemaining(live, conditionId) <= 0) {
+        continue
+      }
+      const name = unitById(catalog, live.unitId)?.name ?? 'Unknown'
+      const label = conditionName(catalog, conditionId)
+      if (spec.breakChancePctStat != null) {
+        const chance = Math.min(
+          100,
+          Math.floor(liveResistance(live, catalog, 'resistance') * spec.breakChancePctStat),
+        )
+        if (Math.floor(random() * 100) < chance) {
+          lines.push(`${live.qty} ${name} break free of ${label}.`)
+          live = clearCondition(live, conditionId)
+          continue
+        }
+      }
+      const left = conditionRemaining(live, conditionId) - 1
+      if (left <= 0) {
+        lines.push(`${label} fades from ${live.qty} ${name}.`)
+        live = clearCondition(live, conditionId)
+      } else {
+        live = {
+          ...live,
+          conditions: { ...(live.conditions ?? {}), [conditionId]: left },
+        }
       }
     }
-  }
-  const duration = Math.max(1, spec.conditionDuration)
-  const conditions = {
-    ...(target.conditions ?? {}),
-    [conditionId]: duration,
-  }
-  return {
-    stack: { ...target, conditions },
-    lines: [`${target.qty} ${name} are afflicted with ${label}.`],
-  }
+    return live
+  })
+  return { stacks: next, lines }
 }
 
 /** Random legal flee path, or empty if boxed in. Shooter-style pick-from-pool. */
@@ -135,14 +296,15 @@ export function pickFleeSteps(
   random: () => number = Math.random,
 ): Axial[] {
   const unit = unitById(catalog, stack.unitId)
-  if (!unit || unitIsStationary(unit) || (unit.speed ?? 0) <= 0) {
+  const speed = stackMoveSpeed(stack, catalog) ?? 0
+  if (!unit || unitIsStationary(unit) || speed <= 0) {
     return []
   }
   const kind = moveKindForUnit(unit, catalog)
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
   const reachable = combatReachable(
     { q: stack.q, r: stack.r },
-    unit.speed ?? 0,
+    speed,
     tiles,
     kind,
     occupied,

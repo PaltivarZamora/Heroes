@@ -165,6 +165,13 @@ export function endTurn(session: GameSession): GameSession {
       game: { ...current.game, calendar: next },
     }
     current = applyMineIncome(current)
+    current = {
+      ...current,
+      heroes: current.heroes.map((hero) => ({
+        ...hero,
+        used_abilities_today: [],
+      })),
+    }
     if (isWeekRollover(previous, next)) {
       const catalog = getCachedCatalog()
       if (catalog) {
@@ -212,6 +219,15 @@ function asHeroPoolAmount(value: unknown, fallback: number): number {
     return fallback
   }
   return Math.floor(n)
+}
+
+function asAbilityIdList(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.filter(
+    (id): id is number => typeof id === 'number' && Number.isInteger(id) && id > 0,
+  )
 }
 
 export function progressForHeroName(
@@ -285,6 +301,8 @@ export function normalizeHeroProgress(
       ...fromHero,
       current_mana: asHeroPoolAmount(hero.current_mana, pools.current_mana),
       current_energy: asHeroPoolAmount(hero.current_energy, pools.current_energy),
+      used_abilities_this_battle: asAbilityIdList(hero.used_abilities_this_battle),
+      used_abilities_today: asAbilityIdList(hero.used_abilities_today),
     }
   })
   return { ...session, heroes, hero_progress: progress }
@@ -400,6 +418,8 @@ export function hireHeroFromPool(
     learned_abilities: [],
     current_level: live.current_level,
     current_xp: live.current_xp,
+    used_abilities_this_battle: [],
+    used_abilities_today: [],
     movement_remaining: heroMovementPoints(getCachedCatalog(), {
       class_id: pick.class_id,
       current_level: live.current_level,
@@ -463,6 +483,33 @@ export function applyWalletStockpiles(
             ),
           }
         : player,
+    ),
+  }
+}
+
+const CHEST_GOLD = 10000
+const CHEST_EACH = 20
+
+/** Debug/options: 10,000 gold plus 20 of every other resource. */
+export function grantOpenChest(session: GameSession): GameSession {
+  const player = activePlayer(session)
+  if (!player) {
+    return session
+  }
+  const catalog = getCachedCatalog()
+  const ids =
+    catalog && catalog.resource.length > 0
+      ? catalog.resource.map((row) => row.id)
+      : RESOURCES.map((row) => row.id)
+  const resources = { ...player.resources }
+  for (const id of ids) {
+    const add = id === GOLD_RESOURCE_ID ? CHEST_GOLD : CHEST_EACH
+    resources[id] = (resources[id] ?? 0) + add
+  }
+  return {
+    ...session,
+    players: session.players.map((row) =>
+      row.id === player.id ? { ...row, resources } : row,
     ),
   }
 }

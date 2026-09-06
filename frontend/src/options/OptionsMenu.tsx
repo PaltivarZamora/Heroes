@@ -8,9 +8,9 @@ import {
   listSaves,
   type SaveSummary,
 } from '../session/saves'
-import { getSession, setSession } from '../session/store'
+import { getSession, setSession, updateSession } from '../session/store'
 import type { GameSession } from '../session/types'
-import { normalizeHeroProgress, restoreAllHeroMovement } from '../session/accessors'
+import { grantOpenChest, normalizeHeroProgress, restoreAllHeroMovement } from '../session/accessors'
 import { fetchCatalog, getCachedCatalog, heroMovementPoints, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
@@ -66,6 +66,12 @@ function withExploredDefaults(session: GameSession): GameSession {
       ...hero,
       learned_abilities: Array.isArray(hero.learned_abilities)
         ? hero.learned_abilities
+        : [],
+      used_abilities_this_battle: Array.isArray(hero.used_abilities_this_battle)
+        ? hero.used_abilities_this_battle
+        : [],
+      used_abilities_today: Array.isArray(hero.used_abilities_today)
+        ? hero.used_abilities_today
         : [],
     })),
     building_states: session.building_states.map((row) => ({
@@ -333,6 +339,17 @@ export function OptionsMenu({
             onClick={() => void onReloadReference()}
           >
             Reload Reference Data
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              updateSession(grantOpenChest)
+              setExpanded(false)
+              setNotice('Opened a chest: 10,000 Gold and 20 of each other resource')
+            }}
+          >
+            Open Chest
           </button>
           <button
             type="button"

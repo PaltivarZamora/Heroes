@@ -2,8 +2,8 @@ import { hexDistance } from '../hex/pathfinding'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
-  appConfigNumber,
   heroEffectiveStats,
+  minRangePenaltyMult,
   shapeIsUntargeted,
   shapePulsesOnMove,
   unitAttackShape,
@@ -11,9 +11,22 @@ import {
   unitBlocksEnemyRetaliation,
   unitById,
   unitRetaliation,
+  wallDamageMult,
 } from '../town/catalog'
-import { mergeUnitDeaths, moveStack, type CombatBattle, type CombatStack, type CombatTile } from './battle'
-import { tryInflictCondition } from './condition'
+import {
+  mergeUnitDeaths,
+  moveStack,
+  stackDefense,
+  stackMaxDmg,
+  stackMaxHealth,
+  stackMaxRange,
+  stackMinDmg,
+  stackResistance,
+  type CombatBattle,
+  type CombatStack,
+  type CombatTile,
+} from './battle'
+import { applyBreaksOnDamage, tryInflictCondition } from './condition'
 import { occupancyKey } from './occupancy'
 import { hasLineOfSight, resolveShapeHits } from './shapes'
 import {
@@ -102,11 +115,10 @@ export function mitigateIncoming(
   if (raw <= 0 || target.indestructible) {
     return { damage: 0, blocked: Math.max(0, raw), blockBy: null }
   }
-  const targetUnit = unitById(catalog, target.unitId)
   const soak =
     kind === 'magic'
-      ? Math.max(0, targetUnit?.resistance ?? 0)
-      : Math.max(0, targetUnit?.defense ?? 0)
+      ? stackResistance(target, catalog)
+      : stackDefense(target, catalog)
   const label: BlockLabel = kind === 'magic' ? 'Resistance' : 'Defense'
   let dealt = Math.max(1, raw - soak)
   let blocked = Math.max(0, raw - dealt)
@@ -165,6 +177,9 @@ function minRangePenaltyApplies(
   stacks: CombatStack[],
   catalog: ReferenceCatalog,
 ): boolean {
+  if (striker.ignoreMinRangePenalty === true) {
+    return false
+  }
   const unit = unitById(catalog, striker.unitId)
   if (shapePulsesOnMove(unitAttackShape(unit).shape)) {
     return false
@@ -185,12 +200,12 @@ export function attackRangeFrom(
   from: { q: number; r: number },
   target: CombatStack,
   catalog: ReferenceCatalog,
-  attackerUnitId: number,
+  attacker: CombatStack,
 ): boolean {
   if (target.qty <= 0) {
     return false
   }
-  const maxRange = unitById(catalog, attackerUnitId)?.max_range ?? 1
+  const maxRange = stackMaxRange(attacker, catalog)
   const dist = hexDistance(from, { q: target.q, r: target.r })
   return dist >= 1 && dist <= maxRange
 }
@@ -212,11 +227,14 @@ export function isValidAttackTarget(
   if (mode === 'random_wall_segment' && !isSiegeEngineWallTarget(target, catalog)) {
     return false
   }
-  if (mode === 'random_enemy' && !isCreatureArmyUnit(unitById(catalog, target.unitId))) {
+  if (
+    (mode === 'random_enemy' || mode === 'random_enemy_los') &&
+    !isCreatureArmyUnit(unitById(catalog, target.unitId))
+  ) {
     return false
   }
   return (
-    attackRangeFrom(attacker, target, catalog, attacker.unitId) &&
+    attackRangeFrom(attacker, target, catalog, attacker) &&
     hasLineOfSight(
       attacker,
       { q: target.q, r: target.r },
@@ -279,6 +297,93 @@ export function rollAttackDamage(
     total += lo + Math.floor(random() * span)
   }
   return total
+}
+
+/** Standing rule: a landed crit never adds 0. */
+export function critBonusDamage(
+  baseDmg: number,
+  critAmt: number,
+  minBonus = 1,
+): number {
+  if (baseDmg <= 0) {
+    return 0
+  }
+  return Math.max(minBonus, Math.floor((baseDmg * Math.max(0, critAmt)) / 100))
+}
+
+function liveCritStats(
+  striker: CombatStack,
+  catalog: ReferenceCatalog,
+  attackerHero: Hero | undefined,
+  extraPct = 0,
+  extraAmt = 0,
+): { pct: number; amt: number; minBonus: number } {
+  const base = attackerHero
+    ? heroEffectiveStats(
+        catalog,
+        attackerHero.class_id,
+        attackerHero.current_level,
+      )
+    : { crit_pct: 0, crit_amt: 0 }
+  return {
+    pct: base.crit_pct + (striker.critPctBonus ?? 0) + extraPct,
+    amt: base.crit_amt + (striker.critAmtBonus ?? 0) + extraAmt,
+    minBonus: Math.max(1, striker.minCritBonusDmg ?? 1),
+  }
+}
+
+/** One-attack overrides (Furious Rush). Omitted on ordinary strikes. */
+export type StrikeMods = {
+  guaranteedHit?: boolean
+  /** Per-creature raw damage; skips the min–max roll. */
+  guaranteedDamage?: number
+  critPctAdd?: number
+  critAmtAdd?: number
+  /** Retaliation strike. Parry with ignores_retaliation skips this hit. */
+  isRetaliation?: boolean
+}
+
+/** Per-creature miss hook. Camouflage is rolled once in `applyStrike`. */
+export function strikeConnects(mods?: StrikeMods): boolean {
+  if (mods?.guaranteedHit === true) {
+    return true
+  }
+  return true
+}
+
+function defenderEvades(
+  target: CombatStack,
+  mods: StrikeMods | undefined,
+  random: () => number,
+): boolean {
+  if (mods?.guaranteedHit === true) {
+    return false
+  }
+  const pct = target.evasion?.pct ?? 0
+  if (pct <= 0) {
+    return false
+  }
+  return random() * 100 < pct
+}
+
+function strikeModsFromCharge(
+  striker: CombatStack,
+  catalog: ReferenceCatalog,
+  attackerHero: Hero | undefined,
+): StrikeMods | undefined {
+  const rush = striker.chargeRush
+  if (!rush || rush.usesLeft <= 0) {
+    return undefined
+  }
+  const live = liveCritStats(striker, catalog, attackerHero)
+  return {
+    guaranteedHit: rush.guaranteedHit,
+    guaranteedDamage: rush.guaranteedMaxDmg
+      ? Math.max(0, Math.floor(stackMaxDmg(striker, catalog) * rush.coefficient))
+      : undefined,
+    critPctAdd: live.pct * rush.coefficient,
+    critAmtAdd: live.amt * rush.coefficient,
+  }
 }
 
 /**
@@ -426,7 +531,7 @@ function writeStack(
 type BlockLabel = 'Defense' | 'Resistance'
 
 /**
- * Per creature, then summed (BR 4-12): roll → dmg_pct → min_range half →
+ * Per creature, then summed (BR 4-12): roll → dmg_pct → min_range penalty →
  * unit soak floored at 1 → hero % → incoming buff %. Stack outgoing %
  * (Sap Strength and similar) is applied after that per-creature floor,
  * never to an aggregated total.
@@ -439,45 +544,71 @@ export function computeStrikeDamage(
   dmgPct: number | 'max' = 100,
   rangePenalty = false,
   defenderHero?: Hero,
-): { damage: number; blocked: number; rangePenalty: boolean } {
+  attackerHero?: Hero,
+  mods?: StrikeMods,
+): { damage: number; blocked: number; rangePenalty: boolean; crits: number } {
   const strikerUnit = unitById(catalog, striker.unitId)
   const kind = damageKindOf(strikerUnit)
   const minDmg = scaleBySignedPct(
-    strikerUnit?.min_dmg ?? 0,
+    stackMinDmg(striker, catalog),
     outputMinPct(striker, kind),
   )
   const maxDmg = scaleBySignedPct(
-    strikerUnit?.max_dmg ?? 0,
+    stackMaxDmg(striker, catalog),
     outputMaxPct(striker, kind),
   )
   const pct =
     dmgPct === 'max' ? null : Math.min(100, Math.max(0, dmgPct))
   const totalPct = outputTotalPct(striker, kind)
+  const crit = liveCritStats(
+    striker,
+    catalog,
+    attackerHero,
+    mods?.critPctAdd ?? 0,
+    mods?.critAmtAdd ?? 0,
+  )
+  const guaranteed = mods?.guaranteedDamage
   let damage = 0
   let blocked = 0
+  let crits = 0
   for (let i = 0; i < striker.qty; i += 1) {
-    let raw =
-      dmgPct === 'max'
-        ? maxDmg
-        : rollAttackDamage(1, minDmg, maxDmg, random)
-    if (pct != null) {
-      raw = Math.floor((raw * pct) / 100)
+    if (!strikeConnects(mods)) {
+      continue
     }
-    if (rangePenalty) {
-      raw = Math.floor(raw / 2)
+    let raw: number
+    if (guaranteed != null) {
+      raw = guaranteed
+      if (pct != null) {
+        raw = Math.floor((raw * pct) / 100)
+      }
+    } else {
+      raw =
+        dmgPct === 'max'
+          ? maxDmg
+          : rollAttackDamage(1, minDmg, maxDmg, random)
+      if (pct != null) {
+        raw = Math.floor((raw * pct) / 100)
+      }
+      if (rangePenalty) {
+        raw = Math.floor(raw * minRangePenaltyMult(catalog))
+      }
     }
     const mit = mitigateIncoming(raw, target, catalog, kind, defenderHero)
-    const dealt = scaleBySignedPct(mit.damage, totalPct)
+    let dealt = scaleBySignedPct(mit.damage, totalPct)
+    if (dealt > 0 && crit.pct > 0 && random() * 100 < crit.pct) {
+      dealt += critBonusDamage(dealt, crit.amt, crit.minBonus)
+      crits += 1
+    }
     damage += dealt
     blocked += mit.blocked
     if (dealt < mit.damage) {
       blocked += mit.damage - dealt
     }
   }
-  return { damage, blocked, rangePenalty }
+  return { damage, blocked, rangePenalty: guaranteed != null ? false : rangePenalty, crits }
 }
 
-function applyStrike(
+export function applyStrike(
   striker: CombatStack,
   target: CombatStack,
   catalog: ReferenceCatalog,
@@ -485,12 +616,17 @@ function applyStrike(
   dmgPct: number | 'max' = 100,
   rangePenalty = false,
   defenderHero?: Hero,
+  attackerHero?: Hero,
+  mods?: StrikeMods,
 ): {
   damage: number
   blocked: number
   blockBy: BlockLabel | null
   rangePenalty: boolean
   killed: number
+  crits: number
+  parried: boolean
+  missed: boolean
   stack: CombatStack | null
 } {
   const kind = damageKindOf(unitById(catalog, striker.unitId))
@@ -502,37 +638,101 @@ function applyStrike(
       blockBy: null,
       rangePenalty,
       killed: 0,
+      crits: 0,
+      parried: false,
+      missed: false,
       stack: target,
+    }
+  }
+  if (
+    kind === 'physical' &&
+    (target.parryPhysicalUses ?? 0) > 0 &&
+    !(mods?.isRetaliation === true && target.parryIgnoresRetaliation === true)
+  ) {
+    const left = (target.parryPhysicalUses ?? 1) - 1
+    return {
+      damage: 0,
+      blocked: 0,
+      blockBy: null,
+      rangePenalty: false,
+      killed: 0,
+      crits: 0,
+      parried: true,
+      missed: false,
+      stack: {
+        ...target,
+        parryPhysicalUses: left > 0 ? left : undefined,
+        parryIgnoresRetaliation:
+          left > 0 ? target.parryIgnoresRetaliation : undefined,
+      },
+    }
+  }
+  if (defenderEvades(target, mods, random)) {
+    return {
+      damage: 0,
+      blocked: 0,
+      blockBy: null,
+      rangePenalty: false,
+      killed: 0,
+      crits: 0,
+      parried: false,
+      missed: true,
+      stack: target,
+    }
+  }
+  let strikeMods = mods
+  let liveTarget = target
+  if ((liveTarget.markHitsLeft ?? 0) > 0) {
+    if (strikeMods?.guaranteedDamage == null) {
+      strikeMods = {
+        ...strikeMods,
+        guaranteedDamage: stackMaxDmg(striker, catalog),
+      }
+    }
+    const left = (liveTarget.markHitsLeft ?? 1) - 1
+    liveTarget = {
+      ...liveTarget,
+      markHitsLeft: left > 0 ? left : undefined,
     }
   }
   const rolled = computeStrikeDamage(
     striker,
-    target,
+    liveTarget,
     catalog,
     random,
     dmgPct,
     rangePenalty,
     defenderHero,
+    attackerHero,
+    strikeMods,
   )
   let damage = rolled.damage
   let blocked = rolled.blocked
   if (
-    isWallSegmentUnit(unitById(catalog, target.unitId)) &&
+    isWallSegmentUnit(unitById(catalog, liveTarget.unitId)) &&
     !isSiegeEngineUnit(unitById(catalog, striker.unitId))
   ) {
-    const mult = appConfigNumber(catalog, 'wall_damage_mult', 0.25)
+    const mult = wallDamageMult(catalog)
     const reduced = Math.floor(damage * mult)
     blocked += damage - reduced
     damage = reduced
   }
-  const full = Math.max(1, unitById(catalog, target.unitId)?.health ?? 1)
-  const applied = applyStackDamage(target, damage, full)
+  const full = stackMaxHealth(liveTarget, catalog)
+  const applied = applyStackDamage(
+    liveTarget,
+    damage,
+    full,
+    striker.killOnOverflow === true,
+  )
   return {
     damage,
     blocked,
     blockBy: blocked > 0 ? label : null,
     rangePenalty,
     killed: applied.killed,
+    crits: rolled.crits,
+    parried: false,
+    missed: false,
     stack: applied.stack,
   }
 }
@@ -569,11 +769,23 @@ function hitLogLine(
   blocked = 0,
   blockBy: BlockLabel | null = null,
   rangePenalty = false,
+  crits = 0,
+  parried = false,
+  missed = false,
 ): string {
   const atkName = stackName(catalog, striker.unitId)
   const defName = stackName(catalog, targetBefore.unitId)
   let line = `${striker.qty} ${atkName} ${verb} ${targetBefore.qty} ${defName} for ${damage} dmg`
   const notes: string[] = []
+  if (parried) {
+    notes.push('parried')
+  }
+  if (missed) {
+    notes.push('missed')
+  }
+  if (crits > 0) {
+    notes.push(crits === 1 ? 'crit' : `${crits} crits`)
+  }
   if (rangePenalty) {
     notes.push('range penalty')
   }
@@ -626,6 +838,7 @@ export function resolveAttack(
   tiles: CombatTile[],
   heroes?: CombatHeroes,
   random: () => number = Math.random,
+  strike?: StrikeMods,
 ): {
   battle: CombatBattle
   log: { lines: string[] }
@@ -643,6 +856,13 @@ export function resolveAttack(
   if (!attacker || attacker.qty <= 0) {
     return null
   }
+  const strikeMods =
+    strike ??
+    strikeModsFromCharge(
+      attacker,
+      catalog,
+      heroForSide(attacker.side, heroes),
+    )
   const atkUnit = unitById(catalog, attacker.unitId)
   const spec = unitAttackShape(atkUnit)
   const noAim =
@@ -656,7 +876,7 @@ export function resolveAttack(
     ) ??
     null
 
-  const maxRange = atkUnit?.max_range ?? 1
+  const maxRange = stackMaxRange(attacker, catalog)
   const aimDist = hexDistance(attacker, aim.hex)
   if (!noAim) {
     if (spec.shape === 'beam' || spec.shape === 'aoe') {
@@ -705,7 +925,7 @@ export function resolveAttack(
     if (!striker.vampiricStrike || pool <= 0) {
       return striker
     }
-    const full = Math.max(1, unitById(catalog, striker.unitId)?.health ?? 1)
+    const full = stackMaxHealth(striker, catalog)
     const next = applyVampiricRevive(striker, pool, full)
     if (next.healed <= 0 && next.revived <= 0) {
       return striker
@@ -738,7 +958,7 @@ export function resolveAttack(
       if (!def || def.qty <= 0) {
         continue
       }
-      const spec = unitRetaliation(unitById(catalog, def.unitId))
+      const spec = unitRetaliation(unitById(catalog, def.unitId), catalog)
       if (spec.preemptive !== preemptivePass) {
         continue
       }
@@ -757,6 +977,8 @@ export function resolveAttack(
         spec.dmgPct,
         minRangePenaltyApplies(def, stacks, catalog),
         heroForSide(atk.side, heroes),
+        heroForSide(def.side, heroes),
+        { isRetaliation: true },
       )
       lines.push(
         hitLogLine(
@@ -769,6 +991,9 @@ export function resolveAttack(
           struck.blocked,
           struck.blockBy,
           struck.rangePenalty,
+          struck.crits,
+          struck.parried,
+          struck.missed,
         ),
       )
       if (struck.damage > 0) {
@@ -784,6 +1009,9 @@ export function resolveAttack(
       retaliator = applyVampiricFromDamage(retaliator, struck.damage)
       atk = struck.stack
       if (atk && struck.damage > 0) {
+        const broken = applyBreaksOnDamage(atk, catalog)
+        atk = broken.stack
+        lines.push(...broken.lines)
         const inf = tryInflictCondition(def, atk, catalog, random)
         atk = inf.stack
         lines.push(...inf.lines)
@@ -795,8 +1023,11 @@ export function resolveAttack(
 
   tryRetaliate(true)
 
-  if (atk && atk.qty > 0) {
-    let offensivePool = 0
+  const fireOffensive = (dmgPctForHit: (hitPct: number | 'max') => number | 'max') => {
+    if (!atk || atk.qty <= 0) {
+      return 0
+    }
+    let pool = 0
     for (const hit of hits) {
       if (!atk || atk.qty <= 0) {
         break
@@ -814,9 +1045,11 @@ export function resolveAttack(
         def,
         catalog,
         random,
-        hit.dmgPct,
+        dmgPctForHit(hit.dmgPct),
         rangePenalty,
         heroForSide(def.side, heroes),
+        heroForSide(atk.side, heroes),
+        strikeMods,
       )
       lines.push(
         hitLogLine(
@@ -829,24 +1062,56 @@ export function resolveAttack(
           struck.blocked,
           struck.blockBy,
           struck.rangePenalty,
+          struck.crits,
+          struck.parried,
+          struck.missed,
         ),
       )
       if (struck.damage > 0) {
         hitKeys.push(occupancyKey(before.q, before.r))
       }
       unitDeaths = mergeUnitDeaths(unitDeaths, before.unitId, struck.killed)
-      offensivePool += struck.damage
+      pool += struck.damage
       stacks = writeStack(stacks, def.id, struck.stack)
       if (struck.stack && struck.damage > 0 && atk) {
-        const inf = tryInflictCondition(atk, struck.stack, catalog, random)
+        const broken = applyBreaksOnDamage(struck.stack, catalog)
+        stacks = writeStack(stacks, def.id, broken.stack)
+        lines.push(...broken.lines)
+        const inf = tryInflictCondition(atk, broken.stack, catalog, random)
         stacks = writeStack(stacks, def.id, inf.stack)
         lines.push(...inf.lines)
+      }
+    }
+    return pool
+  }
+
+  if (atk && atk.qty > 0) {
+    let offensivePool = fireOffensive((pct) => pct)
+    const barragePct = atk.barragePct
+    const barrageUses = atk.barrageUsesLeft
+    const fireBarrage =
+      barragePct != null &&
+      barragePct > 0 &&
+      (barrageUses == null || barrageUses > 0)
+    let usesLeft = barrageUses
+    if (fireBarrage) {
+      atk = live(attackerId)
+      offensivePool += fireOffensive(() => barragePct)
+      if (usesLeft != null) {
+        usesLeft = usesLeft - 1
       }
     }
     atk = live(attackerId)
     if (atk && atk.qty > 0) {
       atk = applyVampiricFromDamage(atk, offensivePool)
-      atk = { ...atk, hasActedThisRound: true }
+      const spent =
+        fireBarrage && usesLeft != null
+          ? {
+              barrageUsesLeft: usesLeft > 0 ? usesLeft : undefined,
+              barragePct: usesLeft > 0 ? atk.barragePct : undefined,
+            }
+          : {}
+      atk = { ...atk, hasActedThisRound: true, ...spent }
       stacks = writeStack(stacks, attackerId, atk)
     }
   }

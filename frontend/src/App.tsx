@@ -32,11 +32,13 @@ import { createSessionFromConfig } from './session/create'
 import {
   assignHeroesFromPool,
   endTurn,
+  findTownAt,
   findTownById,
   hasTownBuiltToday,
   humanPlayer,
   markTownBuiltToday,
   persistActiveExplored,
+  visitingHeroId,
   walletFromSession,
 } from './session/accessors'
 import './App.css'
@@ -157,7 +159,16 @@ function App() {
     }
     setTrade(null)
     setHeroScreen(false)
-    setCombat({ attackerHeroId: self.id, defenderHeroId: other.id })
+    const occupied = findTownAt(current, other.position.q, other.position.r)
+    const siegeTownId =
+      occupied?.player_id && occupied.player_id !== self.player_id
+        ? occupied.id
+        : undefined
+    setCombat({
+      attackerHeroId: self.id,
+      defenderHeroId: other.id,
+      siegeTownId,
+    })
   }, [])
   const onSiegeTown = useCallback((townId: string) => {
     const current = getSession()
@@ -171,9 +182,16 @@ function App() {
     setWelcomeTown(null)
     setTrade(null)
     setHeroScreen(false)
+    const town = current.towns.find((row) => row.id === townId)
+    const occupantId = town ? visitingHeroId(current, town) : null
+    const occupant = occupantId
+      ? current.heroes.find((row) => row.id === occupantId)
+      : undefined
+    const defenderHeroId =
+      occupant && occupant.player_id !== self.player_id ? occupant.id : null
     setCombat({
       attackerHeroId: self.id,
-      defenderHeroId: null,
+      defenderHeroId,
       siegeTownId: townId,
     })
   }, [])
@@ -217,6 +235,20 @@ function App() {
       setMapEpoch((n) => n + 1)
     })()
   }, [])
+  const adoptHero = useCallback((id: string) => {
+    const row = getSession().heroes.find((hero) => hero.id === id)
+    if (!row) {
+      return
+    }
+    selectHeroOnMap(row.id)
+    setHero({
+      id: row.id,
+      q: row.position.q,
+      r: row.position.r,
+      remaining: row.movement_remaining,
+    })
+  }, [])
+
   const cycleTown = useCallback((reverse = false) => {
     const current = getSession()
     const player = humanPlayer(current)
@@ -243,25 +275,34 @@ function App() {
     if (!player) {
       return
     }
-    const heroId = idInDirection(getSelectedMapHeroId(), player.hero_ids, reverse)
-    const nextHero = heroId
-      ? current.heroes.find((row) => row.id === heroId)
-      : undefined
-    if (!nextHero) {
+    const owned = player.hero_ids.filter((id) =>
+      current.heroes.some((row) => row.id === id),
+    )
+    if (owned.length === 0) {
       return
     }
-    selectHeroOnMap(nextHero.id)
-  }, [])
+    const selectedId = getSelectedMapHeroId()
+    const currentId = owned.includes(hero?.id ?? '')
+      ? hero?.id ?? null
+      : owned.includes(selectedId ?? '')
+        ? selectedId
+        : null
+    const heroId = idInDirection(currentId, owned, reverse)
+    if (!heroId) {
+      return
+    }
+    adoptHero(heroId)
+  }, [adoptHero, hero?.id])
 
   const openHeroScreen = useCallback((heroId?: string | null) => {
     if (heroId) {
-      selectHeroOnMap(heroId)
+      adoptHero(heroId)
     }
     setWelcomeTown(null)
     setTrade(null)
     setCombat(null)
     setHeroScreen(true)
-  }, [])
+  }, [adoptHero])
 
   const openTownScreen = useCallback(() => {
     const current = getSession()
@@ -622,7 +663,7 @@ function App() {
         <HeroScreen
           heroId={selectedHero.id}
           onClose={() => setHeroScreen(false)}
-          onSelectHero={(id) => selectHeroOnMap(id)}
+          onSelectHero={adoptHero}
           onOpenHero={openHeroScreen}
           onCycleTown={cycleTown}
         />

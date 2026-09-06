@@ -1403,12 +1403,19 @@ button.town-army-portrait {
 
 .hero-ability-list-cast .hero-ability-name {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   width: 100%;
   min-height: 2.6em;
   box-sizing: border-box;
   text-align: center;
+}
+
+.hero-ability-lock {
+  display: block;
+  margin-top: 2px;
+  font: 600 11px/1.2 system-ui, 'Segoe UI', Roboto, sans-serif;
 }
 
 button.hero-ability-name {
@@ -1512,6 +1519,42 @@ button.hero-ability-name:disabled {
 
 .combat-inspect-card {
   width: min(420px, calc(100% - 32px));
+}
+
+.combat-inspect-conditions {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #141414;
+}
+
+.combat-inspect-conditions h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #c8e6c9;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.combat-inspect-conditions ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.combat-inspect-conditions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  font-size: 14px;
+}
+
+.combat-inspect-conditions li span:last-child {
+  color: #ccc;
+  font-variant-numeric: tabular-nums;
 }
 
 .combat-inspect-stats {

@@ -38,6 +38,8 @@ export type UnitRow = {
   bldg_id: number | null
   cost: CostMap | null
   image_path: string | null
+  /** Alternate-state portrait (e.g. silenced Rift). Null = no swap. */
+  image_path_alt: string | null
   /** Battlefield footprint in hexes. Null means 1. */
   hex_size: number | null
   /** Null speed = never acts (no initiative, no log). */
@@ -58,10 +60,13 @@ export type UnitRow = {
   abilities: UnitCombatAbilities
   /** Catalog `unit_tag.id` values from unit.tags. */
   tags: number[]
+  /** Sight blocker. Drawbridge open/closed is separate and ignores this. */
+  blocks_los: boolean
 }
 
 export type UnitRetaliation = {
-  dmgPct: number | 'max'
+  /** `'default'` → `retaliation_default_dmg_mult` at read time. */
+  dmgPct: number | 'max' | 'default'
   times: number | 'unlimited'
   preemptive: boolean
 }
@@ -77,7 +82,10 @@ export type AttackShapeKind =
   | 'rain'
   | 'breath'
 
-export type AutoTargetKind = 'random_wall_segment' | 'random_enemy'
+export type AutoTargetKind =
+  | 'random_wall_segment'
+  | 'random_enemy'
+  | 'random_enemy_los'
 
 export type UnitCombatAbilities = {
   no_enemy_retaliation: boolean
@@ -98,7 +106,7 @@ export type UnitCombatAbilities = {
 }
 
 export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
-  dmgPct: 50,
+  dmgPct: 'default',
   times: 1,
   preemptive: false,
 }
@@ -644,6 +652,27 @@ function asHeroLevels(rows: unknown): HeroLevelRow[] {
     .filter((row) => row.hero_type_id > 0 && row.level_id > 0)
 }
 
+function asAbilityCost(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value))
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    let total = 0
+    for (const amount of Object.values(value as Record<string, unknown>)) {
+      const n = Number(amount)
+      if (Number.isFinite(n)) {
+        total += Math.trunc(n)
+      }
+    }
+    return Math.max(0, total)
+  }
+  return 0
+}
+
 function asAbilities(rows: unknown): AbilityRow[] {
   if (!Array.isArray(rows)) {
     return []
@@ -661,7 +690,7 @@ function asAbilities(rows: unknown): AbilityRow[] {
         name,
         description,
         resource_id: asInt(rec.resource_id),
-        cost: asInt(rec.cost),
+        cost: asAbilityCost(rec.cost),
         cooldown_id: asInt(rec.cooldown_id),
         target_id: asOptionalId(rec.target_id),
         ability_type_id: asOptionalId(rec.ability_type_id),
@@ -712,6 +741,29 @@ function fillDesignedAbilities(
         },
       }
     }
+    if (row.name === 'Recruit the Dead') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      const rest = { ...(row.stats ?? {}) }
+      delete rest.requires_existing_summon_tag
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          kill_pct_stat: 4,
+          kill_tag: 2,
+          summon_tag: 12,
+          persists_on_summon: true,
+          ...rest,
+        },
+      }
+    }
     if (row.name === 'Summon Bound Spirit') {
       const friendAll =
         targets.find(
@@ -728,6 +780,291 @@ function fillDesignedAbilities(
           summon_unit_id: 222,
           persists_on_summon: false,
           summon_qty_int_stat: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Unstable Rift') {
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 223,
+          summon_count: 3,
+          persists_on_summon: false,
+          silence_schedule: [3, 2, 1],
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Time Warp') {
+      return {
+        ...row,
+        stats: {
+          grants_extra_turn: true,
+          duration: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Mass Slow') {
+      const enemyAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_all',
+        )?.id ?? 6
+      return {
+        ...row,
+        target_id: enemyAll,
+      }
+    }
+    if (row.name === 'Berserk') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          min_dmg_mult: 2,
+          max_dmg_mult: 2,
+          set_defense: 0,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Execute') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          grants_kill_on_overflow: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Furious Rush') {
+      const rest = { ...(row.stats ?? {}) }
+      return {
+        ...row,
+        target_id: friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          movement: 'max_distance',
+          speed_bonus_stat_div: 10,
+          max_dmg_mult_stat_div: 10,
+          guaranteed_max_dmg: true,
+          guaranteed_hit: true,
+          crit_pct_flat_stat_div: 10,
+          crit_amt_flat_stat_div: 10,
+          no_stat_threshold: true,
+          uses: 1,
+          ...rest,
+        },
+      }
+    }
+    if (row.name === 'Critical Attacks') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          crit_pct_flat_stat: 1.5,
+          crit_amt_flat_stat: 0.8,
+          no_stat_threshold: true,
+          min_crit_bonus_dmg: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Adrenaline Rush') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const rest = { ...(row.stats ?? {}) }
+      delete rest.duration
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          speed_buff_stat_div: 4,
+          uses: 1,
+          resorts_remaining_initiative: true,
+          ...rest,
+        },
+      }
+    }
+    if (row.name === 'Blood Lust') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        stats: {
+          dmg_buff_pct_stat: 10,
+          def_debuff_pct_stat: 6.7,
+          def_floor: 0,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Steady Aim') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          disable_min_range_penalty: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Parry') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          guarantees_miss_next_physical_hit: true,
+          uses: 1,
+          ...(row.stats ?? {}),
+          ignores_retaliation: true,
+        },
+      }
+    }
+    if (row.name === 'Call Beast') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 224,
+          summon_qty_stat_div: 2,
+          persists_on_summon: true,
+          insert_into_current_round_queue: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Critical Chance') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          crit_pct_flat_stat: 2,
+          no_stat_threshold: true,
+          min_crit_bonus_dmg: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Barrage') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          grants_second_attack_pct: 50,
+          second_attack_pct_flat_stat: 1,
+          before_retaliation: true,
+          no_stat_threshold: true,
+          uses_stat_div: 5,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Overcharge') {
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        stats: {
+          shape: 'pulse',
+          guaranteed_max_dmg: true,
+          instant: true,
+          no_turn_cost: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Camouflage') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          evasion_pct: 25,
+          duration_stat_div: 7,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Mark Target') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const debuffType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'debuff')?.id ?? 3
+      return {
+        ...row,
+        target_id: enemySingle,
+        ability_type_id: row.ability_type_id ?? debuffType,
+        stats: {
+          forces_max_dmg_on_target: true,
+          hit_count_stat_div: 7,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Mutation') {
+      const allSingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_single',
+        )?.id ?? 7
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      return {
+        ...row,
+        target_id: allSingle,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        description:
+          "Target any single stack, either side. Friendly targets are buffed, enemy targets are debuffed: Speed, Defense, Resistance, Min/Max damage, Max Range, and Max HP all shift by the same amount, scaled off the caster's Intelligence.",
+        stats: {
+          delta_all_stats_stat: 0.10,
+          direction_by_target_side: true,
           ...(row.stats ?? {}),
         },
       }
@@ -869,7 +1206,7 @@ function asUnitRetaliation(value: unknown): UnitRetaliation {
     return { ...DEFAULT_UNIT_RETALIATION }
   }
   const dmgRaw = rec.dmg_pct
-  let dmgPct: number | 'max' = DEFAULT_UNIT_RETALIATION.dmgPct
+  let dmgPct: UnitRetaliation['dmgPct'] = 'default'
   if (typeof dmgRaw === 'string' && dmgRaw.trim().toLowerCase() === 'max') {
     dmgPct = 'max'
   } else if (dmgRaw != null && dmgRaw !== '') {
@@ -934,7 +1271,11 @@ function asShapeInt(value: unknown, fallback: number): number {
 
 function asAutoTarget(value: unknown): AutoTargetKind | null {
   const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
-  if (text === 'random_wall_segment' || text === 'random_enemy') {
+  if (
+    text === 'random_wall_segment' ||
+    text === 'random_enemy' ||
+    text === 'random_enemy_los'
+  ) {
     return text
   }
   return null
@@ -957,7 +1298,7 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
         : DEFAULT_UNIT_ABILITIES.falloff,
     targets: asShapeInt(rec?.targets, DEFAULT_UNIT_ABILITIES.targets),
     rows: asShapeInt(rec?.rows, DEFAULT_UNIT_ABILITIES.rows),
-    autoTarget: asAutoTarget(rec?.target),
+    autoTarget: asAutoTarget(rec?.auto_target) ?? asAutoTarget(rec?.target),
     skipIfNone: rec?.skip_if_none === true,
     inflictsCondition: asOptionalId(rec?.inflicts_condition),
     resistStat: asResistStat(rec?.resist_stat),
@@ -1090,8 +1431,14 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       retaliation?: unknown
       abilities?: unknown
       tags?: unknown
+      blocks_los?: unknown
+      image_path_alt?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
+    const imageAlt =
+      typeof extra.image_path_alt === 'string' ? extra.image_path_alt.trim() : ''
+    const unitName = typeof row.name === 'string' ? row.name.trim() : ''
+    const rift = unitName.toLowerCase() === 'unstable rift'
     const hexRaw = extra.hex_size
     const hexNum = hexRaw == null || hexRaw === '' ? null : asInt(hexRaw)
     const moveRaw = extra.move_type_id
@@ -1103,7 +1450,8 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     return {
       ...row,
       cost: asCost(row.cost),
-      image_path: image || null,
+      image_path: image || (rift ? 'Unstable_Rift_1.png' : null),
+      image_path_alt: imageAlt || (rift ? 'Silent_Rift_1.png' : null),
       hex_size: hexNum != null && hexNum > 0 ? hexNum : null,
       speed:
         extra.speed == null || extra.speed === ''
@@ -1123,6 +1471,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       retaliation: asUnitRetaliation(extra.retaliation),
       abilities: asUnitCombatAbilities(extra.abilities),
       tags: asIntIds(extra.tags),
+      blocks_los: asBoolFlag(extra.blocks_los),
     }
   })
   const catalog: ReferenceCatalog = {
@@ -1294,8 +1643,18 @@ export function unitHexFootprint(unit: UnitRow | null | undefined): number {
 
 export function unitRetaliation(
   unit: UnitRow | null | undefined,
-): UnitRetaliation {
-  return unit?.retaliation ?? DEFAULT_UNIT_RETALIATION
+  catalog?: ReferenceCatalog | null,
+): {
+  dmgPct: number | 'max'
+  times: number | 'unlimited'
+  preemptive: boolean
+} {
+  const spec = unit?.retaliation ?? DEFAULT_UNIT_RETALIATION
+  const dmgPct =
+    spec.dmgPct === 'default'
+      ? retaliationDefaultDmgPct(catalog)
+      : spec.dmgPct
+  return { ...spec, dmgPct }
 }
 
 export function unitBlocksEnemyRetaliation(
@@ -1339,10 +1698,9 @@ export function conditionName(
   catalog: ReferenceCatalog,
   conditionId: number,
 ): string {
-  return (
-    catalog.condition.find((row) => row.id === conditionId)?.value ??
-    `condition ${conditionId}`
-  )
+  const row = catalog.condition.find((entry) => entry.id === conditionId)
+  const label = row?.value?.trim() ?? ''
+  return label.length > 0 ? label : `condition ${conditionId}`
 }
 
 export function shapeIsUntargeted(shape: AttackShapeKind): boolean {
@@ -1762,6 +2120,33 @@ export function regenHybrid(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
   return Math.max(0, Math.floor(appConfigNumber(catalog, 'regen_hybrid', 2)))
+}
+
+export function minRangePenaltyMult(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, appConfigNumber(catalog, 'min_range_penalty_mult', 0.5))
+}
+
+export function wallDamageMult(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, appConfigNumber(catalog, 'wall_damage_mult', 0.25))
+}
+
+export function retaliationDefaultDmgMult(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, appConfigNumber(catalog, 'retaliation_default_dmg_mult', 0.5))
+}
+
+function retaliationDefaultDmgPct(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.min(
+    100,
+    Math.max(0, Math.round(retaliationDefaultDmgMult(catalog) * 100)),
+  )
 }
 
 /** Starting / missing-save Mana and Energy. Energy = strength × ability_mult; Mana = intel × ability_mult. */

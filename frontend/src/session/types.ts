@@ -90,6 +90,10 @@ export type Hero = {
   current_mana: number
   /** Live Energy pool. Always present; unused classes sit at their strength-based max. */
   current_energy: number
+  /** Ability ids cast in the current battle. Reset at battle start. */
+  used_abilities_this_battle: number[]
+  /** Ability ids cast today (game day). Reset at day rollover. */
+  used_abilities_today: number[]
 }
 
 /** Per-name XP/level that survives death → tavern → re-hire. */

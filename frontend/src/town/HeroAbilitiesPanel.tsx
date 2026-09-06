@@ -15,8 +15,10 @@ type HeroAbilitiesPanelProps = {
   onDisciplineId: (id: number) => void
   /** When set, learned names are click-to-cast buttons. */
   onSelectAbility?: (ability: AbilityRow) => void
-  /** Unaffordable abilities are listed but cannot be selected. */
+  /** Unaffordable / cooldown-locked abilities are listed but cannot be selected. */
   canSelectAbility?: (ability: AbilityRow) => boolean
+  /** Shown on a disabled cast button; cooldown text must not reuse afford messaging. */
+  unavailableMessage?: (ability: AbilityRow) => string | null
 }
 
 export function HeroAbilitiesPanel({
@@ -27,6 +29,7 @@ export function HeroAbilitiesPanel({
   onDisciplineId,
   onSelectAbility,
   canSelectAbility,
+  unavailableMessage,
 }: HeroAbilitiesPanelProps) {
   return (
     <>
@@ -74,6 +77,9 @@ export function HeroAbilitiesPanel({
                     {rows.map((ability) => {
                       const allowed =
                         canSelectAbility == null || canSelectAbility(ability)
+                      const lock = !allowed
+                        ? (unavailableMessage?.(ability) ?? null)
+                        : null
                       const label = onSelectAbility
                         ? `${ability.name} (${ability.cost})`
                         : ability.name
@@ -92,6 +98,9 @@ export function HeroAbilitiesPanel({
                                 }}
                               >
                                 {label}
+                                {lock ? (
+                                  <span className="hero-ability-lock">{lock}</span>
+                                ) : null}
                               </button>
                             ) : (
                               <span className="hero-ability-name">{label}</span>

@@ -1,5 +1,5 @@
 import { spendMovement, type Axial } from '../hex/hero'
-import { findPathOnBoard, neighborHexes, reachableWithin } from '../hex/pathfinding'
+import { findPathOnBoard, reachableWithin } from '../hex/pathfinding'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
   DUMP_REMAINING_MOVE_COST,
@@ -7,6 +7,7 @@ import {
   unitIsStationary,
 } from '../town/catalog'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
+import { stackMoveSpeed } from './battle'
 import { closedDrawbridgeKeys, openBridgeMoatKeys } from './siege'
 import {
   combatBodySize,
@@ -75,7 +76,14 @@ export function moveVerb(kind: MoveKind): string {
   return 'moved'
 }
 
-/** Entry cost for one combat hex. Null = cannot enter. */
+function isAirborne(kind: MoveKind): boolean {
+  return kind === 'flying' || kind === 'hover'
+}
+
+/**
+ * Traversal cost. Null = cannot cross this hex mid-path.
+ * Flying/Hover may cross `is_blocked` terrain that does not block LOS.
+ */
 export function combatEnterCost(
   tile: CombatTile | undefined,
   kind: MoveKind,
@@ -85,24 +93,19 @@ export function combatEnterCost(
     return null
   }
   if (tile.blocked) {
-    if (
-      kind === 'submerge' &&
-      (tile.terrain === 'Water' || tile.terrain === 'Shallows')
-    ) {
+    if (isAirborne(kind) && !tile.blocksLos) {
       return 1
     }
     return null
   }
-  if (
-    passableMoatKeys?.has(hexKey(tile.q, tile.r))
-  ) {
+  if (passableMoatKeys?.has(hexKey(tile.q, tile.r))) {
     return 1
   }
-  if (kind === 'flying' || kind === 'hover') {
+  if (isAirborne(kind)) {
     return 1
   }
   if (kind === 'submerge') {
-    if (tile.terrain === 'Water' || tile.terrain === 'Shallows') {
+    if (tile.terrain === 'Shallows') {
       return 1
     }
     return tile.movementCostMultiplier
@@ -110,8 +113,16 @@ export function combatEnterCost(
   return tile.movementCostMultiplier
 }
 
-function isAirborne(kind: MoveKind): boolean {
-  return kind === 'flying' || kind === 'hover'
+/** `is_blocked` is never a legal landing, for any move type. */
+export function combatCanLandOn(
+  tile: CombatTile | undefined,
+  kind: MoveKind,
+  passableMoatKeys?: ReadonlySet<string>,
+): boolean {
+  if (!tile || tile.blocked) {
+    return false
+  }
+  return combatEnterCost(tile, kind, passableMoatKeys) != null
 }
 
 export function occupiedForMover(
@@ -193,6 +204,31 @@ function standFits(
   )
 }
 
+function landFits(
+  origin: Axial,
+  tiles: Map<string, CombatTile>,
+  kind: MoveKind,
+  occupied: ReadonlySet<string>,
+  spec: FootprintSpec | undefined,
+  passableMoatKeys?: ReadonlySet<string>,
+): boolean {
+  const landCost = (q: number, r: number): number | null => {
+    const tile = tiles.get(hexKey(q, r))
+    if (!combatCanLandOn(tile, kind, passableMoatKeys)) {
+      return null
+    }
+    return combatEnterCost(tile, kind, passableMoatKeys)
+  }
+  return footprintFits(
+    origin,
+    spec?.size ?? 1,
+    spec?.step ?? { q: 0, r: 0 },
+    occupied,
+    landCost,
+    spec?.ignore,
+  )
+}
+
 /**
  * Gold-preview steps toward `to`, truncated at remaining Speed — same rule as
  * World `movementSteps`. Occupied hexes are not landed on. A multi-hex
@@ -212,7 +248,8 @@ export function combatPathSteps(
   if (budget <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return []
   }
-  const enterCost = stackEnterCost(tileMap(tiles), kind, passableMoatKeys)
+  const tilesByKey = tileMap(tiles)
+  const enterCost = stackEnterCost(tilesByKey, kind, passableMoatKeys)
   const destKey = hexKey(to.q, to.r)
   const destOccupied = occupied.has(destKey)
   const blocked = new Set(occupied)
@@ -263,6 +300,16 @@ export function combatPathSteps(
     steps.push(hex)
     mp = spendMovement(mp, cost)
   }
+  while (steps.length > 0) {
+    const last = steps[steps.length - 1]
+    if (
+      last &&
+      landFits(last, tilesByKey, kind, occupied, spec, passableMoatKeys)
+    ) {
+      break
+    }
+    steps.pop()
+  }
   return steps
 }
 
@@ -280,13 +327,21 @@ export function combatReachable(
   passableMoatKeys?: ReadonlySet<string>,
   stopOnlyKeys?: ReadonlySet<string>,
 ): Map<string, Axial[]> {
-  const enterCost = stackEnterCost(tileMap(tiles), kind, passableMoatKeys)
+  const tilesByKey = tileMap(tiles)
+  const enterCost = stackEnterCost(tilesByKey, kind, passableMoatKeys)
   const paths = reachableWithin(from, budget, enterCost, occupied, stopOnlyKeys)
   const out = new Map<string, Axial[]>()
   out.set(hexKey(from.q, from.r), [])
   for (const [key, path] of paths) {
     const steps = path.slice(1)
     if (steps.some((hex) => !standFits(hex, enterCost, occupied, spec))) {
+      continue
+    }
+    const dest = steps[steps.length - 1]
+    if (
+      dest &&
+      !landFits(dest, tilesByKey, kind, occupied, spec, passableMoatKeys)
+    ) {
       continue
     }
     out.set(key, steps)
@@ -304,14 +359,25 @@ export function canCombatStep(
   if (unitIsStationary(unit) || unit?.speed == null) {
     return false
   }
+  if ((stackMoveSpeed(stack, catalog) ?? 0) <= 0) {
+    return false
+  }
   const kind = moveKindForUnit(unit, catalog)
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
   const passable = openBridgeMoatKeys(battle, catalog, tiles)
-  const enterCost = stackEnterCost(tileMap(tiles), kind, passable)
   const spec = footprintSpecFor(stack, catalog)
-  return neighborHexes({ q: stack.q, r: stack.r }).some((next) =>
-    standFits(next, enterCost, occupied, spec),
+  const from = { q: stack.q, r: stack.r }
+  const reach = combatReachable(
+    from,
+    stackMoveSpeed(stack, catalog) ?? 0,
+    tiles,
+    kind,
+    occupied,
+    spec,
+    passable,
+    stopOnlyForMover(battle, catalog, tiles, kind),
   )
+  return reach.size > 1
 }
 
 export function movementLogLine(
