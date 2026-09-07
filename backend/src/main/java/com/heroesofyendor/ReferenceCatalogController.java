@@ -49,6 +49,8 @@ public class ReferenceCatalogController {
         body.put("player_color", decodeRows(referenceData.rows("player_color"), resourceNameToId));
         body.put("terrain_type", decodeRows(referenceData.rows("terrain_type"), resourceNameToId));
         body.put("app_config", decodeRows(referenceData.rows("app_config"), resourceNameToId));
+        body.put("ai_arch", decodeRows(referenceData.rows("ai_arch"), resourceNameToId));
+        body.put("ai_arch_weight", decodeRows(referenceData.rows("ai_arch_weight"), resourceNameToId));
         body.put("levels", decodeRows(referenceData.rows("levels"), resourceNameToId));
         body.put("hero_levels", decodeRows(referenceData.rows("hero_levels"), resourceNameToId));
         return body;

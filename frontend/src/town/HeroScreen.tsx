@@ -2,10 +2,13 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatResourceLine, RESOURCES } from '../hex/resources'
 import { humanPlayer, walletFromSession } from '../session/accessors'
 import { getSession, subscribe } from '../session/store'
+import { ARMY_STACK_SLOTS } from '../session/types'
 import { getCachedCatalog, formatHeroLevelLine, heroEffectiveStats, heroTypeName, subscribeCatalog } from './catalog'
 import { classDisciplines } from './libraryRules'
 import { HeroAbilitiesPanel } from './HeroAbilitiesPanel'
 import { ReservedCorner } from './ReservedCorner'
+import { ArmyRow } from './ArmyRow'
+import { stackView } from './unitStack'
 import {
   GENERIC_EMPTY_ART_FILENAME,
   heroPortraitUrl,
@@ -126,7 +129,20 @@ export function HeroScreen({
   }, [scrollsOpen])
 
   const ownedIds = player?.hero_ids ?? []
-  const portraitSlots = Array.from({ length: 14 }, (_, index) => ownedIds[index] ?? null)
+  const otherHeroes = ownedIds
+    .filter((id) => id !== heroId)
+    .slice(0, 7)
+    .map((id) => session.heroes.find((row) => row.id === id) ?? null)
+  while (otherHeroes.length < 7) {
+    otherHeroes.push(null)
+  }
+  const armySlots = [...(hero?.army.slots_1_to_6 ?? [])]
+  while (armySlots.length < ARMY_STACK_SLOTS) {
+    armySlots.push(null)
+  }
+  const armyStacks = armySlots.slice(0, ARMY_STACK_SLOTS).map((id) =>
+    stackView(session, id, catalog),
+  )
   const typeName = catalog ? heroTypeName(catalog, hero?.class_id ?? null) : ''
   const abilitiesTitle = typeName ? `${typeName} Abilities` : 'Abilities'
   const level = hero?.current_level ?? 1
@@ -221,42 +237,40 @@ export function HeroScreen({
           onTown={() => onCycleTown?.()}
           onScrolls={() => setScrollsOpen(true)}
         />
-        <div className="town-army-rows" aria-label="Owned heroes">
-          {[0, 1].map((row) => (
-            <div key={row} className="town-army-row">
-              {portraitSlots.slice(row * 7, row * 7 + 7).map((id, col) => {
-                if (!id) {
-                  return (
-                    <div
-                      key={`empty-${row}-${col}`}
-                      className="town-army-box town-army-portrait"
-                    />
-                  )
-                }
-                const other = session.heroes.find((rowHero) => rowHero.id === id)
-                const selected = id === heroId
+        <div className="town-army-rows" aria-label="Hero roster and army">
+          <div className="town-army-row" aria-label="Other heroes">
+            {otherHeroes.map((other, col) => {
+              if (!other) {
                 return (
-                  <button
-                    key={id}
-                    type="button"
-                    className={
-                      selected
-                        ? 'town-army-box town-army-portrait active'
-                        : 'town-army-box town-army-portrait'
-                    }
-                    aria-label={other?.name ?? 'Hero'}
-                    aria-current={selected ? 'true' : undefined}
-                    onClick={() => onSelectHero(id)}
-                  >
-                    <Face
-                      filename={other?.image_path ?? null}
-                      label={other?.name ?? 'Hero'}
-                    />
-                  </button>
+                  <div
+                    key={`empty-roster-${col}`}
+                    className="town-army-box town-army-portrait"
+                  />
                 )
-              })}
-            </div>
-          ))}
+              }
+              return (
+                <button
+                  key={other.id}
+                  type="button"
+                  className="town-army-box town-army-portrait"
+                  aria-label={other.name}
+                  onClick={() => onSelectHero(other.id)}
+                >
+                  <Face
+                    filename={other.image_path ?? null}
+                    label={other.name}
+                  />
+                </button>
+              )
+            })}
+          </div>
+          <ArmyRow
+            row="hero"
+            heroId={heroId}
+            portraitLabel={hero?.name ?? 'Hero'}
+            portraitFilename={hero?.image_path ?? null}
+            armyStacks={armyStacks}
+          />
         </div>
       </div>
       {scrollsOpen ? (

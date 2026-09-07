@@ -12,10 +12,9 @@ import {
   walletFromSession,
 } from '../session/accessors'
 import { getSession, subscribe, updateSession } from '../session/store'
-import { getCachedCatalog, abilityTooltip, subscribeCatalog } from './catalog'
+import { getCachedCatalog, abilityTooltip, libraryGoldCost, subscribeCatalog } from './catalog'
 import { AbilityTip } from './AbilityTip'
 import {
-  LIBRARY_GOLD_COST,
   LIBRARY_TIERS,
   abilityById,
   classDisciplines,
@@ -168,7 +167,7 @@ export function Library({ townId, slotNum, onClose }: LibraryProps) {
                           catalog,
                           discipline.id,
                         )
-                        const cost = LIBRARY_GOLD_COST[level] ?? 0
+                        const cost = libraryGoldCost(catalog, level)
                         const lockedTier = kind === 'unopened' && level > 1
                         const label = lockedTier
                           ? `Upgrade ${buildingName} to access ${

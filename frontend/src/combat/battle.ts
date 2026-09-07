@@ -1,7 +1,7 @@
 import type { GameSession, Hero, Town } from '../session/types'
 import { NECROPOLIS_TOWN_TYPE_ID, slotFromPlayerId } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { retaliationCharges, unitById } from '../town/catalog'
+import { dummyArmyQty, retaliationCharges, unitById } from '../town/catalog'
 import { stacksWithoutOverlap } from './occupancy'
 import { siegeStructureStacks } from './siege'
 import { tickRoundConditions, type ConditionExtra } from './condition'
@@ -471,6 +471,19 @@ function siegeDefenderSlots(
   return heroSlots ?? garrison
 }
 
+/** True when this siege fights the town garrison, not a visiting hero's army. */
+export function defenderArmyIsGarrison(
+  session: GameSession,
+  town: Town,
+  attackerId: string,
+): boolean {
+  const hero = defendingHero(session, town, attackerId)
+  if (hasLivingStacks(session, hero?.army.slots_1_to_6)) {
+    return false
+  }
+  return hasLivingStacks(session, town.garrison.slots_1_to_6)
+}
+
 function stacksForSide(
   session: GameSession,
   catalog: ReferenceCatalog,
@@ -507,14 +520,15 @@ function stacksForSide(
       catalog,
       flavorHero,
     )
+    const qty = dummyArmyQty(catalog)
     return {
       id: `combat-${side}-${start.slot}`,
       side,
       slot: start.slot,
       unitId: unit.id,
-      qty: 16,
+      qty,
       topHealth: fullHealth(catalog, unit.id),
-      startingQty: 16,
+      startingQty: qty,
       q: start.q,
       r: start.r,
       hasActedThisRound: false,
@@ -834,6 +848,7 @@ export function createBattle(
   random: () => number = Math.random,
   siege?: SiegeSetup | null,
   heroStarts?: { atk?: { q: number; r: number }; def?: { q: number; r: number } },
+  defenderMobId?: string | null,
 ): CombatBattle {
   const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
   const defender = defenderHeroId
@@ -841,6 +856,9 @@ export function createBattle(
     : undefined
   const town = siege
     ? session.towns.find((row) => row.id === siege.townId)
+    : undefined
+  const mob = defenderMobId
+    ? session.mobs.find((row) => row.id === defenderMobId)
     : undefined
   const portraits: CombatStack[] = []
   if (attacker && heroStarts?.atk) {
@@ -863,7 +881,7 @@ export function createBattle(
     : defender
   const defSlots = siege && town
     ? siegeDefenderSlots(session, town, attackerHeroId)
-    : defender?.army.slots_1_to_6
+    : (mob?.slots_1_to_6 ?? defender?.army.slots_1_to_6)
   const def = stacksForSide(
     session,
     catalog,
@@ -904,7 +922,7 @@ export function createBattle(
       attackerPlayer: playerNumber(attacker),
       defenderPlayer: defender
         ? playerNumber(defender)
-        : slotFromPlayerId(town?.player_id ?? '') ?? 1,
+        : slotFromPlayerId(town?.player_id ?? '') ?? (mob ? 2 : 1),
       siegeGate: gate,
       unitDeaths: {},
     },

@@ -7,12 +7,13 @@ import {
   nextUnitStackId,
   withEliminations,
 } from '../session/accessors'
+import { awardScaledKillXp, partsArmyValue, type XpKillPart, type XpValuePart } from '../session/xp'
 import { getSession, updateSession } from '../session/store'
-import { ARMY_STACK_SLOTS, type GameSession, type Hero } from '../session/types'
+import { ARMY_STACK_SLOTS, type GameSession, type Hero, type Mob, type Town } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
-import { isHeroStack } from './battle'
+import { defenderArmyIsGarrison, isHeroStack } from './battle'
 import { isCreatureArmyUnit } from './siege'
 
 export type OpeningStack = {
@@ -36,6 +37,7 @@ export type CombatSummary = {
   loserLosses: CombatLossLine[]
   winnerLosses: CombatLossLine[]
   winnerGains: CombatLossLine[]
+  xpLines: string[]
 }
 
 export function snapshotOpening(stacks: CombatStack[]): OpeningStack[] {
@@ -105,33 +107,76 @@ function lossesFor(
     .filter((line) => line.qty > 0)
 }
 
-function applyWinnerArmy(
-  session: GameSession,
-  hero: Hero,
-  winnerSide: CombatSide,
+function creatureOpening(
+  opening: OpeningStack[],
+  catalog: ReferenceCatalog,
+  side: CombatSide,
+): OpeningStack[] {
+  return opening.filter((row) => {
+    if (row.side !== side || row.qty <= 0) {
+      return false
+    }
+    return isCreatureArmyUnit(unitById(catalog, row.unitId))
+  })
+}
+
+function openingValueParts(
+  opening: OpeningStack[],
+  catalog: ReferenceCatalog,
+  side: CombatSide,
+): XpValuePart[] {
+  return creatureOpening(opening, catalog, side).map((row) => ({
+    unitId: row.unitId,
+    qty: row.qty,
+  }))
+}
+
+function openingKillParts(
+  opening: OpeningStack[],
   battle: CombatBattle,
-): GameSession {
+  catalog: ReferenceCatalog,
+  side: CombatSide,
+): XpKillPart[] {
+  return creatureOpening(opening, catalog, side)
+    .map((row) => {
+      const live = battle.stacks.find((stack) => stack.id === row.id)
+      const remaining = live?.qty ?? 0
+      return {
+        unitId: row.unitId,
+        killed: Math.max(0, row.qty - remaining),
+      }
+    })
+    .filter((part) => part.killed > 0)
+}
+
+function applyLiveArmySlots(
+  session: GameSession,
+  slots: Array<string | null>,
+  side: CombatSide,
+  battle: CombatBattle,
+): { units: GameSession['units']; slots: Array<string | null> } {
   const liveBySlot = new Map(
     battle.stacks
       .filter(
         (stack) =>
-          stack.side === winnerSide &&
+          stack.side === side &&
           !isHeroStack(stack) &&
-          stack.summonSeq == null,
+          stack.summonSeq == null &&
+          stack.qty > 0,
       )
       .map((stack) => [stack.slot, stack]),
   )
-  const slots = [...hero.army.slots_1_to_6]
+  const nextSlots = [...slots]
   const drop = new Set<string>()
   let units = session.units
-  for (let slot = 0; slot < slots.length; slot += 1) {
-    const unitId = slots[slot]
+  for (let slot = 0; slot < nextSlots.length; slot += 1) {
+    const unitId = nextSlots[slot]
     if (!unitId) {
       continue
     }
     const live = liveBySlot.get(slot)
     if (!live) {
-      slots[slot] = null
+      nextSlots[slot] = null
       drop.add(unitId)
       continue
     }
@@ -142,14 +187,86 @@ function applyWinnerArmy(
   if (drop.size > 0) {
     units = units.filter((row) => !drop.has(row.id))
   }
+  return { units, slots: nextSlots }
+}
+
+function applyWinnerArmy(
+  session: GameSession,
+  hero: Hero,
+  winnerSide: CombatSide,
+  battle: CombatBattle,
+): GameSession {
+  const applied = applyLiveArmySlots(
+    session,
+    hero.army.slots_1_to_6,
+    winnerSide,
+    battle,
+  )
   return {
     ...session,
-    units,
+    units: applied.units,
     heroes: session.heroes.map((row) =>
       row.id === hero.id
-        ? { ...row, army: { ...row.army, slots_1_to_6: slots } }
+        ? { ...row, army: { ...row.army, slots_1_to_6: applied.slots } }
         : row,
     ),
+  }
+}
+
+function applyGarrisonArmy(
+  session: GameSession,
+  town: Town,
+  side: CombatSide,
+  battle: CombatBattle,
+): GameSession {
+  const applied = applyLiveArmySlots(
+    session,
+    town.garrison.slots_1_to_6,
+    side,
+    battle,
+  )
+  return {
+    ...session,
+    units: applied.units,
+    towns: session.towns.map((row) =>
+      row.id === town.id
+        ? { ...row, garrison: { ...row.garrison, slots_1_to_6: applied.slots } }
+        : row,
+    ),
+  }
+}
+
+function applyMobArmy(
+  session: GameSession,
+  mob: Mob,
+  side: CombatSide,
+  battle: CombatBattle,
+): GameSession {
+  const applied = applyLiveArmySlots(
+    session,
+    mob.slots_1_to_6,
+    side,
+    battle,
+  )
+  return {
+    ...session,
+    units: applied.units,
+    mobs: session.mobs.map((row) =>
+      row.id === mob.id ? { ...row, slots_1_to_6: applied.slots } : row,
+    ),
+  }
+}
+
+function removeDefeatedMob(session: GameSession, mob: Mob): GameSession {
+  const drop = new Set(
+    mob.slots_1_to_6.filter((id): id is string => id != null && id !== ''),
+  )
+  return {
+    ...session,
+    units: session.units.filter(
+      (row) => !drop.has(row.id) && row.mob_id !== mob.id,
+    ),
+    mobs: session.mobs.filter((row) => row.id !== mob.id),
   }
 }
 
@@ -274,6 +391,7 @@ export function applyCombatOutcome(
   battle: CombatBattle,
   opening: OpeningStack[],
   siegeTownId?: string | null,
+  defenderMobId?: string | null,
 ): { session: GameSession; summary: CombatSummary } | null {
   const loserSide = defeatedSide(battle, catalog)
   if (!loserSide) {
@@ -291,19 +409,23 @@ export function applyCombatOutcome(
   const siegeTown = siegeTownId
     ? session.towns.find((row) => row.id === siegeTownId)
     : undefined
-  if (!loser && !(siegeTown && loserSide === 'def')) {
+  const mob = defenderMobId
+    ? session.mobs.find((row) => row.id === defenderMobId)
+    : undefined
+  if (!loser && !(siegeTown && loserSide === 'def') && !(mob && loserSide === 'def')) {
     return null
   }
   const summary: CombatSummary = {
     loserPlayer:
       loserSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
-    loserHeroName: loser?.name ?? siegeTown?.name ?? 'Town',
+    loserHeroName: loser?.name ?? siegeTown?.name ?? (mob ? 'Creatures' : 'Town'),
     winnerPlayer:
       winnerSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
-    winnerHeroName: winner?.name ?? siegeTown?.name ?? 'Town',
+    winnerHeroName: winner?.name ?? siegeTown?.name ?? (mob ? 'Creatures' : 'Town'),
     loserLosses: lossesFor(loserSide, opening, battle, catalog),
     winnerLosses: lossesFor(winnerSide, opening, battle, catalog),
     winnerGains: [],
+    xpLines: [],
   }
   let next = session
   if (winner) {
@@ -317,9 +439,36 @@ export function applyCombatOutcome(
     )
     next = persisted.session
     summary.winnerGains = persisted.gains
+    const ownValue = partsArmyValue(
+      catalog,
+      openingValueParts(opening, catalog, winnerSide),
+    )
+    const enemyValue = partsArmyValue(
+      catalog,
+      openingValueParts(opening, catalog, loserSide),
+    )
+    const xp = awardScaledKillXp(
+      next,
+      catalog,
+      winner.id,
+      openingKillParts(opening, battle, catalog, loserSide),
+      enemyValue,
+      ownValue,
+      'battle',
+    )
+    next = xp.session
+    summary.xpLines = xp.lines
   }
   if (loser) {
     next = removeDefeatedHero(next, loser)
+  }
+  if (siegeTown && defenderArmyIsGarrison(session, siegeTown, attackerHeroId)) {
+    next = applyGarrisonArmy(next, siegeTown, 'def', battle)
+  }
+  if (mob && loserSide === 'def') {
+    next = removeDefeatedMob(next, mob)
+  } else if (mob && winnerSide === 'def') {
+    next = applyMobArmy(next, mob, 'def', battle)
   }
   if (siegeTown && winnerSide === 'atk') {
     // Town stays on the map; only owner_id / player_id changes.
@@ -336,6 +485,7 @@ export function commitCombatOutcome(
   battle: CombatBattle,
   opening: OpeningStack[],
   siegeTownId?: string | null,
+  defenderMobId?: string | null,
 ): CombatSummary | null {
   let summary: CombatSummary | null = null
   const next = updateSession((current) => {
@@ -347,6 +497,7 @@ export function commitCombatOutcome(
       battle,
       opening,
       siegeTownId,
+      defenderMobId,
     )
     if (!applied) {
       return current

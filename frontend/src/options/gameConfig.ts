@@ -1,11 +1,27 @@
 import { MAP_SIZES, type MapSizeName } from '../hex/hexScale'
+import { DEFAULT_AI_ARCH_ID } from '../ai/types'
 
 export const PLAYER_COUNT_MIN = 1
 export const PLAYER_COUNT_MAX = 6
 
-/** Only Human is offered until AI exists. */
-export const PLAYER_CONTROLLER = 'human' as const
-export type PlayerController = typeof PLAYER_CONTROLLER
+/** `ai` / `ai_spectator` are DEV controllers, not a shipped multiplayer mode. */
+export type PlayerController = 'human' | 'ai' | 'ai_spectator'
+
+export const PLAYER_CONTROLLER_OPTIONS: Array<{
+  id: PlayerController
+  label: string
+}> = [
+  { id: 'human', label: 'Human' },
+  { id: 'ai_spectator', label: 'AI w/ Spectator (DEV)' },
+  { id: 'ai', label: 'AI' },
+]
+
+export function controllerLabel(controller: PlayerController): string {
+  return (
+    PLAYER_CONTROLLER_OPTIONS.find((row) => row.id === controller)?.label ??
+    controller
+  )
+}
 
 /** Catalog `hero_type.id`, or null for Random (unresolved until a later brief). */
 export type HeroTypePick = number | null
@@ -14,6 +30,7 @@ export type PlayerConfig = {
   slot: number
   controller: PlayerController
   heroTypeId: HeroTypePick
+  archId: number
 }
 
 export type GameConfig = {
@@ -22,14 +39,17 @@ export type GameConfig = {
   players: PlayerConfig[]
   /** Catalog `difficulty.id`. */
   difficultyId: number
+  /** When set, HexMap fetches this seed instead of a random map. */
+  seed?: number
 }
 
 export function defaultPlayerSlots(): PlayerConfig[] {
   return Array.from({ length: PLAYER_COUNT_MAX }, (_, index) => ({
     slot: index + 1,
-    controller: PLAYER_CONTROLLER,
-    // Temporary hotseat defaults: P1 Necromancer, P2 Death Knight.
+    controller: index === 0 ? 'human' : 'ai_spectator',
+    // Temporary defaults: P1 Necromancer, P2 Death Knight.
     heroTypeId: index === 0 ? 1 : index === 1 ? 2 : null,
+    archId: DEFAULT_AI_ARCH_ID,
   }))
 }
 
@@ -47,6 +67,7 @@ export function assembleGameConfig(input: {
   playerCount: number
   slots: PlayerConfig[]
   difficultyId: number
+  seed?: number
 }): GameConfig {
   const playerCount = Math.min(
     PLAYER_COUNT_MAX,
@@ -59,8 +80,9 @@ export function assembleGameConfig(input: {
       : 0
   const players = input.slots.slice(0, playerCount).map((slot, index) => ({
     slot: index + 1,
-    controller: PLAYER_CONTROLLER,
+    controller: index === 0 ? 'human' : slot.controller,
     heroTypeId: slot.heroTypeId,
+    archId: slot.archId > 0 ? slot.archId : DEFAULT_AI_ARCH_ID,
   }))
-  return { mapSize, playerCount, players, difficultyId }
+  return { mapSize, playerCount, players, difficultyId, seed: input.seed }
 }

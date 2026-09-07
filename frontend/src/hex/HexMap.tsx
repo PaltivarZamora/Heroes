@@ -1,38 +1,39 @@
 import { useEffect, useRef } from 'react'
-import { Application, Container, Graphics, Text } from 'pixi.js'
+import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
 import { clampCamera, PAN_SPEED_PX_PER_SEC } from './camera'
 import {
   CLICK_PAN_THRESHOLD_PX,
   MOVE_STEP_MS,
-  PLAYER_1_COLOR,
   findPassableStart,
   movementSteps,
   spendHeroInteract,
   spendMovement,
-  VISION_RANGE,
   type Axial,
 } from './hero'
 import { approachHex, hexDistance } from './pathfinding'
 import { type HeroHudState } from './debug'
 import {
+  formatAmount,
   NEUTRAL_OBJECT_COLOR,
-  PICKUP_AMOUNT,
   snapshotWallet,
   type ResourceWallet,
 } from './resources'
 import {
   addMaskedTerrainHex,
   loadAllTerrainTextures,
+  loadTextureUrl,
   pickTerrainVariantIndex,
 } from './terrainTextures'
 import { buildWorld, fetchTestGrid, getTile, getExploredHexes, isExplored, markExplored, restoreExplored, terrainFillColor } from './world'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 import { getSession, subscribe, updateSession } from '../session/store'
-import { ensureStartingHeroes, hydrateMapObjects } from '../session/create'
+import { hydrateMapObjects, ensureStartingHeroes } from '../session/create'
+import { findMobAt, mobLabel, mobLeadStack, seedWorldMobs } from '../session/mobs'
 import { HERO_ID } from '../session/types'
-import { fetchCatalog, getCachedCatalog, heroMovementPoints, ownerTint, subscribeCatalog } from '../town/catalog'
+import { fetchCatalog, getCachedCatalog, heroMovementPoints, ownerTint, pickupAmount, subscribeCatalog, unitById, visionRange } from '../town/catalog'
+import { unitPortraitUrl } from '../town/slotArt'
 import {
   activePlayer,
   claimMine,
@@ -55,6 +56,7 @@ type HexMapProps = {
   onTownWelcome: (townName: string, townId: string) => void
   onHeroMeet: (targetHeroId: string) => void
   onSiegeTown: (townId: string) => void
+  onMobMeet: (mobId: string) => void
 }
 
 type HeroState = HeroHudState
@@ -66,6 +68,28 @@ let applyHeroMarkerLabel: ((name: string) => void) | null = null
 let selectMapHero: ((id: string) => void) | null = null
 let selectedMapHeroId: string | null = null
 let applyHotseatView: (() => void) | null = null
+/** DEV: block click-to-move / arrow pan while an AI turn is running. */
+let mapInputLocked = false
+/** Spectator follows the mover; plain AI does not yank the camera. */
+let cameraFollowMoves = true
+let requestMapMoveFn:
+  | ((to: Axial, walkOnto?: Axial | null) => Promise<boolean>)
+  | null = null
+
+export function setMapInputLocked(locked: boolean): void {
+  mapInputLocked = locked
+}
+
+export function setMapCameraFollowMoves(follow: boolean): void {
+  cameraFollowMoves = follow
+}
+
+export function requestMapMove(
+  to: Axial,
+  walkOnto?: Axial | null,
+): Promise<boolean> {
+  return requestMapMoveFn?.(to, walkOnto) ?? Promise.resolve(false)
+}
 
 export function clearCachedGrid(): void {
   cachedGrid = null
@@ -170,6 +194,9 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     }
     add(node.position.q, node.position.r)
   }
+  for (const mob of session.mobs) {
+    add(mob.position.q, mob.position.r)
+  }
   return blocked
 }
 
@@ -189,6 +216,13 @@ function otherHeroAt(q: number, r: number, selfId: string) {
       hero.position.r === r &&
       heroVisibleOnMap(hero),
   )
+}
+
+function visibleMobAt(q: number, r: number) {
+  if (!isExplored(q, r)) {
+    return undefined
+  }
+  return findMobAt(getSession(), q, r)
 }
 
 function enemyOwnedTownAt(q: number, r: number, selfId: string) {
@@ -252,6 +286,7 @@ export function HexMap({
   onTownWelcome,
   onHeroMeet,
   onSiegeTown,
+  onMobMeet,
 }: HexMapProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const tilesRef = useRef<TestGridResponse | null>(null)
@@ -259,6 +294,7 @@ export function HexMap({
   const walletRef = useRef<ResourceWallet>(snapshotWallet(wallet))
   const onHeroMeetRef = useRef(onHeroMeet)
   const onSiegeTownRef = useRef(onSiegeTown)
+  const onMobMeetRef = useRef(onMobMeet)
 
   useEffect(() => {
     walletRef.current = snapshotWallet(wallet)
@@ -271,6 +307,10 @@ export function HexMap({
   useEffect(() => {
     onSiegeTownRef.current = onSiegeTown
   }, [onSiegeTown])
+
+  useEffect(() => {
+    onMobMeetRef.current = onMobMeet
+  }, [onMobMeet])
 
   useEffect(() => {
     applyHeroMarkerLabel?.(heroName)
@@ -413,6 +453,7 @@ export function HexMap({
         instance.destroy()
         return
       }
+      updateSession((current) => seedWorldMobs(current))
 
       const texturesByTerrain = await loadAllTerrainTextures(
         getCachedCatalog()?.terrain_type ?? [],
@@ -462,6 +503,18 @@ export function HexMap({
         string,
         { view: Container; label: Text; badge: Graphics }
       >()
+      const mobMarkers = new Map<
+        string,
+        {
+          view: Container
+          badge: Graphics
+          label: Text
+          sprite: Sprite
+          qty: Text
+        }
+      >()
+      const unitArtByUrl = new Map<string, Texture | null>()
+      const unitArtLoading = new Set<string>()
       world.addChild(heroLayer)
       instance.stage.addChild(world)
 
@@ -495,7 +548,7 @@ export function HexMap({
           obj.kind === 'town'
             ? townFill(town?.player_id)
             : mineOwned
-              ? PLAYER_1_COLOR
+              ? townFill(node?.player_id)
               : NEUTRAL_OBJECT_COLOR
         const labeledOwned = obj.kind === 'town' ? town?.player_id != null : mineOwned
         paintObjectBadge(objectBadge, fill)
@@ -537,19 +590,21 @@ export function HexMap({
           return
         }
         const obj = entry.data
+        const heroId = selectedMapHeroId ?? heroRef.current?.id
+        const hero = heroId
+          ? getSession().heroes.find((row) => row.id === heroId)
+          : undefined
+        const moverId = hero?.player_id
         if (obj.kind === 'town') {
           const existing = findTownAt(getSession(), q, r)
-          const heroId = selectedMapHeroId ?? heroRef.current?.id
-          const hero = heroId
-            ? getSession().heroes.find((row) => row.id === heroId)
-            : undefined
-          if (existing?.player_id && existing.player_id !== hero?.player_id) {
+          if (existing?.player_id && existing.player_id !== moverId) {
             return
           }
           updateSession((current) =>
             claimTown(current, q, r, {
               name: obj.name ?? undefined,
               townTypeId: mapObjectTownTypeId(obj),
+              ownerId: moverId,
             }),
           )
           const claimedTown = findTownAt(getSession(), q, r)
@@ -558,10 +613,12 @@ export function HexMap({
           if (!obj.claimed && claimedTown?.player_id != null) {
             obj.claimed = true
           }
-          onTownWelcome(
-            claimedTown?.name ?? (obj.name?.trim() || 'Town'),
-            claimedTown?.id ?? '',
-          )
+          if (!activePlayer(getSession())?.is_ai) {
+            onTownWelcome(
+              claimedTown?.name ?? (obj.name?.trim() || 'Town'),
+              claimedTown?.id ?? '',
+            )
+          }
           return
         }
 
@@ -578,7 +635,14 @@ export function HexMap({
           }
           obj.collected = true
           updateSession((current) =>
-            collectPickup(current, q, r, resourceId, PICKUP_AMOUNT),
+            collectPickup(
+              current,
+              q,
+              r,
+              resourceId,
+              pickupAmount(getCachedCatalog()),
+              moverId,
+            ),
           )
           walletRef.current = walletFromSession(getSession())
           objectLayer.removeChild(entry.view)
@@ -591,18 +655,19 @@ export function HexMap({
         if (obj.kind !== 'mine' && node?.kind !== 'mine') {
           return
         }
-        if (obj.claimed || node?.player_id != null) {
-          if (!obj.claimed && node?.player_id != null) {
+        if (node?.player_id != null && node.player_id === moverId) {
+          if (!obj.claimed) {
             obj.claimed = true
-            paintObjectBadge(entry.badge, PLAYER_1_COLOR)
+            paintObjectBadge(entry.badge, townFill(node.player_id))
             entry.label.style.fill = '#ffffff'
           }
           return
         }
         obj.claimed = true
-        updateSession((current) => claimMine(current, q, r, resourceId))
+        updateSession((current) => claimMine(current, q, r, resourceId, moverId))
+        const claimed = findNodeAt(getSession(), q, r)
         walletRef.current = walletFromSession(getSession())
-        paintObjectBadge(entry.badge, PLAYER_1_COLOR)
+        paintObjectBadge(entry.badge, townFill(claimed?.player_id ?? moverId))
         entry.label.style.fill = '#ffffff'
         emitResources()
       }
@@ -678,7 +743,7 @@ export function HexMap({
 
       const exploreAround = (origin: Axial) => {
         grid.forEach((hex) => {
-          if (hexDistance(origin, hex) <= VISION_RANGE) {
+          if (hexDistance(origin, hex) <= visionRange(getCachedCatalog())) {
             markExplored(hex.q, hex.r)
           }
         })
@@ -759,8 +824,104 @@ export function HexMap({
           heroMarkers.delete(id)
         }
       }
+      const placeMobMarkers = () => {
+        const session = getSession()
+        const catalog = getCachedCatalog()
+        const token = hexSize * 0.42 * 2
+        const seen = new Set<string>()
+        for (const mob of session.mobs) {
+          seen.add(mob.id)
+          const visible = isExplored(mob.position.q, mob.position.r)
+          const lead = mobLeadStack(session, mob)
+          const filename = lead
+            ? unitById(catalog, lead.unit_id)?.image_path?.trim() || null
+            : null
+          const artUrl = filename ? unitPortraitUrl(filename) : null
+          let texture: Texture | null = null
+          if (artUrl) {
+            if (unitArtByUrl.has(artUrl)) {
+              texture = unitArtByUrl.get(artUrl) ?? null
+            } else if (!unitArtLoading.has(artUrl)) {
+              unitArtLoading.add(artUrl)
+              void loadTextureUrl(artUrl).then((loaded) => {
+                unitArtByUrl.set(artUrl, loaded)
+                unitArtLoading.delete(artUrl)
+                if (!cancelled) {
+                  placeMobMarkers()
+                }
+              })
+            }
+          }
+          let entry = mobMarkers.get(mob.id)
+          if (!entry) {
+            const view = new Container()
+            const badge = new Graphics()
+            const sprite = new Sprite()
+            sprite.anchor.set(0.5)
+            const label = new Text({
+              text: mobLabel(session, catalog, mob),
+              style: {
+                fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+                fontSize: Math.max(9, Math.round(hexSize * 0.55)),
+                fontWeight: '700',
+                fill: 0xffffff,
+              },
+              anchor: 0.5,
+            })
+            const qty = new Text({
+              text: '',
+              style: {
+                fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+                fontSize: Math.max(8, Math.round(hexSize * 0.4)),
+                fontWeight: '700',
+                fill: 0xffffff,
+              },
+              anchor: { x: 1, y: 1 },
+            })
+            view.addChild(badge, sprite, label, qty)
+            heroLayer.addChild(view)
+            entry = { view, badge, label, sprite, qty }
+            mobMarkers.set(mob.id, entry)
+          } else {
+            entry.label.text = mobLabel(session, catalog, mob)
+          }
+          entry.view.visible = visible
+          if (!visible) {
+            continue
+          }
+          const hasArt = texture != null && texture.width >= 1 && texture.height >= 1
+          entry.sprite.visible = hasArt
+          entry.badge.visible = !hasArt
+          entry.label.visible = !hasArt
+          entry.qty.visible = hasArt
+          if (hasArt && texture) {
+            const scale = Math.min(token / texture.width, token / texture.height)
+            entry.sprite.texture = texture
+            entry.sprite.scale.set(scale)
+            entry.qty.text = formatAmount(lead?.qty ?? 0)
+            entry.qty.position.set(token / 2, token / 2)
+          } else {
+            entry.badge.clear()
+            entry.badge.circle(0, 0, hexSize * 0.42)
+            entry.badge.fill({ color: NEUTRAL_OBJECT_COLOR })
+            entry.badge.stroke({ width: 2, color: 0x111111 })
+          }
+          const hex = grid.getHex(mob.position) ?? grid.createHex(mob.position)
+          const center = hexCenter(hex, offsetX, offsetY)
+          entry.view.position.set(center.x, center.y)
+        }
+        for (const [id, entry] of mobMarkers) {
+          if (seen.has(id)) {
+            continue
+          }
+          heroLayer.removeChild(entry.view)
+          entry.view.destroy({ children: true })
+          mobMarkers.delete(id)
+        }
+      }
       applyHeroMarkerLabel = () => {
         placeHeroMarkers()
+        placeMobMarkers()
       }
 
       const panToHex = (q: number, r: number) => {
@@ -773,6 +934,9 @@ export function HexMap({
       panMapToHex = panToHex
 
       const followHero = () => {
+        if (!cameraFollowMoves) {
+          return
+        }
         const hero = heroRef.current
         if (!hero) {
           return
@@ -811,6 +975,7 @@ export function HexMap({
         panToHex(row.position.q, row.position.r)
         exploreAround(heroRef.current)
         placeHeroMarkers()
+        placeMobMarkers()
       }
       selectMapHero = switchToMapHero
       if (selectedMapHeroId && selectedMapHeroId !== heroRef.current?.id) {
@@ -837,29 +1002,42 @@ export function HexMap({
         selectedMapHeroId = null
         heroRef.current = null
         placeHeroMarkers()
+        placeMobMarkers()
       }
 
-      const paintOwnedTownColors = () => {
+      const paintOwnedMarkers = () => {
         const sessionNow = getSession()
         for (const entry of objectByKey.values()) {
-          if (entry.data.kind !== 'town') {
+          if (entry.data.kind === 'town') {
+            const town = findTownAt(sessionNow, entry.data.q, entry.data.r)
+            paintObjectBadge(entry.badge, townFill(town?.player_id))
+            entry.label.style.fill = town?.player_id != null ? '#ffffff' : '#111111'
             continue
           }
-          const town = findTownAt(sessionNow, entry.data.q, entry.data.r)
-          const fill = townFill(town?.player_id)
-          paintObjectBadge(entry.badge, fill)
-          entry.label.style.fill = town?.player_id != null ? '#ffffff' : '#111111'
+          if (entry.data.kind !== 'mine') {
+            continue
+          }
+          const node = findNodeAt(sessionNow, entry.data.q, entry.data.r)
+          const owned = node?.player_id != null
+          paintObjectBadge(
+            entry.badge,
+            owned ? townFill(node.player_id) : NEUTRAL_OBJECT_COLOR,
+          )
+          entry.label.style.fill = owned ? '#ffffff' : '#111111'
         }
       }
       placeHeroMarkers()
-      paintOwnedTownColors()
+      placeMobMarkers()
+      paintOwnedMarkers()
       const unsubHeroes = subscribe(() => {
         placeHeroMarkers()
-        paintOwnedTownColors()
+        placeMobMarkers()
+        paintOwnedMarkers()
       })
       const unsubCatalog = subscribeCatalog(() => {
         placeHeroMarkers()
-        paintOwnedTownColors()
+        placeMobMarkers()
+        paintOwnedMarkers()
       })
       signal.addEventListener('abort', unsubHeroes, { once: true })
       signal.addEventListener('abort', unsubCatalog, { once: true })
@@ -905,7 +1083,7 @@ export function HexMap({
 
       const updatePreview = (event: PointerEvent) => {
         const hero = heroRef.current
-        if (!hero || moving) {
+        if (!hero || moving || mapInputLocked) {
           return
         }
         const hex = hexFromPointer(event)
@@ -916,8 +1094,9 @@ export function HexMap({
         const occupant = otherHeroAt(hex.q, hex.r, hero.id)
         const town = findTownAt(getSession(), hex.q, hex.r)
         const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
+        const mob = visibleMobAt(hex.q, hex.r)
         const node = liveNodeAt(hex.q, hex.r)
-        const walkOnto = !occupant && !enemyTown && (town || node) ? hex : null
+        const walkOnto = !occupant && !enemyTown && !mob && (town || node) ? hex : null
         const hoverBlocked = obstacleHexes(hero, walkOnto)
         const hoverKey = `${hero.q},${hero.r},${hero.remaining}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|${[...hoverBlocked].sort().join(';')}`
         if (hoverKey === lastHoverKey) {
@@ -925,10 +1104,10 @@ export function HexMap({
         }
         lastHoverKey = hoverKey
         const dest =
-          occupant || enemyTown
+          occupant || enemyTown || mob
             ? approachHex(
                 hero,
-                occupant?.position ?? enemyTown!.position,
+                occupant?.position ?? enemyTown?.position ?? mob!.position,
                 hoverBlocked,
               )
             : hex
@@ -944,17 +1123,22 @@ export function HexMap({
         drawPreview(steps)
       }
 
-      const tryMoveTo = (to: Axial, after?: () => void, walkOnto?: Axial | null) => {
+      const tryMoveTo = (
+        to: Axial,
+        after?: () => void,
+        walkOnto?: Axial | null,
+      ): Promise<boolean> => {
         const hero = heroRef.current
         if (!hero || moving) {
-          return
+          return Promise.resolve(false)
         }
         if (to.q === hero.q && to.r === hero.r) {
+          resolveHex(to.q, to.r)
           after?.()
-          return
+          return Promise.resolve(true)
         }
         if (hero.remaining <= 1e-9) {
-          return
+          return Promise.resolve(false)
         }
         const steps = movementSteps(
           grid,
@@ -964,61 +1148,68 @@ export function HexMap({
           obstacleHexes(hero, walkOnto),
         )
         if (steps.length === 0) {
-          return
+          return Promise.resolve(false)
         }
         const gen = ++moveGen
         moving = true
         clearPreview()
-        void (async () => {
-          for (const hex of steps) {
-            if (signal.aborted || gen !== moveGen || !heroRef.current) {
-              break
+        return new Promise((resolve) => {
+          void (async () => {
+            let finished = false
+            for (const hex of steps) {
+              if (signal.aborted || gen !== moveGen || !heroRef.current) {
+                break
+              }
+              heroRef.current.q = hex.q
+              heroRef.current.r = hex.r
+              const cost = getTile(hex.q, hex.r)?.movementCostMultiplier
+              if (cost == null) {
+                break
+              }
+              heroRef.current.remaining = spendMovement(
+                heroRef.current.remaining,
+                cost,
+              )
+              onHeroState({
+                id: heroRef.current.id,
+                q: heroRef.current.q,
+                r: heroRef.current.r,
+                remaining: heroRef.current.remaining,
+              })
+              const moved = heroRef.current
+              if (!moved) {
+                break
+              }
+              updateSession((current) =>
+                syncHero(
+                  current,
+                  { q: moved.q, r: moved.r },
+                  moved.remaining,
+                  moved.id,
+                ),
+              )
+              placeHeroMarkers()
+              placeMobMarkers()
+              exploreAround(heroRef.current)
+              resolveHex(heroRef.current.q, heroRef.current.r)
+              followHero()
+              await sleep(MOVE_STEP_MS, signal)
             }
-            heroRef.current.q = hex.q
-            heroRef.current.r = hex.r
-            const cost = getTile(hex.q, hex.r)?.movementCostMultiplier
-            if (cost == null) {
-              break
+            if (gen === moveGen) {
+              moving = false
+              after?.()
+              finished = true
             }
-            heroRef.current.remaining = spendMovement(
-              heroRef.current.remaining,
-              cost,
-            )
-            onHeroState({
-              id: heroRef.current.id,
-              q: heroRef.current.q,
-              r: heroRef.current.r,
-              remaining: heroRef.current.remaining,
-            })
-            const moved = heroRef.current
-            if (!moved) {
-              break
-            }
-            updateSession((current) =>
-              syncHero(
-                current,
-                { q: moved.q, r: moved.r },
-                moved.remaining,
-                moved.id,
-              ),
-            )
-            placeHeroMarkers()
-            exploreAround(heroRef.current)
-            resolveHex(heroRef.current.q, heroRef.current.r)
-            followHero()
-            await sleep(MOVE_STEP_MS, signal)
-          }
-          if (gen === moveGen) {
-            moving = false
-            after?.()
-          }
-        })()
+            resolve(finished)
+          })()
+        })
       }
+      requestMapMoveFn = (to, walkOnto) => tryMoveTo(to, undefined, walkOnto)
 
       canvas.addEventListener(
         'pointerdown',
         (event) => {
-          if (event.button !== 0) {
+          if (event.button !== 0 || mapInputLocked) {
             return
           }
           pointerDown = true
@@ -1066,7 +1257,7 @@ export function HexMap({
         const wasDragging = dragging
         dragging = false
         host.classList.remove('is-panning')
-        if (wasDragging || moving || event.button !== 0) {
+        if (wasDragging || moving || event.button !== 0 || mapInputLocked) {
           return
         }
         const hex = hexFromPointer(event)
@@ -1167,6 +1358,45 @@ export function HexMap({
           tryMoveTo(dest, siege)
           return
         }
+        const mob = visibleMobAt(hex.q, hex.r)
+        if (mob) {
+          const fight = () => {
+            const mover = heroRef.current
+            const live = findMobAt(getSession(), mob.position.q, mob.position.r)
+            if (!mover || !live) {
+              return
+            }
+            if (hexDistance(mover, live.position) > 1) {
+              return
+            }
+            mover.remaining = spendHeroInteract(mover.remaining)
+            onHeroState({
+              id: mover.id,
+              q: mover.q,
+              r: mover.r,
+              remaining: mover.remaining,
+            })
+            updateSession((current) =>
+              syncHero(
+                current,
+                { q: mover.q, r: mover.r },
+                mover.remaining,
+                mover.id,
+              ),
+            )
+            onMobMeetRef.current(live.id)
+          }
+          if (hexDistance(hero, mob.position) <= 1) {
+            fight()
+            return
+          }
+          const dest = approachHex(hero, mob.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          tryMoveTo(dest, fight)
+          return
+        }
         const town = findTownAt(getSession(), hex.q, hex.r)
         if (town) {
           if (hero.q === town.position.q && hero.r === town.position.r) {
@@ -1203,7 +1433,7 @@ export function HexMap({
       window.addEventListener(
         'keydown',
         (event) => {
-          if (!isArrow(event.key) || moving) {
+          if (!isArrow(event.key) || moving || mapInputLocked) {
             return
           }
           event.preventDefault()
@@ -1220,7 +1450,7 @@ export function HexMap({
       )
 
       instance.ticker.add((ticker) => {
-        if (moving) {
+        if (moving || mapInputLocked) {
           return
         }
         const dt = ticker.deltaMS / 1000
@@ -1266,6 +1496,7 @@ export function HexMap({
       applyHeroMarkerLabel = null
       selectMapHero = null
       applyHotseatView = null
+      requestMapMoveFn = null
       abort.abort()
       app?.destroy()
     }

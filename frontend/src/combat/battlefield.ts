@@ -180,8 +180,8 @@ export function combatEncounterSeed(
   )
 }
 
-const BARRIER_COUNT_MIN = 10
-const BARRIER_COUNT_MAX = 15
+const BARRIER_COUNT_MIN = 5
+const BARRIER_COUNT_MAX = 8
 
 function u32(n: number): number {
   return n >>> 0
@@ -197,7 +197,7 @@ function barrierRand(seed: number, n: number): number {
 }
 
 /**
- * Overlay 10–15 Barrier hexes after terrain is assigned. Skips army
+ * Overlay 5–8 Barrier hexes after terrain is assigned. Skips army
  * placement columns so starting stacks are never boxed in.
  */
 export function applyCombatBarriers(

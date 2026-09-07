@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { HexMap, clearCachedGrid, getSelectedMapHeroId, selectHeroOnMap, syncActivePlayerView } from './hex/HexMap'
+import { HexMap, clearCachedGrid, getSelectedMapHeroId, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView } from './hex/HexMap'
 import {
+  formatDebugSections,
   formatDebugText,
   type DataStatus,
   type HeroHudState,
 } from './hex/debug'
+import { DebugCopyPanel } from './hex/DebugCopyPanel'
 import { formatMovementPoints, HERO_MARKER_LABEL } from './hex/hero'
 import {
   DEFAULT_HEX_SCALE,
@@ -18,7 +20,7 @@ import {
   RESOURCES,
   type ResourceWallet,
 } from './hex/resources'
-import { calendarRolloverTitle, formatCalendar } from './hex/calendar'
+import { calendarRolloverTitle, calendarDayNumber, formatCalendar } from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
 import { FriendlyTrade } from './town/FriendlyTrade'
@@ -29,8 +31,10 @@ import type { GameConfig } from './options/gameConfig'
 import { getExploredHexes } from './hex/world'
 import { getSession, setSession, subscribe, updateSession } from './session/store'
 import { createSessionFromConfig } from './session/create'
+import { resolveMobPreBattle } from './session/mobEncounter'
 import {
   assignHeroesFromPool,
+  activePlayer,
   endTurn,
   findTownAt,
   findTownById,
@@ -41,6 +45,10 @@ import {
   visitingHeroId,
   walletFromSession,
 } from './session/accessors'
+import { clearAiTraces, getAiTraceBlocks, subscribeAiTraces } from './ai/trace'
+import { decideAndApplyHeroTrade } from './ai/armyAlloc'
+import { runAiTurn } from './ai/turn'
+import type { WorldAttackTarget } from './ai/worldMove'
 import './App.css'
 
 function isEditableKeyTarget(target: EventTarget | null): boolean {
@@ -125,14 +133,20 @@ function App() {
     attackerHeroId: string
     defenderHeroId: string | null
     siegeTownId?: string
+    defenderMobId?: string
   } | null>(null)
   const [dateNotice, setDateNotice] = useState<{
     title: string
     date: string
+    lines?: string[]
   } | null>(null)
+  const combatWaitRef = useRef<(() => void) | null>(null)
   const lastTownRef = useRef<{ id: string; name: string } | null>(null)
   const [mapEpoch, setMapEpoch] = useState(0)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
+  const [aiPhase, setAiPhase] = useState<'idle' | 'running' | 'review'>('idle')
+  const aiRanKeyRef = useRef('')
+  const aiTraces = useSyncExternalStore(subscribeAiTraces, getAiTraceBlocks)
   const calendar = session.game.calendar
   const onTownWelcome = useCallback((townName: string, townId: string) => {
     setTrade(null)
@@ -153,6 +167,13 @@ function App() {
     }
     setWelcomeTown(null)
     if (self.player_id === other.player_id) {
+      const owner = current.players.find((row) => row.id === self.player_id)
+      if (owner?.is_ai) {
+        setCombat(null)
+        setTrade(null)
+        decideAndApplyHeroTrade(owner, self, other)
+        return
+      }
       setCombat(null)
       setTrade({ leftHeroId: self.id, rightHeroId: other.id })
       return
@@ -195,11 +216,57 @@ function App() {
       siegeTownId: townId,
     })
   }, [])
+  const beginMobEncounter = useCallback((mobId: string): boolean => {
+    const current = getSession()
+    const selfId = getSelectedMapHeroId()
+    const self = selfId
+      ? current.heroes.find((row) => row.id === selfId)
+      : undefined
+    const mob = current.mobs.find((row) => row.id === mobId)
+    if (!self || !mob) {
+      return false
+    }
+    setWelcomeTown(null)
+    setTrade(null)
+    setHeroScreen(false)
+    const catalog = getCachedCatalog()
+    if (catalog) {
+      const result = resolveMobPreBattle(current, catalog, self, mob)
+      if (result.kind !== 'fight') {
+        updateSession(() => result.session)
+        setCombat(null)
+        setDateNotice({
+          title: result.kind === 'surrender' ? 'Surrender' : 'Fled',
+          date:
+            result.kind === 'surrender'
+              ? 'The creatures join your army.'
+              : 'The creatures flee.',
+          lines: result.kind === 'flee' ? result.xpLines : undefined,
+        })
+        return false
+      }
+    }
+    setCombat({
+      attackerHeroId: self.id,
+      defenderHeroId: null,
+      defenderMobId: mob.id,
+    })
+    return true
+  }, [])
+  const onMobMeet = useCallback((mobId: string) => {
+    beginMobEncounter(mobId)
+  }, [beginMobEncounter])
+  const closeCombat = useCallback(() => {
+    setCombat(null)
+    const done = combatWaitRef.current
+    combatWaitRef.current = null
+    done?.()
+  }, [])
   const onEndTurn = useCallback(() => {
     setWelcomeTown(null)
     setHeroScreen(false)
     setTrade(null)
-    setCombat(null)
+    closeCombat()
     const previous = getSession().game.calendar
     updateSession((current) =>
       endTurn(persistActiveExplored(current, getExploredHexes())),
@@ -210,7 +277,7 @@ function App() {
     if (title) {
       setDateNotice({ title, date: formatCalendar(next) })
     }
-  }, [])
+  }, [closeCombat])
   const onStartGame = useCallback((config: GameConfig) => {
     void (async () => {
       try {
@@ -221,9 +288,14 @@ function App() {
       setWelcomeTown(null)
       setHeroScreen(false)
       setTrade(null)
-      setCombat(null)
+      closeCombat()
       setDateNotice(null)
       lastTownRef.current = null
+      clearAiTraces()
+      aiRanKeyRef.current = ''
+      setAiPhase('idle')
+      setMapInputLocked(false)
+      setMapCameraFollowMoves(true)
       clearCachedGrid()
       setSession(createSessionFromConfig(config))
       const catalog = getCachedCatalog()
@@ -234,7 +306,7 @@ function App() {
       }
       setMapEpoch((n) => n + 1)
     })()
-  }, [])
+  }, [closeCombat])
   const adoptHero = useCallback((id: string) => {
     const row = getSession().heroes.find((hero) => hero.id === id)
     if (!row) {
@@ -270,6 +342,9 @@ function App() {
   }, [welcomeTown])
 
   const cycleHero = useCallback((reverse = false) => {
+    if (aiPhase === 'running') {
+      return
+    }
     const current = getSession()
     const player = humanPlayer(current)
     if (!player) {
@@ -292,7 +367,7 @@ function App() {
       return
     }
     adoptHero(heroId)
-  }, [adoptHero, hero?.id])
+  }, [adoptHero, hero?.id, aiPhase])
 
   const openHeroScreen = useCallback((heroId?: string | null) => {
     if (heroId) {
@@ -300,9 +375,9 @@ function App() {
     }
     setWelcomeTown(null)
     setTrade(null)
-    setCombat(null)
+    closeCombat()
     setHeroScreen(true)
-  }, [adoptHero])
+  }, [adoptHero, closeCombat])
 
   const openTownScreen = useCallback(() => {
     const current = getSession()
@@ -355,7 +430,7 @@ function App() {
             return
           }
           event.preventDefault()
-          setCombat(null)
+          closeCombat()
           return
         }
         if (trade) {
@@ -394,13 +469,22 @@ function App() {
       }
 
       if (event.key === 'Enter') {
-        if (inOptions || editable) {
+        if (inOptions || editable || aiPhase !== 'idle') {
           return
         }
         event.preventDefault()
         if (heroScreen || welcomeTown || trade || combat || dateNotice) {
           return
         }
+        onEndTurn()
+        return
+      }
+
+      if (event.key.toLowerCase() === 'e') {
+        if (inOptions || editable || combat || aiPhase === 'running') {
+          return
+        }
+        event.preventDefault()
         onEndTurn()
         return
       }
@@ -436,6 +520,8 @@ function App() {
     openTownScreen,
     trade,
     welcomeTown,
+    aiPhase,
+    closeCombat,
   ])
 
   useEffect(() => {
@@ -451,6 +537,86 @@ function App() {
   useEffect(() => {
     syncActivePlayerView()
   }, [session.activePlayerIndex])
+
+  const calendarDay = calendarDayNumber(session.game.calendar)
+  useEffect(() => {
+    const player = activePlayer(getSession())
+    const key = `${calendarDay}-${getSession().activePlayerIndex}`
+    if (!player?.is_ai) {
+      setMapInputLocked(false)
+      setMapCameraFollowMoves(true)
+      setAiPhase('idle')
+      return
+    }
+    if (combat) {
+      return
+    }
+    if (aiRanKeyRef.current === key) {
+      return
+    }
+    const mode = player.ai_spectator ? 'ai_spectator' : 'ai'
+    setMapInputLocked(true)
+    setMapCameraFollowMoves(mode === 'ai_spectator')
+    setAiPhase('running')
+    let cancelled = false
+    void (async () => {
+      await Promise.resolve()
+      if (cancelled) {
+        return
+      }
+      if (aiRanKeyRef.current === key) {
+        return
+      }
+      aiRanKeyRef.current = key
+      try {
+        await runAiTurn(mode, {
+          engageWorldAttack: async (heroId, target: WorldAttackTarget) => {
+            selectHeroOnMap(heroId)
+            const wait = new Promise<void>((resolve) => {
+              combatWaitRef.current = resolve
+            })
+            if (target.type === 'mob') {
+              const opened = beginMobEncounter(target.mobId)
+              if (!opened) {
+                combatWaitRef.current = null
+                return
+              }
+              await wait
+              return
+            }
+            if (target.type === 'hero') {
+              onHeroMeet(target.heroId)
+            } else {
+              onSiegeTown(target.townId)
+            }
+            await wait
+          },
+        })
+      } catch (error) {
+        console.log('AI turn failed:', error)
+      }
+      if (cancelled) {
+        return
+      }
+      if (mode === 'ai_spectator') {
+        setAiPhase('review')
+        return
+      }
+      setAiPhase('idle')
+      onEndTurn()
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    session.activePlayerIndex,
+    calendarDay,
+    mapEpoch,
+    onEndTurn,
+    beginMobEncounter,
+    onHeroMeet,
+    onSiegeTown,
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -507,12 +673,20 @@ function App() {
   )
   const resourceLines = formatResourceLines(wallet)
   const calendarLabel = formatCalendar(calendar)
+  const actor = activePlayer(session)
+  const turnKind = !actor
+    ? ''
+    : actor.is_ai
+      ? actor.ai_spectator
+        ? ' — AI spectator (DEV)'
+        : ' — AI'
+      : ''
   const hasActedToday = welcomeTown
     ? hasTownBuiltToday(session, welcomeTown.id)
     : false
   const heroName = selectedHero?.name ?? HERO_MARKER_LABEL
 
-  const debugText = formatDebugText({
+  const debugSnapshot = {
     mapSize: mapLabel,
     hexSize: `${hexScale} (${hexSize})`,
     seed: seedLabel,
@@ -526,12 +700,27 @@ function App() {
       `Players: ${session.players.length}`,
       `Active Player Index: ${session.activePlayerIndex ?? 0}`,
       `Active Player: ${humanPlayer(session)?.id ?? 'none'}`,
+      `AI phase: ${aiPhase}`,
       ...session.players.map((player, index) => {
         const typeId = session.game.settings.hero_type_ids?.[index]
-        return `  ${index}: ${player.id} type=${typeId ?? 'random'} heroes=${player.hero_ids.length} towns=${player.town_ids.length} fog=${player.explored.length} elim=${player.eliminated === true}`
+        const control = player.is_ai
+          ? player.ai_spectator
+            ? 'ai_spectator'
+            : 'ai'
+          : 'human'
+        return `  ${index}: ${player.id} ${control} arch=${player.arch_id} type=${typeId ?? 'random'} heroes=${player.hero_ids.length} towns=${player.town_ids.length} fog=${player.explored.length} elim=${player.eliminated === true}`
       }),
     ],
-  })
+    traceLines:
+      aiTraces.length > 0
+        ? [
+            '--- AI traces (DEV) ---',
+            ...aiTraces.flatMap((block) => ['', ...block.split('\n')]),
+          ]
+        : [],
+  }
+  const debugText = formatDebugText(debugSnapshot)
+  const debugSections = formatDebugSections(debugSnapshot)
 
   const copyDebug = useCallback(() => {
     void navigator.clipboard.writeText(debugText).catch((error) => {
@@ -541,26 +730,6 @@ function App() {
 
   return (
     <main className="app">
-      <OptionsMenu
-        onLoaded={() => {
-          setWelcomeTown(null)
-          setHeroScreen(false)
-          setTrade(null)
-          setCombat(null)
-          setDateNotice(null)
-          lastTownRef.current = null
-          const catalog = getCachedCatalog()
-          if (catalog) {
-            updateSession((current) =>
-              assignHeroesFromPool(current, catalog.hero_pool),
-            )
-          }
-          setMapEpoch((n) => n + 1)
-        }}
-        onDataStatus={setDataStatus}
-        onCopyDebug={copyDebug}
-        onStartGame={onStartGame}
-      />
       {dataStatus && !dataStatus.ok ? (
         <div className="data-load-banner" role="alert">
           Data load error — check debug panel
@@ -571,27 +740,46 @@ function App() {
         <p className="calendar-readout">{calendarLabel}</p>
         <p className="turn-readout">
           Player {(session.activePlayerIndex ?? 0) + 1}
+          {turnKind}
+          {aiPhase === 'running' ? ' — moving…' : ''}
+          {aiPhase === 'review' ? ' — review, then End Turn' : ''}
         </p>
-        <button type="button" onClick={onEndTurn}>
+        <button
+          type="button"
+          onClick={onEndTurn}
+          disabled={aiPhase === 'running'}
+        >
           End Turn
         </button>
-        <div className="hex-scale-switch" role="group" aria-label="Hex scale">
-          {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (
-            <button
-              key={name}
-              type="button"
-              className={name === hexScale ? 'active' : undefined}
-              onClick={() => setHexScale(name)}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-        <div className="debug-copy">
-          <button type="button" onClick={copyDebug}>
-            Copy Debug
-          </button>
-          <pre className="debug-peek">{debugText}</pre>
+        <div className="hud-end">
+          <DebugCopyPanel onCopy={copyDebug} sections={debugSections} />
+          <OptionsMenu
+            hexScale={hexScale}
+            onHexScale={setHexScale}
+            onLoaded={() => {
+              setWelcomeTown(null)
+              setHeroScreen(false)
+              setTrade(null)
+              closeCombat()
+              setDateNotice(null)
+              lastTownRef.current = null
+              clearAiTraces()
+              aiRanKeyRef.current = ''
+              setAiPhase('idle')
+              setMapInputLocked(false)
+              setMapCameraFollowMoves(true)
+              const catalog = getCachedCatalog()
+              if (catalog) {
+                updateSession((current) =>
+                  assignHeroesFromPool(current, catalog.hero_pool),
+                )
+              }
+              setMapEpoch((n) => n + 1)
+            }}
+            onDataStatus={setDataStatus}
+            onCopyDebug={copyDebug}
+            onStartGame={onStartGame}
+          />
         </div>
         <p className="resource-debug">
           {RESOURCES.map((resource) => (
@@ -612,6 +800,7 @@ function App() {
         onTownWelcome={onTownWelcome}
         onHeroMeet={onHeroMeet}
         onSiegeTown={onSiegeTown}
+        onMobMeet={onMobMeet}
       />
       {dateNotice ? (
         <div
@@ -624,6 +813,9 @@ function App() {
           <div className="date-notice-card">
             <h1 id="date-notice-title">{dateNotice.title}</h1>
             <p>{dateNotice.date}</p>
+            {dateNotice.lines?.map((line, index) => (
+              <p key={`notice-${index}`}>{line}</p>
+            ))}
           </div>
         </div>
       ) : null}
@@ -632,7 +824,10 @@ function App() {
           attackerHeroId={combat.attackerHeroId}
           defenderHeroId={combat.defenderHeroId}
           siegeTownId={combat.siegeTownId}
-          onExit={() => setCombat(null)}
+          defenderMobId={combat.defenderMobId}
+          debugSections={debugSections}
+          onCopyDebug={copyDebug}
+          onExit={closeCombat}
         />
       ) : null}
       {trade ? (
@@ -657,6 +852,7 @@ function App() {
           selectedHeroId={selectedHero?.id ?? null}
           onOpenHero={openHeroScreen}
           onCycleTown={cycleTown}
+          readOnly={Boolean(actor?.is_ai)}
         />
       ) : null}
       {heroScreen && selectedHero ? (

@@ -95,6 +95,12 @@ export function forEachPassableHex(fn: (q: number, r: number) => void): void {
   }
 }
 
+export function forEachTile(fn: (q: number, r: number) => void): void {
+  for (const tile of tilesByCoord.values()) {
+    fn(tile.q, tile.r)
+  }
+}
+
 export function isExplored(q: number, r: number): boolean {
   return explored.has(coordKey(q, r))
 }

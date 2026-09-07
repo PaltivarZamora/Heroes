@@ -1,4 +1,4 @@
-import { getTile, isWalkable } from './world'
+import { getTile, isPassable, isWalkable } from './world'
 import type { Axial } from './hero'
 
 const AXIAL_NEIGHBORS: Axial[] = [
@@ -20,16 +20,25 @@ function key(q: number, r: number): string {
   return `${q},${r}`
 }
 
-/** Terrain/fog walkable, and not occupied by a map object this path. */
+/** Terrain walkable, and not occupied by a map object this path. */
 function isPathHexOpen(
   q: number,
   r: number,
   blocked?: ReadonlySet<string>,
+  ignoreFog = false,
 ): boolean {
-  if (!isWalkable(q, r)) {
+  if (ignoreFog ? !isPassable(q, r) : !isWalkable(q, r)) {
     return false
   }
   return !blocked?.has(key(q, r))
+}
+
+function terrainEnterCost(q: number, r: number): number | null {
+  const tile = getTile(q, r)
+  if (!tile || tile.blocked) {
+    return null
+  }
+  return tile.movementCostMultiplier
 }
 
 export function hexDistance(from: Axial, to: Axial): number {
@@ -180,31 +189,103 @@ export function findPathOnBoard(
  * `blocked` is other heroes, towns, and resource nodes for this path only —
  * not baked into terrain. Callers omit the destination when that hex is a
  * walk-onto target (town, mine, or pickup). Heroes are never omitted.
+ * Default stays in explored fog; pass `ignoreFog` for player hover/click.
  */
 export function findPath(
   from: Axial,
   to: Axial,
   blocked?: ReadonlySet<string>,
+  ignoreFog = false,
 ): Axial[] | null {
   if (from.q === to.q && from.r === to.r) {
     return [from]
   }
-  if (!isWalkable(from.q, from.r) || !isPathHexOpen(to.q, to.r, blocked)) {
+  const open = (q: number, r: number) => isPathHexOpen(q, r, blocked, ignoreFog)
+  if (!open(to.q, to.r)) {
     return null
   }
   return findPathOnBoard(
     from,
     to,
-    (q, r) => {
-      const tile = getTile(q, r)
-      if (!tile || tile.blocked) {
-        return null
-      }
-      return tile.movementCostMultiplier
-    },
+    terrainEnterCost,
     blocked,
-    (q, r) => isPathHexOpen(q, r, blocked),
+    (q, r) => (q === from.q && r === from.r) || open(q, r),
   )
+}
+
+/**
+ * Player hover/click: path through fog, or as close as passable terrain allows.
+ * AI still uses `findPath` (explored only).
+ */
+export function findPathToward(
+  from: Axial,
+  to: Axial,
+  blocked?: ReadonlySet<string>,
+): Axial[] | null {
+  const direct = findPath(from, to, blocked, true)
+  if (direct) {
+    return direct
+  }
+  const startKey = key(from.q, from.r)
+  const goalDist = hexDistance(from, to)
+  if (goalDist <= 0) {
+    return [from]
+  }
+  const cameFrom = new Map<string, Axial>()
+  const gScore = new Map<string, number>([[startKey, 0]])
+  const posByKey = new Map<string, Axial>([[startKey, from]])
+  const open = new Map<string, Axial>([[startKey, from]])
+  while (open.size > 0) {
+    let bestKey = ''
+    let bestG = Infinity
+    let current: Axial | undefined
+    for (const [openKey, node] of open) {
+      const g = gScore.get(openKey) ?? Infinity
+      if (g < bestG) {
+        bestG = g
+        bestKey = openKey
+        current = node
+      }
+    }
+    if (!current) {
+      break
+    }
+    open.delete(bestKey)
+    for (const next of neighborHexes(current)) {
+      const nextKey = key(next.q, next.r)
+      if (blocked?.has(nextKey) && nextKey !== startKey) {
+        continue
+      }
+      const cost = terrainEnterCost(next.q, next.r)
+      if (cost == null) {
+        continue
+      }
+      const tentative = bestG + cost
+      if (tentative + 1e-9 >= (gScore.get(nextKey) ?? Infinity)) {
+        continue
+      }
+      cameFrom.set(nextKey, current)
+      gScore.set(nextKey, tentative)
+      posByKey.set(nextKey, next)
+      open.set(nextKey, next)
+    }
+  }
+  let best: Axial | null = null
+  let bestDist = goalDist
+  let bestCost = Infinity
+  for (const [hexKey, pos] of posByKey) {
+    if (hexKey === startKey) {
+      continue
+    }
+    const dist = hexDistance(pos, to)
+    const cost = gScore.get(hexKey) ?? Infinity
+    if (dist + 1e-9 < bestDist || (Math.abs(dist - bestDist) < 1e-9 && cost < bestCost)) {
+      bestDist = dist
+      bestCost = cost
+      best = pos
+    }
+  }
+  return best ? reconstruct(cameFrom, best) : null
 }
 
 function reconstruct(cameFrom: Map<string, Axial>, end: Axial): Axial[] {

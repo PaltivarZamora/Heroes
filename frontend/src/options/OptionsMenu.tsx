@@ -3,6 +3,7 @@ import { clearCachedGrid, getSelectedMapHeroId, setHeroMovementRemaining } from 
 import type { DataStatus } from '../hex/debug'
 import {
   createSave,
+  deleteSave,
   fetchSave,
   isGameSession,
   listSaves,
@@ -10,11 +11,22 @@ import {
 } from '../session/saves'
 import { getSession, setSession, updateSession } from '../session/store'
 import type { GameSession } from '../session/types'
-import { grantOpenChest, normalizeHeroProgress, restoreAllHeroMovement } from '../session/accessors'
+import {
+  grantHeroStartingArmy,
+  grantOpenChest,
+  grantAllClassAbilities,
+  heroArmyStackCount,
+  normalizeHeroProgress,
+  restoreAllHeroMovement,
+} from '../session/accessors'
 import { fetchCatalog, getCachedCatalog, heroMovementPoints, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
+import { aiTestGameConfig } from '../ai/scenario'
+import { archName } from '../ai/weights'
+import { addWorldMobs } from '../session/mobs'
 import { getExploredHexes } from '../hex/world'
+import { HEX_SCALES, type HexScaleName } from '../hex/hexScale'
 
 type Panel = 'new' | 'save' | 'load' | 'quit' | null
 
@@ -23,6 +35,8 @@ type OptionsMenuProps = {
   onDataStatus: (status: DataStatus) => void
   onCopyDebug: () => void
   onStartGame: (config: GameConfig) => void
+  hexScale: HexScaleName
+  onHexScale: (name: HexScaleName) => void
 }
 
 function withCurrentFog(session: GameSession): GameSession {
@@ -59,6 +73,12 @@ function withExploredDefaults(session: GameSession): GameSession {
         : 0,
     players: session.players.map((player) => ({
       ...player,
+      is_ai: player.is_ai === true,
+      ai_spectator: player.ai_spectator === true,
+      arch_id:
+        typeof player.arch_id === 'number' && player.arch_id > 0
+          ? player.arch_id
+          : 1,
       eliminated: player.eliminated === true,
       explored: Array.isArray(player.explored) ? player.explored : [],
     })),
@@ -73,6 +93,8 @@ function withExploredDefaults(session: GameSession): GameSession {
       used_abilities_today: Array.isArray(hero.used_abilities_today)
         ? hero.used_abilities_today
         : [],
+      arch_id:
+        typeof hero.arch_id === 'number' && hero.arch_id > 0 ? hero.arch_id : null,
     })),
     building_states: session.building_states.map((row) => ({
       ...row,
@@ -109,11 +131,33 @@ function errorMessage(error: unknown, fallback: string): string {
     : fallback
 }
 
+const FALLBACK_AI_ARCHES = [
+  { id: 1, name: 'Build' },
+  { id: 2, name: 'Explore' },
+  { id: 3, name: 'Aggressive' },
+  { id: 4, name: 'Defend' },
+] as const
+
+function aiArchRows() {
+  const rows = getCachedCatalog()?.ai_arch ?? []
+  if (rows.length > 0) {
+    return [...rows].sort((a, b) => a.id - b.id)
+  }
+  return FALLBACK_AI_ARCHES.map((row) => ({ id: row.id, name: row.name }))
+}
+
+function aiPlayerLabel(player: { id: string; arch_id: number }): string {
+  const slot = player.id.replace(/^player-/, '')
+  return `P${slot} (${archName(getCachedCatalog(), player.arch_id)})`
+}
+
 export function OptionsMenu({
   onLoaded,
   onDataStatus,
   onCopyDebug,
   onStartGame,
+  hexScale,
+  onHexScale,
 }: OptionsMenuProps) {
   const [expanded, setExpanded] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
@@ -151,6 +195,9 @@ export function OptionsMenu({
     setPanel(next)
     if (next === 'save') {
       setSaveName(defaultSaveName())
+      setSelectedId(null)
+      setSaves([])
+      setBusy(true)
     }
     if (next === 'load') {
       setSelectedId(null)
@@ -160,7 +207,7 @@ export function OptionsMenu({
   }
 
   useEffect(() => {
-    if (panel !== 'load') {
+    if (panel !== 'load' && panel !== 'save') {
       return
     }
     let cancelled = false
@@ -252,6 +299,24 @@ export function OptionsMenu({
     }
   }
 
+  const onDelete = async () => {
+    if (selectedId == null) {
+      setError('Select a saved game.')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await deleteSave(selectedId)
+      setSaves((rows) => rows.filter((row) => row.id !== selectedId))
+      setSelectedId(null)
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Could not delete that save'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const onQuitYes = () => {
     window.location.reload()
   }
@@ -296,6 +361,23 @@ export function OptionsMenu({
     setExpanded(false)
   }
 
+  const setAiPlayerArch = (playerId: string, archId: number, name: string) => {
+    updateSession((current) => ({
+      ...current,
+      players: current.players.map((player) =>
+        player.id === playerId && player.is_ai
+          ? { ...player, arch_id: archId }
+          : player,
+      ),
+    }))
+    setExpanded(false)
+    const slot = playerId.replace(/^player-/, '')
+    setNotice(`P${slot} archetype set to ${name}`)
+  }
+
+  const aiPlayers = getSession().players.filter((player) => player.is_ai)
+  const arches = aiArchRows()
+
   return (
     <div className="options-menu">
       <button
@@ -312,6 +394,16 @@ export function OptionsMenu({
           <button type="button" role="menuitem" onClick={() => openPanel('new')}>
             New Game
           </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setExpanded(false)
+              onStartGame(aiTestGameConfig())
+            }}
+          >
+            Load AI Test (DEV)
+          </button>
           <button type="button" role="menuitem" onClick={() => openPanel('save')}>
             Save
           </button>
@@ -321,6 +413,27 @@ export function OptionsMenu({
           <button type="button" role="menuitem" onClick={() => openPanel('quit')}>
             Quit
           </button>
+          <div className="options-flyout">
+            <button type="button" role="menuitem" aria-haspopup="true">
+              Grid Size
+            </button>
+            <div className="options-submenu" role="menu">
+              {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  role="menuitem"
+                  className={name === hexScale ? 'active' : undefined}
+                  onClick={() => {
+                    onHexScale(name)
+                    setExpanded(false)
+                  }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
           <button
             type="button"
             role="menuitem"
@@ -351,6 +464,136 @@ export function OptionsMenu({
           >
             Open Chest
           </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const session = getSession()
+              const selectedId = getSelectedMapHeroId()
+              const hero =
+                (selectedId
+                  ? session.heroes.find((row) => row.id === selectedId)
+                  : undefined) ?? session.heroes[0]
+              if (!hero) {
+                setNotice('No hero selected')
+                setExpanded(false)
+                return
+              }
+              if (hero.class_id == null) {
+                setNotice(`${hero.name} has no class — cannot roll starting units`)
+                setExpanded(false)
+                return
+              }
+              if (heroArmyStackCount(session, hero.id) > 0) {
+                setNotice(`${hero.name} already has units`)
+                setExpanded(false)
+                return
+              }
+              updateSession((current) => grantHeroStartingArmy(current, hero.id))
+              const after = getSession()
+              const added = heroArmyStackCount(after, hero.id)
+              setExpanded(false)
+              setNotice(
+                added > 0
+                  ? `Added starting units to ${hero.name}`
+                  : `No class-branch units found for ${hero.name}`,
+              )
+            }}
+          >
+            Add Starting Units
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const before = getSession().mobs.length
+              updateSession(addWorldMobs)
+              const added = getSession().mobs.length - before
+              setExpanded(false)
+              setNotice(
+                added > 0
+                  ? `Added ${added} world mob${added === 1 ? '' : 's'}`
+                  : 'No room (or catalog) to add world mobs',
+              )
+            }}
+          >
+            Add World Mobs to Current Map
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const catalog = getCachedCatalog()
+              if (!catalog) {
+                setExpanded(false)
+                setNotice('Catalog not loaded')
+                return
+              }
+              updateSession(grantAllClassAbilities)
+              setExpanded(false)
+              setNotice('Every hero learned all abilities from their two disciplines')
+            }}
+          >
+            Learn Everything
+          </button>
+          <div className="options-flyout">
+            <button type="button" role="menuitem" aria-haspopup="true">
+              Set AI Archetype
+            </button>
+            <div className="options-submenu" role="menu">
+              {aiPlayers.length === 0 ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setExpanded(false)
+                    setNotice('No AI players in this game')
+                  }}
+                >
+                  No AI players
+                </button>
+              ) : aiPlayers.length === 1 ? (
+                arches.map((arch) => (
+                  <button
+                    key={arch.id}
+                    type="button"
+                    role="menuitem"
+                    className={arch.id === aiPlayers[0].arch_id ? 'active' : undefined}
+                    onClick={() =>
+                      setAiPlayerArch(aiPlayers[0].id, arch.id, arch.name)
+                    }
+                  >
+                    {arch.name}
+                  </button>
+                ))
+              ) : (
+                aiPlayers.map((player) => (
+                  <div key={player.id} className="options-flyout">
+                    <button type="button" role="menuitem" aria-haspopup="true">
+                      {aiPlayerLabel(player)}
+                    </button>
+                    <div className="options-submenu" role="menu">
+                      {arches.map((arch) => (
+                        <button
+                          key={arch.id}
+                          type="button"
+                          role="menuitem"
+                          className={
+                            arch.id === player.arch_id ? 'active' : undefined
+                          }
+                          onClick={() =>
+                            setAiPlayerArch(player.id, arch.id, arch.name)
+                          }
+                        >
+                          {arch.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
           <button
             type="button"
             role="menuitem"
@@ -404,6 +647,33 @@ export function OptionsMenu({
                 disabled={busy}
               />
             </label>
+            {saves.some((row) => row.name === saveName.trim()) ? (
+              <p className="options-empty">Saving will overwrite the existing game with this name.</p>
+            ) : null}
+            {saves.length > 0 ? (
+              <ul className="options-save-list">
+                {saves.map((row) => (
+                  <li key={row.id}>
+                    <label>
+                      <input
+                        type="radio"
+                        name="saved-game-save"
+                        checked={selectedId === row.id}
+                        onChange={() => {
+                          setSelectedId(row.id)
+                          setSaveName(row.name)
+                        }}
+                        disabled={busy}
+                      />
+                      <span>
+                        <strong>{row.name}</strong>
+                        <em>{formatCreated(row.updatedAt ?? row.createdAt)}</em>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {error ? (
               <p className="options-error" role="alert">
                 {error}
@@ -412,6 +682,13 @@ export function OptionsMenu({
             <div className="options-actions">
               <button type="button" disabled={busy} onClick={() => void onSave()}>
                 {busy ? 'Saving…' : 'OK'}
+              </button>
+              <button
+                type="button"
+                disabled={busy || selectedId == null}
+                onClick={() => void onDelete()}
+              >
+                Delete
               </button>
               <button type="button" disabled={busy} onClick={closePanel}>
                 Cancel
@@ -441,7 +718,7 @@ export function OptionsMenu({
                       />
                       <span>
                         <strong>{row.name}</strong>
-                        <em>{formatCreated(row.createdAt)}</em>
+                        <em>{formatCreated(row.updatedAt ?? row.createdAt)}</em>
                       </span>
                     </label>
                   </li>
@@ -456,6 +733,13 @@ export function OptionsMenu({
             <div className="options-actions">
               <button type="button" disabled={busy} onClick={() => void onLoad()}>
                 {busy ? 'Loading…' : 'OK'}
+              </button>
+              <button
+                type="button"
+                disabled={busy || selectedId == null}
+                onClick={() => void onDelete()}
+              >
+                Delete
               </button>
               <button type="button" disabled={busy} onClick={closePanel}>
                 Cancel

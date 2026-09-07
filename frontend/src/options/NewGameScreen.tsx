@@ -16,8 +16,11 @@ import {
   defaultPlayerSlots,
   PLAYER_COUNT_MAX,
   PLAYER_COUNT_MIN,
+  PLAYER_CONTROLLER_OPTIONS,
+  controllerLabel,
   type GameConfig,
   type PlayerConfig,
+  type PlayerController,
 } from './gameConfig'
 
 type NewGameScreenProps = {
@@ -98,6 +101,15 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     )
   }
 
+  const setSlotController = (index: number, controller: PlayerController) => {
+    if (index === 0) {
+      return
+    }
+    setSlots((current) =>
+      current.map((slot, i) => (i === index ? { ...slot, controller } : slot)),
+    )
+  }
+
   const onStart = () => {
     const config = assembleGameConfig({
       mapSize,
@@ -138,7 +150,7 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
             </li>
             {assembled.players.map((player) => (
               <li key={player.slot}>
-                Player {player.slot} — Human —{' '}
+                Player {player.slot} — {controllerLabel(player.controller)} —{' '}
                 {heroLabel(player.heroTypeId, catalog)}
               </li>
             ))}
@@ -218,7 +230,25 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
               <span className="new-game-player-label">Player {slot.slot}</span>
               <label className="options-field">
                 Controller
-                <input value="Human" readOnly tabIndex={-1} />
+                {index === 0 ? (
+                  <input value="Human" readOnly tabIndex={-1} />
+                ) : (
+                  <select
+                    value={slot.controller}
+                    onChange={(event) =>
+                      setSlotController(
+                        index,
+                        event.target.value as PlayerController,
+                      )
+                    }
+                  >
+                    {PLAYER_CONTROLLER_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </label>
               <label className="options-field new-game-hero-field">
                 Hero

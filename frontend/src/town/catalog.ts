@@ -36,6 +36,10 @@ export type UnitRow = {
   id: number
   name: string
   bldg_id: number | null
+  /** Catalog `unit.class_id`. Null falls back to the dwelling's class. */
+  class_id: number | null
+  /** Catalog `unit.tier`. Null falls back to the dwelling's tier/slot. */
+  tier: number | null
   cost: CostMap | null
   image_path: string | null
   /** Alternate-state portrait (e.g. silenced Rift). Null = no swap. */
@@ -60,8 +64,12 @@ export type UnitRow = {
   abilities: UnitCombatAbilities
   /** Catalog `unit_tag.id` values from unit.tags. */
   tags: number[]
+  /** True when catalog JSON had a non-empty `abilities` object. */
+  has_abilities: boolean
   /** Sight blocker. Drawbridge open/closed is separate and ignores this. */
   blocks_los: boolean
+  /** Per-creature cost to upgrade this base unit into its Advanced form. */
+  upgrade_cost: CostMap | null
 }
 
 export type UnitRetaliation = {
@@ -196,6 +204,21 @@ export type HeroPoolRow = {
   name: string
   class_id: number
   image_path: string | null
+  /** Nullable hero archetype. Null = pure player blend. */
+  arch_id: number | null
+}
+
+export type AiArchRow = {
+  id: number
+  name: string
+  description: string | null
+}
+
+export type AiArchWeightRow = {
+  arch_id: number
+  decision_key: string
+  factor_key: string
+  weight: number
 }
 
 export type ResourceRow = {
@@ -315,12 +338,11 @@ export type ReferenceCatalog = {
   move_type: MoveTypeRow[]
   terrain_type: TerrainTypeRow[]
   app_config: AppConfigRow[]
+  ai_arch: AiArchRow[]
+  ai_arch_weight: AiArchWeightRow[]
   levels: LevelRow[]
   hero_levels: HeroLevelRow[]
 }
-
-/** TBD until per-building destroy_cost values exist. */
-export const PLACEHOLDER_DESTROY_COST: CostMap = { [GOLD_RESOURCE_ID]: 500 }
 
 function costKeyToId(key: string): number | null {
   const asNumber = Number(key)
@@ -369,6 +391,7 @@ function asHeroPool(rows: unknown): HeroPoolRow[] {
       name,
       class_id: classId,
       image_path: image || null,
+      arch_id: asOptionalId(rec.arch_id),
     })
   }
   return pool
@@ -531,6 +554,54 @@ function asAppConfig(rows: unknown): AppConfigRow[] {
       return { key, value, description }
     })
     .filter((row) => row.key.length > 0)
+}
+
+function asAiArch(rows: unknown): AiArchRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  const out: AiArchRow[] = []
+  for (const row of rows) {
+    if (row == null || typeof row !== 'object') {
+      continue
+    }
+    const rec = row as Record<string, unknown>
+    const id = asInt(rec.id)
+    const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+    if (id <= 0 || !name) {
+      continue
+    }
+    out.push({
+      id,
+      name,
+      description: typeof rec.description === 'string' ? rec.description : null,
+    })
+  }
+  return out
+}
+
+function asAiArchWeight(rows: unknown): AiArchWeightRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  const out: AiArchWeightRow[] = []
+  for (const row of rows) {
+    if (row == null || typeof row !== 'object') {
+      continue
+    }
+    const rec = row as Record<string, unknown>
+    const archId = asInt(rec.arch_id)
+    const decision =
+      typeof rec.decision_key === 'string' ? rec.decision_key.trim() : ''
+    const factor =
+      typeof rec.factor_key === 'string' ? rec.factor_key.trim() : ''
+    const weight = Number(rec.weight)
+    if (archId <= 0 || !decision || !factor || !Number.isFinite(weight)) {
+      continue
+    }
+    out.push({ arch_id: archId, decision_key: decision, factor_key: factor, weight })
+  }
+  return out
 }
 
 function asBoolFlag(value: unknown): boolean {
@@ -1281,6 +1352,14 @@ function asAutoTarget(value: unknown): AutoTargetKind | null {
   return null
 }
 
+function abilitiesConfigPresent(value: unknown): boolean {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return false
+  }
+  return Object.keys(rec).length > 0
+}
+
 function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
   const rec = asJsonObject(value)
   const shapeRaw =
@@ -1433,6 +1512,8 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       tags?: unknown
       blocks_los?: unknown
       image_path_alt?: unknown
+      class_id?: unknown
+      tier?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const imageAlt =
@@ -1471,7 +1552,14 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       retaliation: asUnitRetaliation(extra.retaliation),
       abilities: asUnitCombatAbilities(extra.abilities),
       tags: asIntIds(extra.tags),
+      has_abilities: abilitiesConfigPresent(extra.abilities),
       blocks_los: asBoolFlag(extra.blocks_los),
+      class_id: extra.class_id == null || extra.class_id === '' ? null : asInt(extra.class_id),
+      tier: extra.tier == null || extra.tier === '' ? null : asInt(extra.tier),
+      upgrade_cost: asCost(
+        (row as { upgrade_cost?: CostMap | Record<string, number> | null })
+          .upgrade_cost,
+      ),
     }
   })
   const catalog: ReferenceCatalog = {
@@ -1511,6 +1599,10 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     terrain_type: asTerrains(payload.terrain_type),
     app_config: asAppConfig(
       (payload as { app_config?: unknown }).app_config,
+    ),
+    ai_arch: asAiArch((payload as { ai_arch?: unknown }).ai_arch),
+    ai_arch_weight: asAiArchWeight(
+      (payload as { ai_arch_weight?: unknown }).ai_arch_weight,
     ),
     levels: asLevels((payload as { levels?: unknown }).levels),
     hero_levels: asHeroLevels((payload as { hero_levels?: unknown }).hero_levels),
@@ -1630,6 +1722,28 @@ export function goldIncomeGrant(building: BuildingRow | null): number {
 
 export function unitCost(unit: UnitRow | null): CostMap {
   return unit ? asCost(unit.cost) : {}
+}
+
+export function unitUpgradeCost(unit: UnitRow | null): CostMap {
+  return unit ? asCost(unit.upgrade_cost) : {}
+}
+
+export function isAdvancedUnit(unit: UnitRow | null | undefined): boolean {
+  return (unit?.name ?? '').trim().toLowerCase().startsWith('advanced ')
+}
+
+/** Advanced counterpart by name: "Worms" → "Advanced Worms". */
+export function advancedUnitFor(
+  catalog: ReferenceCatalog | null | undefined,
+  unit: UnitRow | null | undefined,
+): UnitRow | null {
+  if (!catalog || !unit || isAdvancedUnit(unit)) {
+    return null
+  }
+  const want = `Advanced ${unit.name.trim()}`.toLowerCase()
+  return (
+    catalog.unit.find((row) => row.name.trim().toLowerCase() === want) ?? null
+  )
 }
 
 /** Battlefield hexes this unit occupies. Null/missing/non-positive is 1. */
@@ -1954,7 +2068,9 @@ export function missingGenericPrerequisiteLine(
 
 export function destroyCostOf(building: BuildingRow): CostMap {
   const listed = asCost(building.destroy_cost)
-  return Object.keys(listed).length > 0 ? listed : PLACEHOLDER_DESTROY_COST
+  return Object.keys(listed).length > 0
+    ? listed
+    : destroyBuildingGoldCost(getCachedCatalog())
 }
 
 export function formatCost(cost: CostMap): string {
@@ -1997,18 +2113,36 @@ export function heroTypeName(
   return catalog.hero_type.find((row) => row.id === classId)?.name ?? ''
 }
 
-const DEFAULT_HERO_STAT = 10
+/** The two hero classes that belong to this town type. */
+export function tavernClassIds(
+  catalog: ReferenceCatalog,
+  townTypeId: number,
+): number[] {
+  return catalog.hero_type
+    .filter((row) => row.town_id === townTypeId)
+    .map((row) => row.id)
+}
+
+/** Tavern hire roster: unused names are applied by the caller. */
+export function tavernHirePool(
+  catalog: ReferenceCatalog,
+  townTypeId: number,
+): HeroPoolRow[] {
+  const classIds = new Set(tavernClassIds(catalog, townTypeId))
+  return catalog.hero_pool.filter((row) => classIds.has(row.class_id))
+}
 
 function emptyHeroStats(): HeroStats {
+  const n = dummyHeroStat(getCachedCatalog())
   return {
-    speed: DEFAULT_HERO_STAT,
-    stamina: DEFAULT_HERO_STAT,
-    strength: DEFAULT_HERO_STAT,
-    intel: DEFAULT_HERO_STAT,
-    defense: DEFAULT_HERO_STAT,
-    resist: DEFAULT_HERO_STAT,
-    crit_pct: DEFAULT_HERO_STAT,
-    crit_amt: DEFAULT_HERO_STAT,
+    speed: n,
+    stamina: n,
+    strength: n,
+    intel: n,
+    defense: n,
+    resist: n,
+    crit_pct: n,
+    crit_amt: n,
   }
 }
 
@@ -2095,7 +2229,7 @@ export function heroMovementPoints(
     | undefined,
 ): number {
   if (!catalog || !hero) {
-    return DEFAULT_HERO_STAT
+    return dummyHeroStat(catalog)
   }
   return Math.max(
     0,
@@ -2131,7 +2265,7 @@ export function minRangePenaltyMult(
 export function wallDamageMult(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'wall_damage_mult', 0.25))
+  return Math.max(0, appConfigNumber(catalog, 'wall_damage_mult', 0.5))
 }
 
 export function retaliationDefaultDmgMult(
@@ -2147,6 +2281,114 @@ function retaliationDefaultDmgPct(
     100,
     Math.max(0, Math.round(retaliationDefaultDmgMult(catalog) * 100)),
   )
+}
+
+const STARTING_FALLBACK: Record<string, number> = {
+  gold: 10000,
+  wood: 20,
+  ore: 20,
+  ichor: 20,
+  crystal: 10,
+  sap: 10,
+  ash: 10,
+  aether: 10,
+  incense: 10,
+  brimstone: 10,
+  nuore: 10,
+  processed_nuore: 10,
+}
+
+function startingConfigKey(name: string): string {
+  return `starting_${name.trim().toLowerCase().replaceAll(/\s+/g, '_')}`
+}
+
+export function startingStockpileFor(
+  catalog: ReferenceCatalog | null | undefined,
+  resource: { id: number; name: string },
+): number {
+  const slug = startingConfigKey(resource.name).slice('starting_'.length)
+  const fallback = STARTING_FALLBACK[slug] ?? 0
+  return Math.max(
+    0,
+    Math.floor(appConfigNumber(catalog, startingConfigKey(resource.name), fallback)),
+  )
+}
+
+export function pickupAmount(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'pickup_amount', 1)))
+}
+
+export function yieldPerMine(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'yield_per_mine', 1)))
+}
+
+export function hireHeroGoldCost(
+  catalog: ReferenceCatalog | null | undefined,
+): CostMap {
+  return {
+    [GOLD_RESOURCE_ID]: Math.max(
+      0,
+      Math.floor(appConfigNumber(catalog, 'hire_hero_cost', 1000)),
+    ),
+  }
+}
+
+export function libraryGoldCost(
+  catalog: ReferenceCatalog | null | undefined,
+  levelId: number,
+): number {
+  const key =
+    levelId === 1
+      ? 'library_cost_1'
+      : levelId === 2
+        ? 'library_cost_2'
+        : levelId === 3
+          ? 'library_cost_3'
+          : null
+  const fallback = levelId === 1 ? 500 : levelId === 2 ? 1000 : levelId === 3 ? 2000 : 0
+  if (!key) {
+    return 0
+  }
+  return Math.max(0, Math.floor(appConfigNumber(catalog, key, fallback)))
+}
+
+export function destroyBuildingGoldCost(
+  catalog: ReferenceCatalog | null | undefined,
+): CostMap {
+  return {
+    [GOLD_RESOURCE_ID]: Math.max(
+      0,
+      Math.floor(appConfigNumber(catalog, 'destroy_bldg_cost', 500)),
+    ),
+  }
+}
+
+export function visionRange(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'vision_range', 4)))
+}
+
+export function heroInteractCost(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, appConfigNumber(catalog, 'hero_interact_cost', 0.25))
+}
+
+export function dummyHeroStat(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'dummy_hero_stat', 10)))
+}
+
+export function dummyArmyQty(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'dummy_army_qty', 16)))
 }
 
 /** Starting / missing-save Mana and Energy. Energy = strength × ability_mult; Mana = intel × ability_mult. */
@@ -2330,6 +2572,76 @@ export function unitById(
     return null
   }
   return catalog.unit.find((row) => row.id === id) ?? null
+}
+
+/** Hero class this unit belongs to — unit.class_id, else the dwelling's class. */
+export function unitClassId(
+  catalog: ReferenceCatalog,
+  unit: UnitRow | null | undefined,
+): number | null {
+  if (!unit) {
+    return null
+  }
+  if (unit.class_id != null && unit.class_id > 0) {
+    return unit.class_id
+  }
+  const building = buildingById(catalog, unit.bldg_id)
+  return building?.class_id != null && building.class_id > 0
+    ? building.class_id
+    : null
+}
+
+export function unitEffectiveTier(
+  catalog: ReferenceCatalog,
+  unit: UnitRow,
+): number {
+  return unitCreatureTier(catalog, unit)
+}
+
+function unitCreatureTier(
+  catalog: ReferenceCatalog,
+  unit: UnitRow,
+): number {
+  if (unit.tier != null && unit.tier > 0) {
+    return unit.tier
+  }
+  const building = buildingById(catalog, unit.bldg_id)
+  if (building?.tier != null && building.tier > 0) {
+    return building.tier
+  }
+  if (building?.slot_num != null && isArmySlot(building.slot_num)) {
+    return armyTier(building.slot_num)
+  }
+  return 99
+}
+
+/**
+ * Rank-th base (non-Advanced) unit of a hero class branch.
+ * rank 1 = lowest-tier, rank 2 = next tier of that same class.
+ */
+export function classBranchBaseUnit(
+  catalog: ReferenceCatalog,
+  classId: number | null | undefined,
+  rank: number,
+): UnitRow | null {
+  if (classId == null || classId <= 0 || rank < 1) {
+    return null
+  }
+  const byTier = new Map<number, UnitRow>()
+  for (const unit of catalog.unit) {
+    if (isAdvancedUnit(unit) || unitClassId(catalog, unit) !== classId) {
+      continue
+    }
+    const tier = unitCreatureTier(catalog, unit)
+    const existing = byTier.get(tier)
+    if (!existing || unit.id < existing.id) {
+      byTier.set(tier, unit)
+    }
+  }
+  const ranked = [...byTier.entries()]
+    .sort((a, b) => a[0] - b[0] || a[1].id - b[1].id)
+    .map((entry) => entry[1])
+  return ranked[rank - 1] ?? null
 }
 
 export function unitHasTag(

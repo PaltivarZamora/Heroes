@@ -29,6 +29,12 @@ export type DebugSnapshot = {
   resources: string[]
   dataStatus: DataStatus | null
   extraLines?: string[]
+  traceLines?: string[]
+}
+
+export type DebugSections = {
+  gameSetup: string
+  rest: string
 }
 
 function formatDataLoadSection(dataStatus: DataStatus | null): string[] {
@@ -54,20 +60,30 @@ function formatDataLoadSection(dataStatus: DataStatus | null): string[] {
   ]
 }
 
-/** One labeled line per field — add lines here as more testable state exists. */
-export function formatDebugText(snapshot: DebugSnapshot): string {
+export function formatDebugSections(snapshot: DebugSnapshot): DebugSections {
   const hero =
     snapshot.heroQ === null || snapshot.heroR === null
       ? `Hero: ${snapshot.heroName}`
       : `Hero: ${snapshot.heroName} q=${snapshot.heroQ}, r=${snapshot.heroR}`
-  return [
-    `Map Size: ${snapshot.mapSize}`,
-    `Hex Size: ${snapshot.hexSize}`,
-    `Seed Number: ${snapshot.seed}`,
-    hero,
-    `Steps: ${snapshot.steps}`,
-    ...snapshot.resources,
-    ...(snapshot.extraLines ?? []),
-    ...formatDataLoadSection(snapshot.dataStatus),
-  ].join('\n')
+  return {
+    gameSetup: [
+      `Map Size: ${snapshot.mapSize}`,
+      `Hex Size: ${snapshot.hexSize}`,
+      `Seed Number: ${snapshot.seed}`,
+      hero,
+      `Steps: ${snapshot.steps}`,
+      ...snapshot.resources,
+      ...(snapshot.extraLines ?? []),
+    ].join('\n'),
+    rest: [
+      ...(snapshot.traceLines ?? []),
+      ...formatDataLoadSection(snapshot.dataStatus),
+    ].join('\n'),
+  }
+}
+
+/** One labeled line per field — add lines here as more testable state exists. */
+export function formatDebugText(snapshot: DebugSnapshot): string {
+  const { gameSetup, rest } = formatDebugSections(snapshot)
+  return rest.trim() ? `${gameSetup}\n${rest}` : gameSetup
 }

@@ -5,7 +5,6 @@ import {
   emptyWallet,
   GOLD_RESOURCE_ID,
   RESOURCES,
-  YIELD_PER_MINE,
   snapshotWallet,
   type ResourceWallet,
 } from '../hex/resources'
@@ -22,12 +21,21 @@ import {
   scaleCost,
   unitCost,
   unitForBuilding,
+  unitUpgradeCost,
+  advancedUnitFor,
+  unitById,
+  classBranchBaseUnit,
   getCachedCatalog,
+  hireHeroGoldCost,
+  tavernHirePool,
+  yieldPerMine,
   type HeroPoolRow,
   type ReferenceCatalog,
 } from '../town/catalog'
+import { applyWeeklyMobGrowth } from './mobs'
 import {
   abilityById,
+  classAbilityIds,
   findOffer,
   goldCostForLevel,
   heroHasDiscipline,
@@ -91,7 +99,13 @@ export function humanPlayer(session: GameSession) {
   return activePlayer(session)
 }
 
-function actingPlayerId(session: GameSession): string | null {
+function actingPlayerId(
+  session: GameSession,
+  ownerId?: string | null,
+): string | null {
+  if (ownerId) {
+    return ownerId
+  }
   return activePlayer(session)?.id ?? null
 }
 
@@ -176,6 +190,7 @@ export function endTurn(session: GameSession): GameSession {
       const catalog = getCachedCatalog()
       if (catalog) {
         current = applyWeeklyGrowth(current, catalog)
+        current = applyWeeklyMobGrowth(current, catalog)
       }
     }
   }
@@ -262,6 +277,26 @@ export function withNamedProgress(
   }
 }
 
+export function setNamedProgress(
+  session: GameSession,
+  name: string,
+  live: HeroProgress,
+): GameSession {
+  if (!name || name === PLACEHOLDER_HERO_NAME) {
+    return session
+  }
+  return {
+    ...session,
+    hero_progress: {
+      ...(session.hero_progress ?? {}),
+      [name]: {
+        current_level: asHeroLevel(live.current_level, STARTING_HERO_LEVEL),
+        current_xp: asHeroXp(live.current_xp, STARTING_HERO_XP),
+      },
+    },
+  }
+}
+
 export function normalizeHeroProgress(
   session: GameSession,
 ): GameSession {
@@ -303,12 +338,14 @@ export function normalizeHeroProgress(
       current_energy: asHeroPoolAmount(hero.current_energy, pools.current_energy),
       used_abilities_this_battle: asAbilityIdList(hero.used_abilities_this_battle),
       used_abilities_today: asAbilityIdList(hero.used_abilities_today),
+      arch_id:
+        typeof hero.arch_id === 'number' && hero.arch_id > 0 ? hero.arch_id : null,
     }
   })
   return { ...session, heroes, hero_progress: progress }
 }
-export const HIRE_HERO_GOLD_COST: Record<number, number> = {
-  [GOLD_RESOURCE_ID]: 1000,
+export function hireHeroCostMap(): Record<number, number> {
+  return hireHeroGoldCost(getCachedCatalog())
 }
 
 function heroNeedsPool(hero: Hero): boolean {
@@ -325,6 +362,14 @@ export function unusedHeroPool(
       .map((hero) => hero.name),
   )
   return pool.filter((row) => !used.has(row.name))
+}
+
+export function unusedTavernPool(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  townTypeId: number,
+): HeroPoolRow[] {
+  return unusedHeroPool(session, tavernHirePool(catalog, townTypeId))
 }
 
 export function assignHeroesFromPool(
@@ -360,6 +405,7 @@ export function assignHeroesFromPool(
       learned_abilities: hero.learned_abilities ?? [],
       current_level: live.current_level,
       current_xp: live.current_xp,
+      arch_id: pick.arch_id ?? null,
       movement_remaining: heroMovementPoints(getCachedCatalog(), {
         class_id: pick.class_id,
         current_level: live.current_level,
@@ -371,7 +417,14 @@ export function assignHeroesFromPool(
     }
   })
   const withNames = changed ? { ...session, heroes, hero_progress: progress } : session
-  return withNames
+  if (!changed) {
+    return withNames
+  }
+  let next = withNames
+  for (const hero of next.heroes) {
+    next = grantHeroStartingArmy(next, hero.id)
+  }
+  return next
 }
 
 function nextHeroId(session: GameSession): string {
@@ -388,18 +441,26 @@ export function hireHeroFromPool(
   session: GameSession,
   townId: string,
   pick: HeroPoolRow,
+  spawnAt?: AxialPos | null,
 ): { session: GameSession; error: string | null } {
   const town = findTownById(session, townId)
   if (!town) {
     return { session, error: 'This town is not in the game session.' }
   }
-  if (visitingHeroId(session, town)) {
+  const onTown =
+    spawnAt == null ||
+    (spawnAt.q === town.position.q && spawnAt.r === town.position.r)
+  if (onTown && visitingHeroId(session, town)) {
     return { session, error: 'A hero is visiting — cannot hire' }
   }
   if (unusedHeroPool(session, [pick]).length === 0) {
     return { session, error: 'That hero is already in this game.' }
   }
-  const spent = spendResources(session, HIRE_HERO_GOLD_COST)
+  const catalog = getCachedCatalog()
+  if (catalog && tavernHirePool(catalog, town.town_type_id).every((row) => row.id !== pick.id)) {
+    return { session, error: 'That hero cannot be hired in this town.' }
+  }
+  const spent = spendResources(session, hireHeroCostMap())
   if (spent.error) {
     return spent
   }
@@ -410,7 +471,7 @@ export function hireHeroFromPool(
     name: pick.name,
     class_id: pick.class_id,
     image_path: pick.image_path,
-    position: { ...town.position },
+    position: spawnAt ? { ...spawnAt } : { ...town.position },
     army: {
       slot_0: pick.name,
       slots_1_to_6: Array.from({ length: ARMY_STACK_SLOTS }, () => null),
@@ -420,6 +481,7 @@ export function hireHeroFromPool(
     current_xp: live.current_xp,
     used_abilities_this_battle: [],
     used_abilities_today: [],
+    arch_id: pick.arch_id ?? null,
     movement_remaining: heroMovementPoints(getCachedCatalog(), {
       class_id: pick.class_id,
       current_level: live.current_level,
@@ -430,26 +492,32 @@ export function hireHeroFromPool(
     }),
   }
   return {
-    session: withNamedProgress(
-      {
-        ...spent.session,
-        heroes: [...spent.session.heroes, hero],
-        players: spent.session.players.map((player) =>
-          player.id === hero.player_id
-            ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
-            : player,
-        ),
-      },
-      pick.name,
-      live,
+    session: grantHeroStartingArmy(
+      withNamedProgress(
+        {
+          ...spent.session,
+          heroes: [...spent.session.heroes, hero],
+          players: spent.session.players.map((player) =>
+            player.id === hero.player_id
+              ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
+              : player,
+          ),
+        },
+        pick.name,
+        live,
+      ),
+      hero.id,
     ),
     error: null,
   }
 }
 
-export function walletFromSession(session: GameSession): ResourceWallet {
+export function walletFromPlayer(
+  session: GameSession,
+  playerId: string,
+): ResourceWallet {
   const wallet = emptyWallet()
-  const player = humanPlayer(session)
+  const player = session.players.find((row) => row.id === playerId)
   if (!player) {
     return wallet
   }
@@ -463,6 +531,14 @@ export function walletFromSession(session: GameSession): ResourceWallet {
     ).length
   }
   return wallet
+}
+
+export function walletFromSession(session: GameSession): ResourceWallet {
+  const player = activePlayer(session)
+  if (!player) {
+    return emptyWallet()
+  }
+  return walletFromPlayer(session, player.id)
 }
 
 export function applyWalletStockpiles(
@@ -491,6 +567,28 @@ const CHEST_GOLD = 10000
 const CHEST_EACH = 20
 
 /** Debug/options: 10,000 gold plus 20 of every other resource. */
+/** Debug: every hero learns every ability from their class's two disciplines. */
+export function grantAllClassAbilities(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  return {
+    ...session,
+    heroes: session.heroes.map((hero) => {
+      const fromClass = classAbilityIds(catalog, hero.class_id)
+      if (fromClass.length === 0) {
+        return hero
+      }
+      const have = new Set(hero.learned_abilities ?? [])
+      for (const id of fromClass) {
+        have.add(id)
+      }
+      return { ...hero, learned_abilities: [...have] }
+    }),
+  }
+}
+
 export function grantOpenChest(session: GameSession): GameSession {
   const player = activePlayer(session)
   if (!player) {
@@ -646,7 +744,7 @@ export function applyMineIncome(session: GameSession): GameSession {
           continue
         }
         resources[node.resource_id] =
-          (resources[node.resource_id] ?? 0) + YIELD_PER_MINE
+          (resources[node.resource_id] ?? 0) + yieldPerMine(getCachedCatalog())
       }
       return { ...player, resources }
     }),
@@ -1011,6 +1109,261 @@ export function insertHeroArmyStack(
   }
 }
 
+export type ArmyAbsorbPart = {
+  unitId: number
+  qty: number
+}
+
+function matchingSlotId(
+  session: GameSession,
+  slots: Array<string | null>,
+  unitId: number,
+): string | null {
+  for (const id of slots) {
+    if (!id) {
+      continue
+    }
+    const row = session.units.find((unit) => unit.id === id)
+    if (row && row.unit_id === unitId && row.qty > 0) {
+      return row.id
+    }
+  }
+  return null
+}
+
+function firstEmptySlot(slots: Array<string | null>): number | null {
+  const padded = padStackSlots(slots)
+  const index = padded.findIndex((id) => id == null)
+  return index >= 0 ? index : null
+}
+
+function insertGarrisonStack(
+  session: GameSession,
+  townId: string,
+  slot: number,
+  stack: { id: string; unitId: number; qty: number },
+): GameSession {
+  const town = session.towns.find((row) => row.id === townId)
+  if (!town || stack.qty <= 0 || slot < 0 || slot >= ARMY_STACK_SLOTS) {
+    return session
+  }
+  const slots = padStackSlots(town.garrison.slots_1_to_6)
+  const existingId = slots[slot]
+  const existing = existingId
+    ? session.units.find((row) => row.id === existingId)
+    : null
+  if (existing && existing.unit_id === stack.unitId) {
+    return addHeroStackQty(session, existing.id, stack.qty)
+  }
+  if (existingId) {
+    return session
+  }
+  slots[slot] = stack.id
+  const row: UnitStack = {
+    id: stack.id,
+    unit_id: stack.unitId,
+    qty: stack.qty,
+    town_id: townId,
+    hero_id: null,
+    mob_id: null,
+  }
+  return {
+    ...session,
+    units: [...session.units, row],
+    towns: session.towns.map((entry) =>
+      entry.id === townId
+        ? { ...entry, garrison: { ...entry.garrison, slots_1_to_6: slots } }
+        : entry,
+    ),
+  }
+}
+
+/** Same-type merge, then open hero slots, then owned-town garrison if present. */
+export function canFullyAbsorbParts(
+  session: GameSession,
+  heroId: string,
+  parts: ArmyAbsorbPart[],
+  townId: string | null,
+): boolean {
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero) {
+    return false
+  }
+  const heroTypes = new Set<number>()
+  let openHero = 0
+  for (const id of padStackSlots(hero.army.slots_1_to_6)) {
+    if (!id) {
+      openHero += 1
+      continue
+    }
+    const row = session.units.find((unit) => unit.id === id)
+    if (row && row.qty > 0) {
+      heroTypes.add(row.unit_id)
+    } else {
+      openHero += 1
+    }
+  }
+  const town = townId
+    ? session.towns.find((row) => row.id === townId)
+    : undefined
+  const garrisonTypes = new Set<number>()
+  let openGarrison = 0
+  if (town) {
+    for (const id of padStackSlots(town.garrison.slots_1_to_6)) {
+      if (!id) {
+        openGarrison += 1
+        continue
+      }
+      const row = session.units.find((unit) => unit.id === id)
+      if (row && row.qty > 0) {
+        garrisonTypes.add(row.unit_id)
+      } else {
+        openGarrison += 1
+      }
+    }
+  }
+  for (const part of parts) {
+    if (part.qty <= 0) {
+      continue
+    }
+    if (heroTypes.has(part.unitId)) {
+      continue
+    }
+    if (openHero > 0) {
+      openHero -= 1
+      heroTypes.add(part.unitId)
+      continue
+    }
+    if (garrisonTypes.has(part.unitId)) {
+      continue
+    }
+    if (openGarrison > 0) {
+      openGarrison -= 1
+      garrisonTypes.add(part.unitId)
+      continue
+    }
+    return false
+  }
+  return true
+}
+
+export function absorbPartsIntoHeroOrGarrison(
+  session: GameSession,
+  heroId: string,
+  parts: ArmyAbsorbPart[],
+  townId: string | null,
+): GameSession {
+  let next = session
+  for (const part of parts) {
+    if (part.qty <= 0) {
+      continue
+    }
+    const hero = next.heroes.find((row) => row.id === heroId)
+    if (!hero) {
+      return next
+    }
+    const heroMatch = matchingSlotId(next, hero.army.slots_1_to_6, part.unitId)
+    if (heroMatch) {
+      next = addHeroStackQty(next, heroMatch, part.qty)
+      continue
+    }
+    const heroSlot = firstEmptySlot(hero.army.slots_1_to_6)
+    if (heroSlot != null) {
+      next = insertHeroArmyStack(next, heroId, heroSlot, {
+        id: nextUnitStackId(next),
+        unitId: part.unitId,
+        qty: part.qty,
+      })
+      continue
+    }
+    const town = townId
+      ? next.towns.find((row) => row.id === townId)
+      : undefined
+    if (!town) {
+      return next
+    }
+    const garrisonMatch = matchingSlotId(
+      next,
+      town.garrison.slots_1_to_6,
+      part.unitId,
+    )
+    if (garrisonMatch) {
+      next = addHeroStackQty(next, garrisonMatch, part.qty)
+      continue
+    }
+    const garrisonSlot = firstEmptySlot(town.garrison.slots_1_to_6)
+    if (garrisonSlot != null) {
+      next = insertGarrisonStack(next, town.id, garrisonSlot, {
+        id: nextUnitStackId(next),
+        unitId: part.unitId,
+        qty: part.qty,
+      })
+    }
+  }
+  return next
+}
+
+const STARTING_T1_MIN = 6
+const STARTING_T1_MAX = 10
+const STARTING_T2_MIN = 2
+const STARTING_T2_MAX = 5
+const STARTING_T2_CHANCE = 0.8
+
+function randomInclusive(min: number, max: number): number {
+  return min + Math.floor(Math.random() * (max - min + 1))
+}
+
+export function heroArmyStackCount(session: GameSession, heroId: string): number {
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero) {
+    return 0
+  }
+  let count = 0
+  for (const id of padStackSlots(hero.army.slots_1_to_6)) {
+    if (!id) {
+      continue
+    }
+    const stack = session.units.find((row) => row.id === id)
+    if (stack && stack.qty > 0) {
+      count += 1
+    }
+  }
+  return count
+}
+
+/** Hire / spawn: class-branch Tier 1 (6–10) and 80% Tier 2 (2–5). No-op if army exists. */
+export function grantHeroStartingArmy(
+  session: GameSession,
+  heroId: string,
+): GameSession {
+  const hero = session.heroes.find((row) => row.id === heroId)
+  const catalog = getCachedCatalog()
+  if (!hero || !catalog || hero.class_id == null) {
+    return session
+  }
+  if (heroArmyStackCount(session, heroId) > 0) {
+    return session
+  }
+  const tier1 = classBranchBaseUnit(catalog, hero.class_id, 1)
+  const tier2 = classBranchBaseUnit(catalog, hero.class_id, 2)
+  let next = session
+  if (tier1) {
+    next = insertHeroArmyStack(next, heroId, 0, {
+      id: nextStackId(next),
+      unitId: tier1.id,
+      qty: randomInclusive(STARTING_T1_MIN, STARTING_T1_MAX),
+    })
+  }
+  if (tier2 && Math.random() < STARTING_T2_CHANCE) {
+    next = insertHeroArmyStack(next, heroId, 1, {
+      id: nextStackId(next),
+      unitId: tier2.id,
+      qty: randomInclusive(STARTING_T2_MIN, STARTING_T2_MAX),
+    })
+  }
+  return next
+}
+
 export type ArmyRowId = 'garrison' | 'hero'
 
 export type ArmySlotRef = {
@@ -1129,6 +1482,166 @@ function ownSlots(
   )
 }
 
+export type ArmyAllocPart = {
+  unitId: number
+  qty: number
+}
+
+export type ArmyAllocTarget = {
+  heroId: string
+  parts: ArmyAllocPart[]
+}
+
+/**
+ * Rewrite hero armies (and optional garrison) from a shared pool to a computed
+ * end-state. Does not simulate pickup/swap/split clicks.
+ */
+export function applyPooledArmyAllocation(
+  session: GameSession,
+  poolHeroIds: string[],
+  poolTownId: string | null,
+  heroTargets: ArmyAllocTarget[],
+  garrisonParts: ArmyAllocPart[] = [],
+  preserveStackIds: string[] = [],
+): GameSession {
+  const town = poolTownId
+    ? session.towns.find((row) => row.id === poolTownId)
+    : undefined
+  const poolSlotIds: Array<string | null> = []
+  for (const id of poolHeroIds) {
+    const hero = session.heroes.find((row) => row.id === id)
+    if (hero) {
+      poolSlotIds.push(...padStackSlots(hero.army.slots_1_to_6))
+    }
+  }
+  if (town) {
+    poolSlotIds.push(...padStackSlots(town.garrison.slots_1_to_6))
+  }
+  const poolIds = new Set(
+    poolSlotIds.filter((id): id is string => id != null),
+  )
+  const preserve = new Set(preserveStackIds.filter((id) => poolIds.has(id)))
+  const used = new Set<string>()
+  let units = [...session.units]
+  const dummyTownId = poolTownId ?? ''
+
+  const allocOne = (
+    unitId: number,
+    qty: number,
+    row: ArmyRowId,
+    ownerHeroId: string | null,
+  ): string | null => {
+    if (qty <= 0) {
+      return null
+    }
+    const reusable = units.find(
+      (stack) =>
+        poolIds.has(stack.id) &&
+        !used.has(stack.id) &&
+        !preserve.has(stack.id) &&
+        stack.unit_id === unitId,
+    )
+    if (reusable) {
+      used.add(reusable.id)
+      units = units.map((stack) =>
+        stack.id === reusable.id
+          ? ownStack({ ...stack, qty }, dummyTownId, row, ownerHeroId)
+          : stack,
+      )
+      return reusable.id
+    }
+    const id = nextStackId({ ...session, units })
+    used.add(id)
+    units = [
+      ...units,
+      ownStack(
+        {
+          id,
+          unit_id: unitId,
+          qty,
+          town_id: null,
+          hero_id: null,
+          mob_id: null,
+        },
+        dummyTownId,
+        row,
+        ownerHeroId,
+      ),
+    ]
+    return id
+  }
+
+  const heroSlotMap = new Map<string, Array<string | null>>()
+  for (const target of heroTargets) {
+    heroSlotMap.set(
+      target.heroId,
+      padStackSlots(
+        target.parts.slice(0, ARMY_STACK_SLOTS).map((part) =>
+          allocOne(part.unitId, part.qty, 'hero', target.heroId),
+        ),
+      ),
+    )
+  }
+  const garrisonSlots = town
+    ? padStackSlots(
+        garrisonParts.slice(0, ARMY_STACK_SLOTS).map((part) =>
+          allocOne(part.unitId, part.qty, 'garrison', null),
+        ),
+      )
+    : []
+
+  const placed = new Set(
+    [...heroSlotMap.values(), garrisonSlots]
+      .flat()
+      .filter((id): id is string => id != null),
+  )
+  units = units
+    .filter(
+      (stack) =>
+        !poolIds.has(stack.id) || placed.has(stack.id) || preserve.has(stack.id),
+    )
+    .map((stack) =>
+      preserve.has(stack.id) && !placed.has(stack.id)
+        ? town
+          ? { ...stack, town_id: town.id, hero_id: null }
+          : stack
+        : stack,
+    )
+
+  let next = { ...session, units }
+  for (const [heroId, slots] of heroSlotMap) {
+    next = writeRowSlots(next, dummyTownId, 'hero', slots, next.units, heroId)
+  }
+  if (town) {
+    next = writeRowSlots(
+      next,
+      town.id,
+      'garrison',
+      garrisonSlots,
+      next.units,
+    )
+  }
+  return next
+}
+
+export function applyArmyAllocation(
+  session: GameSession,
+  townId: string,
+  heroId: string,
+  heroParts: ArmyAllocPart[],
+  garrisonParts: ArmyAllocPart[],
+  preserveStackIds: string[] = [],
+): GameSession {
+  return applyPooledArmyAllocation(
+    session,
+    [heroId],
+    townId,
+    [{ heroId, parts: heroParts }],
+    garrisonParts,
+    preserveStackIds,
+  )
+}
+
 function commitRows(
   session: GameSession,
   townId: string,
@@ -1164,6 +1677,58 @@ function commitRows(
     )
   }
   return next
+}
+
+const HERO_MIN_ARMY_ERROR = 'A hero must keep at least one unit stack.'
+
+function stripsLastHeroStack(before: GameSession, after: GameSession): boolean {
+  for (const hero of before.heroes) {
+    if (
+      heroArmyStackCount(before, hero.id) > 0 &&
+      heroArmyStackCount(after, hero.id) === 0
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function commitArmyMove(
+  session: GameSession,
+  townId: string,
+  from: ArmySlotRef,
+  fromSlots: Array<string | null>,
+  fromHeroId: string | null,
+  to: ArmySlotRef,
+  toSlots: Array<string | null>,
+  toHeroId: string | null,
+  units: UnitStack[],
+): { session: GameSession; error: string | null } {
+  const next = commitRows(
+    session,
+    townId,
+    from,
+    fromSlots,
+    fromHeroId,
+    to,
+    toSlots,
+    toHeroId,
+    units,
+  )
+  if (stripsLastHeroStack(session, next)) {
+    return { session, error: HERO_MIN_ARMY_ERROR }
+  }
+  return { session: next, error: null }
+}
+
+function guardHeroMin(
+  before: GameSession,
+  after: GameSession,
+): { session: GameSession; error: string | null } {
+  if (stripsLastHeroStack(before, after)) {
+    return { session: before, error: HERO_MIN_ARMY_ERROR }
+  }
+  return { session: after, error: null }
 }
 
 export function placeArmyStack(
@@ -1205,66 +1770,7 @@ export function placeArmyStack(
   if (!destId) {
     fromSlots[fromIndex] = null
     toSlots[toIndex] = sourceId
-    return {
-      session: commitRows(
-        session,
-        townId,
-        from,
-        fromSlots,
-        sourceRow.heroId,
-        to,
-        toSlots,
-        destRow.heroId,
-        session.units,
-      ),
-      error: null,
-    }
-  }
-  const dest = session.units.find((row) => row.id === destId)
-  if (!dest) {
-    fromSlots[fromIndex] = null
-    toSlots[toIndex] = sourceId
-    return {
-      session: commitRows(
-        session,
-        townId,
-        from,
-        fromSlots,
-        sourceRow.heroId,
-        to,
-        toSlots,
-        destRow.heroId,
-        session.units,
-      ),
-      error: null,
-    }
-  }
-  if (dest.unit_id === source.unit_id) {
-    const units = session.units
-      .map((row) =>
-        row.id === destId ? { ...row, qty: row.qty + source.qty } : row,
-      )
-      .filter((row) => row.id !== sourceId)
-    fromSlots[fromIndex] = null
-    return {
-      session: commitRows(
-        session,
-        townId,
-        from,
-        fromSlots,
-        sourceRow.heroId,
-        to,
-        toSlots,
-        destRow.heroId,
-        units,
-      ),
-      error: null,
-    }
-  }
-  fromSlots[fromIndex] = destId
-  toSlots[toIndex] = sourceId
-  return {
-    session: commitRows(
+    return commitArmyMove(
       session,
       townId,
       from,
@@ -1274,9 +1780,56 @@ export function placeArmyStack(
       toSlots,
       destRow.heroId,
       session.units,
-    ),
-    error: null,
+    )
   }
+  const dest = session.units.find((row) => row.id === destId)
+  if (!dest) {
+    fromSlots[fromIndex] = null
+    toSlots[toIndex] = sourceId
+    return commitArmyMove(
+      session,
+      townId,
+      from,
+      fromSlots,
+      sourceRow.heroId,
+      to,
+      toSlots,
+      destRow.heroId,
+      session.units,
+    )
+  }
+  if (dest.unit_id === source.unit_id) {
+    const units = session.units
+      .map((row) =>
+        row.id === destId ? { ...row, qty: row.qty + source.qty } : row,
+      )
+      .filter((row) => row.id !== sourceId)
+    fromSlots[fromIndex] = null
+    return commitArmyMove(
+      session,
+      townId,
+      from,
+      fromSlots,
+      sourceRow.heroId,
+      to,
+      toSlots,
+      destRow.heroId,
+      units,
+    )
+  }
+  fromSlots[fromIndex] = destId
+  toSlots[toIndex] = sourceId
+  return commitArmyMove(
+    session,
+    townId,
+    from,
+    fromSlots,
+    sourceRow.heroId,
+    to,
+    toSlots,
+    destRow.heroId,
+    session.units,
+  )
 }
 
 export function splitArmyStack(
@@ -1335,6 +1888,88 @@ export function splitArmyStack(
   }
 }
 
+function townProducesUnit(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  townId: string,
+  unitId: number,
+): boolean {
+  return session.building_states.some((row) => {
+    if (row.town_id !== townId || row.level < 1) {
+      return false
+    }
+    return unitForBuilding(catalog, row.building_id)?.id === unitId
+  })
+}
+
+export function stackUpgradeOffer(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  townId: string,
+  stack: UnitStack,
+): {
+  advanced: NonNullable<ReturnType<typeof advancedUnitFor>>
+  perUnit: ReturnType<typeof unitUpgradeCost>
+  total: ReturnType<typeof unitUpgradeCost>
+} | null {
+  const unit = unitById(catalog, stack.unit_id)
+  const advanced = advancedUnitFor(catalog, unit)
+  if (!unit || !advanced) {
+    return null
+  }
+  const perUnit = unitUpgradeCost(unit)
+  if (Object.keys(perUnit).length === 0) {
+    return null
+  }
+  if (!townProducesUnit(session, catalog, townId, advanced.id)) {
+    return null
+  }
+  return {
+    advanced,
+    perUnit,
+    total: scaleCost(perUnit, stack.qty),
+  }
+}
+
+export function upgradeArmyStack(
+  session: GameSession,
+  townId: string,
+  from: ArmySlotRef,
+  catalog: ReferenceCatalog,
+): { session: GameSession; error: string | null } {
+  const sourceRow = rowStackSlots(session, townId, from.row, from.heroId)
+  if (sourceRow.error) {
+    return { session, error: sourceRow.error }
+  }
+  const stackId = sourceRow.slots[from.slot - 1]
+  const stack = stackId
+    ? session.units.find((row) => row.id === stackId)
+    : null
+  if (!stack) {
+    return { session, error: 'That slot is empty.' }
+  }
+  const offer = stackUpgradeOffer(session, catalog, townId, stack)
+  if (!offer) {
+    return {
+      session,
+      error: 'This stack cannot be upgraded in this town.',
+    }
+  }
+  const spent = spendResources(session, offer.total)
+  if (spent.error) {
+    return { session, error: spent.error }
+  }
+  return {
+    session: {
+      ...spent.session,
+      units: spent.session.units.map((row) =>
+        row.id === stack.id ? { ...row, unit_id: offer.advanced.id } : row,
+      ),
+    },
+    error: null,
+  }
+}
+
 export function dropHeldArmyStack(
   session: GameSession,
   townId: string,
@@ -1364,8 +1999,9 @@ export function dropHeldArmyStack(
       to.row,
       destRow.heroId,
     )
-    return {
-      session: writeRowSlots(
+    return guardHeroMin(
+      session,
+      writeRowSlots(
         session,
         townId,
         to.row,
@@ -1373,8 +2009,7 @@ export function dropHeldArmyStack(
         units,
         to.heroId ?? destRow.heroId,
       ),
-      error: null,
-    }
+    )
   }
   const dest = session.units.find((row) => row.id === destId)
   if (!dest) {
@@ -1386,8 +2021,9 @@ export function dropHeldArmyStack(
       to.row,
       destRow.heroId,
     )
-    return {
-      session: writeRowSlots(
+    return guardHeroMin(
+      session,
+      writeRowSlots(
         session,
         townId,
         to.row,
@@ -1395,8 +2031,7 @@ export function dropHeldArmyStack(
         units,
         to.heroId ?? destRow.heroId,
       ),
-      error: null,
-    }
+    )
   }
   if (dest.unit_id !== held.unit_id) {
     return { session, error: "Can't drop a split stack on a different unit." }
@@ -1407,8 +2042,9 @@ export function dropHeldArmyStack(
     )
     .filter((row) => row.id !== heldStackId)
   void origin
-  return {
-    session: writeRowSlots(
+  return guardHeroMin(
+    session,
+    writeRowSlots(
       session,
       townId,
       to.row,
@@ -1416,8 +2052,7 @@ export function dropHeldArmyStack(
       units,
       to.heroId ?? destRow.heroId,
     ),
-    error: null,
-  }
+  )
 }
 
 export function returnHeldArmyStack(
@@ -1567,7 +2202,7 @@ export function claimTown(
   session: GameSession,
   q: number,
   r: number,
-  details?: { name?: string; townTypeId?: number },
+  details?: { name?: string; townTypeId?: number; ownerId?: string },
 ): GameSession {
   let current = session
   let town = current.towns.find((t) => t.position.q === q && t.position.r === r)
@@ -1589,7 +2224,7 @@ export function claimTown(
     }
   }
   current = withBuildingSlots(current, town.id)
-  const ownerId = actingPlayerId(current)
+  const ownerId = actingPlayerId(current, details?.ownerId)
   if (!ownerId || town.player_id === ownerId) {
     return current
   }
@@ -1619,19 +2254,23 @@ export function claimMine(
   q: number,
   r: number,
   resourceId?: number,
+  ownerId?: string,
 ): GameSession {
-  const ownerId = actingPlayerId(session)
-  if (!ownerId) {
+  const actorId = actingPlayerId(session, ownerId)
+  if (!actorId) {
     return session
   }
   const existing = session.nodes.find(
     (node) => node.kind === 'mine' && node.position.q === q && node.position.r === r,
   )
   if (existing) {
+    if (existing.player_id === actorId) {
+      return session
+    }
     return {
       ...session,
       nodes: session.nodes.map((node) =>
-        node.id === existing.id ? { ...node, player_id: ownerId } : node,
+        node.id === existing.id ? { ...node, player_id: actorId } : node,
       ),
     }
   }
@@ -1643,7 +2282,7 @@ export function claimMine(
     position: { q, r },
     resource_id: resourceId,
     kind: 'mine',
-    player_id: ownerId,
+    player_id: actorId,
     collected: false,
   }
   return { ...session, nodes: [...session.nodes, node] }
@@ -1655,9 +2294,10 @@ export function collectPickup(
   r: number,
   resourceId: number,
   amount: number,
+  ownerId?: string,
 ): GameSession {
-  const player = humanPlayer(session)
-  if (!player) {
+  const playerId = actingPlayerId(session, ownerId)
+  if (!playerId) {
     return session
   }
   const existing = session.nodes.find(
@@ -1682,7 +2322,7 @@ export function collectPickup(
     ...session,
     nodes,
     players: session.players.map((p) =>
-      p.id === player.id
+      p.id === playerId
         ? {
             ...p,
             resources: {

@@ -1,3 +1,5 @@
+import { getCachedCatalog, startingStockpileFor, yieldPerMine } from '../town/catalog'
+
 export type ResourceDef = {
   id: number
   name: string
@@ -45,24 +47,6 @@ export type ResourceWallet = Record<number, ResourceEntry>
 /** Neutral / unclaimed mine and pickup marker fill. */
 export const NEUTRAL_OBJECT_COLOR = 0x9e9e9e
 
-/** One-time pickup adds this much to the stockpile. */
-export const PICKUP_AMOUNT = 1
-
-/** Daily yield per claimed mine — placeholder until BR 2-3c. */
-export const YIELD_PER_MINE = 1
-
-/**
- * Placeholder starting stockpile so town construction is testable until a
- * starting-treasury brief exists. Keyed by resource table id.
- */
-const STARTING_STOCKPILE: Partial<Record<number, number>> = {
-  1: 10000,
-  2: 20,
-  3: 20,
-  4: 20,
-  5: 10,
-}
-
 export function applyResourceCatalog(rows: Array<{ id: number; name: string }>): void {
   const next = rows
     .filter((row) => Number.isInteger(row.id) && typeof row.name === 'string' && row.name)
@@ -83,10 +67,11 @@ export function resourceById(id: number): ResourceDef | undefined {
 
 export function emptyWallet(): ResourceWallet {
   const wallet: ResourceWallet = {}
+  const catalog = getCachedCatalog()
   for (const resource of RESOURCES) {
     wallet[resource.id] = {
       claimedMines: 0,
-      stockpile: STARTING_STOCKPILE[resource.id] ?? 0,
+      stockpile: startingStockpileFor(catalog, resource),
     }
   }
   return wallet
@@ -103,7 +88,7 @@ export function formatResourceLine(
 ): string {
   const claimed = entry?.claimedMines ?? 0
   const stockpile = entry?.stockpile ?? 0
-  const dailyYield = claimed * YIELD_PER_MINE
+  const dailyYield = claimed * yieldPerMine(getCachedCatalog())
   return `${resource.name} (${formatAmount(claimed)}/${formatAmount(dailyYield)}) ${formatAmount(stockpile)}`
 }
 
@@ -133,9 +118,9 @@ export function canAfford(
   cost: Record<number, number> | Record<string, number>,
 ): string | null {
   for (const [key, amount] of Object.entries(cost)) {
-    const id = Number(key)
-    const resource = resourceById(id)
-    if (!resource) {
+    const id = costResourceId(key)
+    const resource = id != null ? resourceById(id) : undefined
+    if (id == null || !resource) {
       return `Unknown resource in cost: ${key}`
     }
     const have = wallet[id]?.stockpile ?? 0
@@ -146,14 +131,25 @@ export function canAfford(
   return null
 }
 
+function costResourceId(key: string): number | null {
+  const asNumber = Number(key)
+  if (Number.isInteger(asNumber) && resourceById(asNumber)) {
+    return asNumber
+  }
+  const byName = RESOURCES.find(
+    (resource) => resource.name.toLowerCase() === key.trim().toLowerCase(),
+  )
+  return byName ? byName.id : null
+}
+
 export function deductCost(
   wallet: ResourceWallet,
   cost: Record<number, number> | Record<string, number>,
 ): ResourceWallet {
   const next = snapshotWallet(wallet)
   for (const [key, amount] of Object.entries(cost)) {
-    const id = Number(key)
-    if (next[id]) {
+    const id = costResourceId(key)
+    if (id != null && next[id]) {
       next[id].stockpile -= amount
     }
   }
@@ -164,7 +160,7 @@ export function applyDailyTick(wallet: ResourceWallet): void {
   for (const resource of RESOURCES) {
     const entry = wallet[resource.id]
     if (entry) {
-      entry.stockpile += entry.claimedMines * YIELD_PER_MINE
+      entry.stockpile += entry.claimedMines * yieldPerMine(getCachedCatalog())
     }
   }
 }

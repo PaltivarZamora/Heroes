@@ -72,6 +72,13 @@ export async function createSave(
   return (await response.json()) as SaveSummary
 }
 
+export async function deleteSave(id: number): Promise<void> {
+  const response = await request(`/api/saves/${id}`, { method: 'DELETE' })
+  if (!response.ok) {
+    throw new Error(await readError(response, 'Could not delete that save'))
+  }
+}
+
 export function isGameSession(value: unknown): value is GameSession {
   if (value == null || typeof value !== 'object') {
     return false

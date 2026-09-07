@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   formatAmount,
   formatResourceLine,
@@ -44,7 +44,6 @@ import {
   emptySlotArtFilename,
   GARRISON_ART_FILENAME,
   GENERIC_EMPTY_ART_FILENAME,
-  heroPortraitUrl,
   slotArtFilename,
   slotArtUrl,
 } from './slotArt'
@@ -57,7 +56,7 @@ import {
   dropHeldArmyStack,
   findTownById,
   hireHeroFromPool,
-  HIRE_HERO_GOLD_COST,
+  hireHeroCostMap,
   ensureLibraryOffers,
   patchBuildingSlot,
   placeArmyStack,
@@ -66,13 +65,16 @@ import {
   slotStatesForTown,
   spendResources,
   splitArmyStack,
-  unusedHeroPool,
+  stackUpgradeOffer,
+  unusedTavernPool,
+  upgradeArmyStack,
   visitingHeroId,
   type ArmyRowId,
   type ArmySlotRef,
 } from '../session/accessors'
 import type { SlotState } from './townSlots'
-import { stackView, UnitStackFace, type UnitStackView } from './unitStack'
+import { stackView, type UnitStackView } from './unitStack'
+import { ArmyRow } from './ArmyRow'
 import { ReservedCorner } from './ReservedCorner'
 
 function panelAnchorFromClick(
@@ -114,6 +116,8 @@ type TownManagementProps = {
   selectedHeroId?: string | null
   onOpenHero?: (heroId?: string | null) => void
   onCycleTown?: () => void
+  /** DEV: AI spectator looking at an AI town — no mutations. */
+  readOnly?: boolean
 }
 
 function SlotArt({
@@ -150,45 +154,21 @@ function SlotArt({
   )
 }
 
-function PortraitFace({
-  label,
-  filename,
-}: {
-  label: string
-  filename: string | null
-}) {
-  const [missing, setMissing] = useState(false)
-  useEffect(() => {
-    setMissing(false)
-  }, [filename])
-  if (!filename) {
-    return label
-  }
-  if (missing) {
-    return <span className="town-building-slot-filename">{filename}</span>
-  }
-  return (
-    <img
-      src={heroPortraitUrl(filename)}
-      alt={label}
-      onError={() => setMissing(true)}
-    />
-  )
-}
-
 export function TownManagement({
   townId,
   townName,
   wallet,
   onExit,
   calendarLabel,
-  hasActedToday,
+  hasActedToday: actedToday,
   onActed,
   visitingHeroName,
   selectedHeroId = null,
   onOpenHero,
   onCycleTown,
+  readOnly = false,
 }: TownManagementProps) {
+  const hasActedToday = actedToday || readOnly
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -379,6 +359,9 @@ export function TownManagement({
   }
 
   const recruit = (id: number, qty: number): boolean => {
+    if (readOnly) {
+      return false
+    }
     if (!catalog) {
       return false
     }
@@ -397,6 +380,9 @@ export function TownManagement({
   }
 
   const hireHero = (pick: HeroPoolRow): boolean => {
+    if (readOnly) {
+      return false
+    }
     let error: string | null = null
     updateSession((current) => {
       const result = hireHeroFromPool(current, townId, pick)
@@ -440,6 +426,9 @@ export function TownManagement({
           Exit Town
         </button>
       </header>
+      {readOnly ? (
+        <p className="town-readonly-banner">Read-only — AI spectator (DEV)</p>
+      ) : null}
       <div className="town-building-grid">
         {!catalog ? (
           <p className="town-building-layout-error">Loading buildings…</p>
@@ -501,6 +490,7 @@ export function TownManagement({
           visitingHeroName={visitingHeroName}
           selectedHeroId={selectedHeroId}
           onOpenHero={onOpenHero}
+          readOnly={readOnly}
         />
       </div>
       {openSlot != null && slotState ? (
@@ -529,23 +519,27 @@ export function TownManagement({
             })(),
           )}
           hireCandidates={
-            catalog ? unusedHeroPool(session, catalog.hero_pool) : []
+            catalog ? unusedTavernPool(session, catalog, townTypeId) : []
           }
           onHire={(pick) => hireHero(pick)}
           wallet={wallet}
           builtBuildingIds={builtBuildingIds}
           onOpenMarket={() => {
+            if (readOnly) {
+              return
+            }
             setOpenSlot(null)
             setPanelAnchor(null)
             setMarketOpen(true)
           }}
           onOpenLibrary={() => {
-            if (openSlot != null) {
-              const slot = openSlot
-              setOpenSlot(null)
-              setPanelAnchor(null)
-              setLibrarySlot(slot)
+            if (readOnly || openSlot == null) {
+              return
             }
+            const slot = openSlot
+            setOpenSlot(null)
+            setPanelAnchor(null)
+            setLibrarySlot(slot)
           }}
         />
       ) : null}
@@ -632,8 +626,14 @@ function stackAt(
   session: GameSession,
   townId: string,
   ref: ArmySlotRef,
+  preferredHeroId?: string | null,
 ) {
-  const id = rowSlotIds(session, townId, ref.row)[ref.slot - 1]
+  const id = rowSlotIds(
+    session,
+    townId,
+    ref.row,
+    preferredHeroId ?? ref.heroId,
+  )[ref.slot - 1]
   return id ? session.units.find((row) => row.id === id) ?? null : null
 }
 
@@ -664,6 +664,7 @@ function ArmyRows({
   visitingHeroName,
   selectedHeroId = null,
   onOpenHero,
+  readOnly = false,
 }: {
   session: GameSession
   townId: string
@@ -671,6 +672,7 @@ function ArmyRows({
   visitingHeroName: string
   selectedHeroId?: string | null
   onOpenHero?: (heroId?: string | null) => void
+  readOnly?: boolean
 }) {
   const town = findTownById(session, townId)
   const visitingId = town
@@ -877,6 +879,29 @@ function ArmyRows({
     setArmyMessage('Drop the split stack on a slot (Esc cancels).')
   }
 
+  const confirmUpgrade = (ref: ArmySlotRef) => {
+    if (readOnly || !catalog) {
+      setMenu(null)
+      return
+    }
+    let error: string | null = null
+    updateSession((currentSession) => {
+      const result = upgradeArmyStack(currentSession, townId, ref, catalog)
+      error = result.error
+      return result.error ? currentSession : result.session
+    })
+    setMenu(null)
+    setArmyMessage(error)
+  }
+
+  const menuStack = menu
+    ? stackAt(session, townId, menu.slot, selectedHeroId)
+    : null
+  const upgradeOffer =
+    menuStack && catalog
+      ? stackUpgradeOffer(session, catalog, townId, menuStack)
+      : null
+
   return (
     <div className="town-army-rows">
       <ArmyRow
@@ -889,7 +914,7 @@ function ArmyRows({
             return
           }
           const ref: ArmySlotRef = { row: 'garrison', slot }
-          if (!stackAt(session, townId, ref)) {
+          if (!stackAt(session, townId, ref, selectedHeroId)) {
             return
           }
           event.preventDefault()
@@ -900,7 +925,7 @@ function ArmyRows({
         }}
         onSlotContextMenu={(slot, event) => {
           const ref: ArmySlotRef = { row: 'garrison', slot }
-          if (held || !stackAt(session, townId, ref)) {
+          if (held || !stackAt(session, townId, ref, selectedHeroId)) {
             return
           }
           event.preventDefault()
@@ -923,7 +948,7 @@ function ArmyRows({
             return
           }
           const ref: ArmySlotRef = { row: 'hero', slot }
-          if (!stackAt(session, townId, ref)) {
+          if (!stackAt(session, townId, ref, selectedHeroId)) {
             return
           }
           event.preventDefault()
@@ -934,7 +959,7 @@ function ArmyRows({
         }}
         onSlotContextMenu={(slot, event) => {
           const ref: ArmySlotRef = { row: 'hero', slot }
-          if (held || !stackAt(session, townId, ref)) {
+          if (held || !stackAt(session, townId, ref, selectedHeroId)) {
             return
           }
           event.preventDefault()
@@ -965,6 +990,11 @@ function ArmyRows({
           >
             Split
           </button>
+          {upgradeOffer && !readOnly ? (
+            <button type="button" onClick={() => confirmUpgrade(menu.slot)}>
+              Upgrade — {formatCost(upgradeOffer.total)}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {splitSlot ? (
@@ -974,7 +1004,7 @@ function ArmyRows({
             <input
               type="number"
               min={1}
-              max={Math.max(1, (stackAt(session, townId, splitSlot)?.qty ?? 1) - 1)}
+              max={Math.max(1, (stackAt(session, townId, splitSlot, selectedHeroId)?.qty ?? 1) - 1)}
               value={splitText}
               onChange={(event) => setSplitText(event.target.value)}
             />
@@ -997,66 +1027,6 @@ function ArmyRows({
           {ghost.text}
         </div>
       ) : null}
-    </div>
-  )
-}
-
-function ArmyRow({
-  row,
-  portraitLabel,
-  portraitFilename,
-  armyStacks,
-  onSlotPointerDown,
-  onSlotContextMenu,
-  onPortraitClick,
-}: {
-  row: ArmyRowId
-  portraitLabel: string
-  portraitFilename: string | null
-  armyStacks: UnitStackView[]
-  onSlotPointerDown: (slot: number, event: ReactPointerEvent) => void
-  onSlotContextMenu: (slot: number, event: ReactMouseEvent) => void
-  onPortraitClick?: () => void
-}) {
-  const portrait = (
-    <>
-      <PortraitFace label={portraitLabel} filename={portraitFilename} />
-    </>
-  )
-  return (
-    <div className="town-army-row">
-      {onPortraitClick ? (
-        <button
-          type="button"
-          className="town-army-box town-army-portrait"
-          data-portrait={row}
-          aria-label={portraitLabel}
-          onClick={onPortraitClick}
-        >
-          {portrait}
-        </button>
-      ) : (
-        <div
-          className="town-army-box town-army-portrait"
-          data-portrait={row}
-          aria-label={portraitLabel}
-        >
-          {portrait}
-        </div>
-      )}
-      {armyStacks.map((stack, index) => (
-        <button
-          key={index}
-          type="button"
-          className="town-army-box town-army-slot"
-          data-row={row}
-          data-slot={index + 1}
-          onPointerDown={(event) => onSlotPointerDown(index + 1, event)}
-          onContextMenu={(event) => onSlotContextMenu(index + 1, event)}
-        >
-          <UnitStackFace {...stack} />
-        </button>
-      ))}
     </div>
   )
 }
@@ -1402,7 +1372,7 @@ function FilledSlotActions({
             </>
           ) : hiring ? (
             <div className="town-hire-list">
-              <p>Hire Hero: {formatCost(HIRE_HERO_GOLD_COST)}</p>
+              <p>Hire Hero: {formatCost(hireHeroCostMap())}</p>
               {hireCandidates.length === 0 ? (
                 <p>No unused heroes remain in the pool.</p>
               ) : (

@@ -1,16 +1,17 @@
-﻿import { startCalendar } from '../hex/calendar'
-import { emptyWallet, RESOURCES } from '../hex/resources'
+﻿import { DEFAULT_AI_ARCH_ID } from '../ai/types'
+import { startCalendar } from '../hex/calendar'
+import { RESOURCES } from '../hex/resources'
 import { HERO_MARKER_LABEL } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
-import { forEachPassableHex, isPassable } from '../hex/world'
-import { getCachedCatalog, heroMovementPoints, heroResourcePools } from '../town/catalog'
+import { forEachPassableHex, forEachTile, isPassable } from '../hex/world'
+import { getCachedCatalog, heroMovementPoints, heroResourcePools, startingStockpileFor, visionRange } from '../town/catalog'
 import type { GameConfig } from '../options/gameConfig'
 import {
   mapObjectResourceId,
   mapObjectTownTypeId,
   type MapObjectData,
 } from '../hex/types'
-import { assignHeroesFromPool, progressForHeroName, withNamedProgress } from './accessors'
+import { assignHeroesFromPool, grantHeroStartingArmy, progressForHeroName, withNamedProgress } from './accessors'
 import {
   ARMY_STACK_SLOTS,
   BUILDING_SLOT_COUNT,
@@ -32,10 +33,10 @@ function emptyStackSlots(): Array<string | null> {
 }
 
 export function startingResources(): Record<number, number> {
-  const wallet = emptyWallet()
+  const catalog = getCachedCatalog()
   const resources: Record<number, number> = {}
   for (const resource of RESOURCES) {
-    resources[resource.id] = wallet[resource.id].stockpile
+    resources[resource.id] = startingStockpileFor(catalog, resource)
   }
   return resources
 }
@@ -60,6 +61,8 @@ export function createInitialSession(): GameSession {
       {
         id: HUMAN_PLAYER_ID,
         is_ai: false,
+        ai_spectator: false,
+        arch_id: DEFAULT_AI_ARCH_ID,
         eliminated: false,
         resources: startingResources(),
         hero_ids: [],
@@ -81,7 +84,9 @@ export function createInitialSession(): GameSession {
 export function createSessionFromConfig(config: GameConfig): GameSession {
   const players: Player[] = config.players.map((slot) => ({
     id: playerIdForSlot(slot.slot),
-    is_ai: false,
+    is_ai: slot.controller !== 'human',
+    ai_spectator: slot.controller === 'ai_spectator',
+    arch_id: slot.archId ?? DEFAULT_AI_ARCH_ID,
     eliminated: false,
     resources: startingResources(),
     hero_ids: [],
@@ -92,7 +97,7 @@ export function createSessionFromConfig(config: GameConfig): GameSession {
     game: {
       id: GAME_ID,
       name: 'New Game',
-      seed: 0,
+      seed: config.seed != null && config.seed > 0 ? config.seed : 0,
       calendar: startCalendar(),
       settings: {
         player_count: config.playerCount,
@@ -119,6 +124,8 @@ export function addHumanPlayer(session: GameSession): GameSession {
   const player: Player = {
     id: HUMAN_PLAYER_ID,
     is_ai: false,
+    ai_spectator: false,
+    arch_id: DEFAULT_AI_ARCH_ID,
     eliminated: false,
     resources: startingResources(),
     hero_ids: [],
@@ -254,6 +261,7 @@ export function addHumanHero(
     current_xp: 0,
     used_abilities_this_battle: [],
     used_abilities_today: [],
+    arch_id: null,
     ...heroResourcePools(getCachedCatalog(), {
       class_id: null,
       current_level: 1,
@@ -298,6 +306,7 @@ function spawnPlayerHero(
   let classId = heroTypeId
   let name = HERO_MARKER_LABEL
   let imagePath: string | null = null
+  let heroArchId: number | null = null
   if (catalog) {
     const types = catalog.hero_type
     if (classId == null && types.length > 0) {
@@ -312,6 +321,7 @@ function spawnPlayerHero(
       name = pick.name
       classId = pick.class_id
       imagePath = pick.image_path
+      heroArchId = pick.arch_id
     } else if (type) {
       name = type.name
     }
@@ -338,6 +348,7 @@ function spawnPlayerHero(
     current_xp: live.current_xp,
     used_abilities_this_battle: [],
     used_abilities_today: [],
+    arch_id: heroArchId,
     ...heroResourcePools(getCachedCatalog(), {
       class_id: classId,
       current_level: live.current_level,
@@ -357,7 +368,7 @@ function spawnPlayerHero(
     live,
   )
   if (hero.class_id != null || !catalog) {
-    return withHero
+    return grantHeroStartingArmy(withHero, hero.id)
   }
   return assignHeroesFromPool(withHero, catalog.hero_pool)
 }
@@ -522,5 +533,29 @@ export function ensureStartingHeroes(
       picks?.[index] ?? null,
     )
   }
-  return next
+  return seedStartingVision(next)
+}
+
+/** Each player gets starting vision around their hero. Live fog only paints the active player. */
+export function seedStartingVision(session: GameSession): GameSession {
+  const range = visionRange(getCachedCatalog())
+  return {
+    ...session,
+    players: session.players.map((player) => {
+      if (player.explored.length > 0) {
+        return player
+      }
+      const hero = session.heroes.find((row) => row.player_id === player.id)
+      if (!hero) {
+        return player
+      }
+      const explored: Array<{ q: number; r: number }> = []
+      forEachTile((q, r) => {
+        if (hexDistance(hero.position, { q, r }) <= range) {
+          explored.push({ q, r })
+        }
+      })
+      return { ...player, explored }
+    }),
+  }
 }

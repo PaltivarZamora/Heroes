@@ -25,7 +25,6 @@ public class ReferenceData {
             "move_type",
             "town",
             "hero_type",
-            "skill",
             "building",
             "unit",
             "unit_tag",
@@ -46,6 +45,8 @@ public class ReferenceData {
             "player_color",
             "terrain_type",
             "app_config",
+            "ai_arch",
+            "ai_arch_weight",
             "levels",
             "hero_levels");
 

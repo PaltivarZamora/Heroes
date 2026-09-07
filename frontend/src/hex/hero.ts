@@ -1,6 +1,7 @@
 import { type Grid, type Hex } from 'honeycomb-grid'
-import { findPath } from './pathfinding'
+import { findPathToward } from './pathfinding'
 import { getTile, isPassable } from './world'
+import { getCachedCatalog, heroInteractCost } from '../town/catalog'
 
 /** Player 1's first hero, per the locked marker scheme. */
 export const HERO_MARKER_LABEL = 'X1'
@@ -10,14 +11,8 @@ export const PLAYER_1_COLOR = 0xc62828
 
 export const MAX_MOVEMENT_POINTS = 10
 
-/** Flat extra cost when a hero-to-hero interaction actually triggers. */
-export const HERO_INTERACT_COST = 0.25
-
 /** Offset col/row — map center on Small 36×36; moved if that hex is impassable. */
 export const HERO_START_OFFSET = { col: 18, row: 18 }
-
-/** Hex-distance radius of always-on vision (BR 2-3a). */
-export const VISION_RANGE = 4
 
 export const MOVE_STEP_MS = 90
 
@@ -35,7 +30,7 @@ export function spendMovement(remaining: number, cost: number): number {
 
 /** Hero-meet cost: still fires if remaining < cost, never goes below 0. */
 export function spendHeroInteract(remaining: number): number {
-  return roundMovement(Math.max(0, remaining - HERO_INTERACT_COST))
+  return roundMovement(Math.max(0, remaining - heroInteractCost(getCachedCatalog())))
 }
 
 export function formatMp(n: number): string {
@@ -93,14 +88,14 @@ export function movementSteps(
   if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return []
   }
-  const path = findPath(from, to, blocked)
+  const path = findPathToward(from, to, blocked)
   if (!path || path.length <= 1) {
     return []
   }
   const steps: Hex[] = []
   let mp = remaining
   for (let i = 1; i < path.length; i++) {
-    const hex = grid.getHex(path[i])
+    const hex = grid.getHex(path[i]) ?? grid.createHex(path[i])
     if (!hex) {
       break
     }

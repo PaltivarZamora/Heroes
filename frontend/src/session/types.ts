@@ -26,6 +26,13 @@ export type Game = {
 export type Player = {
   id: string
   is_ai: boolean
+  /**
+   * DEV ONLY: camera-follow + manual End Turn while this AI acts.
+   * Not a player-facing game mode.
+   */
+  ai_spectator: boolean
+  /** Player-level archetype (`ai_arch.id`). */
+  arch_id: number
   /** Skip in turn order after losing last town and last hero. */
   eliminated: boolean
   resources: Record<number, number>
@@ -94,6 +101,8 @@ export type Hero = {
   used_abilities_this_battle: number[]
   /** Ability ids cast today (game day). Reset at day rollover. */
   used_abilities_today: number[]
+  /** Nullable hero archetype from `hero_pool.arch_id`. Null = pure player blend. */
+  arch_id: number | null
 }
 
 /** Per-name XP/level that survives death → tavern → re-hire. */

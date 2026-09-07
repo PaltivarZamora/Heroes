@@ -18,16 +18,11 @@ final class TestGrid {
 
     static final int MIN_SEGMENT_WIDTH = 3;
     static final int MAX_SEGMENT_WIDTH = 8;
-    static final int MINES_PER_RESOURCE = 2;
-    static final int PICKUPS_PER_RESOURCE = 2;
-    static final int TOWN_COUNT = 5;
     static final int START_TOWN_TYPE_ID = 1;
 
     /** Same offset cell as frontend `HERO_START_OFFSET` (Small 36×36 center). */
     static final int HERO_START_COL = 18;
     static final int HERO_START_ROW = 18;
-    static final int START_TOWN_MIN_DIST = 2;
-    static final int START_TOWN_MAX_DIST = 3;
 
     private TestGrid() {
     }
@@ -75,11 +70,19 @@ final class TestGrid {
                 }
             }
         }
+        MapPlaceConfig cfg = mapPlaceConfig(data);
         TownNameSession names = TownNameSession.from(data, rng);
         List<MapObjectData> objects = new ArrayList<>();
         int placed = 0;
         TownPick start = names.takePreferredStart(rng);
-        if (start != null && placeStartTown(objects, passable, start, rng)) {
+        if (start != null
+                && placeStartTown(
+                        objects,
+                        passable,
+                        start,
+                        rng,
+                        cfg.startTownMin(),
+                        cfg.startTownMax())) {
             placed = 1;
         }
         Collections.shuffle(passable, rng);
@@ -90,20 +93,20 @@ final class TestGrid {
                 continue;
             }
             String resourceName = stringVal(row, "name");
-            for (int n = 0; n < MINES_PER_RESOURCE; n++) {
+            for (int n = 0; n < cfg.minesPerRes(); n++) {
                 if (i >= passable.size()) {
                     return objects;
                 }
                 objects.add(objectAt(passable.get(i++), "mine", resourceId, resourceName));
             }
-            for (int n = 0; n < PICKUPS_PER_RESOURCE; n++) {
+            for (int n = 0; n < cfg.loosePerRes(); n++) {
                 if (i >= passable.size()) {
                     return objects;
                 }
                 objects.add(objectAt(passable.get(i++), "pickup", resourceId, resourceName));
             }
         }
-        placeTowns(objects, passable, i, names, rng, placed);
+        placeTowns(objects, passable, i, names, rng, placed, cfg.townCount());
         return objects;
     }
 
@@ -111,10 +114,13 @@ final class TestGrid {
             List<MapObjectData> objects,
             List<int[]> passable,
             TownPick start,
-            Random rng) {
+            Random rng,
+            int startTownMin,
+            int startTownMax) {
         int startQ = HERO_START_COL;
         int startR = HERO_START_ROW - offsetFromZero(HERO_START_COL);
-        int[] chosen = pickNearbyPassable(passable, startQ, startR, rng);
+        int[] chosen =
+                pickNearbyPassable(passable, startQ, startR, rng, startTownMin, startTownMax);
         if (chosen == null) {
             return false;
         }
@@ -127,12 +133,16 @@ final class TestGrid {
         return true;
     }
 
-    /** Prefer a passable hex 2–3 away from spawn so the first town is in starting vision. */
+    /** Prefer a passable hex in [min, max] from spawn so the first town is in starting vision. */
     private static int[] pickNearbyPassable(
             List<int[]> passable,
             int startQ,
             int startR,
-            Random rng) {
+            Random rng,
+            int startTownMin,
+            int startTownMax) {
+        int min = Math.max(1, startTownMin);
+        int max = Math.max(min, startTownMax);
         List<int[]> nearby = new ArrayList<>();
         int[] fallback = null;
         int fallbackDist = Integer.MAX_VALUE;
@@ -143,7 +153,7 @@ final class TestGrid {
             if (dist == 0) {
                 continue;
             }
-            if (dist >= START_TOWN_MIN_DIST && dist <= START_TOWN_MAX_DIST) {
+            if (dist >= min && dist <= max) {
                 nearby.add(colRow);
             }
             if (dist < fallbackDist) {
@@ -170,9 +180,11 @@ final class TestGrid {
             int start,
             TownNameSession names,
             Random rng,
-            int placed) {
+            int placed,
+            int townCount) {
         int i = start;
-        while (placed < TOWN_COUNT) {
+        int want = Math.max(0, townCount);
+        while (placed < want) {
             Integer townId = names.pickTownId(rng);
             if (townId == null) {
                 return;
@@ -288,6 +300,56 @@ final class TestGrid {
     }
 
     private record TownPick(int townTypeId, String name) {}
+
+    private record MapPlaceConfig(
+            int minesPerRes,
+            int loosePerRes,
+            int townCount,
+            int startTownMin,
+            int startTownMax) {}
+
+    private static MapPlaceConfig mapPlaceConfig(ReferenceData data) {
+        int mines = configInt(data, "map_mines_per_res", 4);
+        int loose = configInt(data, "map_loose_per_res", 10);
+        int towns = configInt(data, "map_towns", 6);
+        int min = configInt(data, "map_start_town_min", 2);
+        int max = configInt(data, "map_start_town_max", 3);
+        if (min > max) {
+            int swap = min;
+            min = max;
+            max = swap;
+        }
+        return new MapPlaceConfig(mines, loose, towns, min, max);
+    }
+
+    private static int configInt(ReferenceData data, String key, int fallback) {
+        for (Map<String, Object> row : data.rows("app_config")) {
+            if (!key.equals(stringVal(row, "key"))) {
+                continue;
+            }
+            Object raw = row.get("value");
+            if (raw instanceof Number n) {
+                double value = n.doubleValue();
+                if (Double.isFinite(value)) {
+                    return Math.max(0, (int) Math.floor(value));
+                }
+                return fallback;
+            }
+            if (raw == null) {
+                return fallback;
+            }
+            try {
+                double value = Double.parseDouble(raw.toString().trim());
+                if (Double.isFinite(value)) {
+                    return Math.max(0, (int) Math.floor(value));
+                }
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+            return fallback;
+        }
+        return fallback;
+    }
 
     private static List<Map<String, Object>> resourceRows(ReferenceData data) {
         List<Map<String, Object>> rows = new ArrayList<>(data.rows("resource"));

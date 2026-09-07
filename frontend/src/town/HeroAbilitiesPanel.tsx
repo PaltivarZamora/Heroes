@@ -71,7 +71,7 @@ export function HeroAbilitiesPanel({
                     className={
                       onSelectAbility
                         ? `hero-ability-list hero-ability-list-cast hero-ability-list-tier-${level}`
-                        : 'hero-ability-list'
+                        : `hero-ability-list hero-ability-list-tier-${level}`
                     }
                   >
                     {rows.map((ability) => {

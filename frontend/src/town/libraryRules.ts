@@ -1,19 +1,15 @@
 import { GOLD_RESOURCE_ID } from '../hex/resources'
 import type { OfferedAbilityRoll } from '../session/types'
-import type {
-  AbilityRow,
-  DisciplineRow,
-  HeroTypeRow,
-  ReferenceCatalog,
+import {
+  getCachedCatalog,
+  libraryGoldCost,
+  type AbilityRow,
+  type DisciplineRow,
+  type HeroTypeRow,
+  type ReferenceCatalog,
 } from './catalog'
 
 export const LIBRARY_TIERS = [1, 2, 3] as const
-
-export const LIBRARY_GOLD_COST: Record<number, number> = {
-  1: 500,
-  2: 1000,
-  3: 2000,
-}
 
 export type LibrarySlotKind = 'unopened' | 'locked' | 'buyable' | 'bought'
 
@@ -168,7 +164,7 @@ export function librarySlotKind(
 }
 
 export function goldCostForLevel(levelId: number): Record<number, number> {
-  return { [GOLD_RESOURCE_ID]: LIBRARY_GOLD_COST[levelId] ?? 0 }
+  return { [GOLD_RESOURCE_ID]: libraryGoldCost(getCachedCatalog(), levelId) }
 }
 
 export function abilityById(
@@ -176,6 +172,40 @@ export function abilityById(
   id: number,
 ): AbilityRow | undefined {
   return catalog.ability.find((row) => row.id === id)
+}
+
+/**
+ * First unlearned offered ability this hero can take at this Library,
+ * in the same discipline → tier → slot order the Library UI uses.
+ */
+export function firstLearnableAbility(
+  catalog: ReferenceCatalog,
+  hero: { class_id: number | null; learned_abilities?: number[] },
+  libraryLevel: number,
+  offers: OfferedAbilityRoll[] | undefined,
+): AbilityRow | null {
+  if (hero.class_id == null || libraryLevel < 1) {
+    return null
+  }
+  const learned = new Set(hero.learned_abilities ?? [])
+  for (const discipline of classDisciplines(catalog, hero.class_id)) {
+    for (const level of LIBRARY_TIERS) {
+      if (libraryLevel < level) {
+        continue
+      }
+      const offer = findOffer(offers, discipline.id, level)
+      for (const id of offer?.ability_ids ?? []) {
+        if (learned.has(id)) {
+          continue
+        }
+        const ability = abilityById(catalog, id)
+        if (ability) {
+          return ability
+        }
+      }
+    }
+  }
+  return null
 }
 
 export function learnedAbilitiesAtTier(

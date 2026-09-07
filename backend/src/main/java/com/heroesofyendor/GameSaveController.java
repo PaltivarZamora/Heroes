@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -38,7 +39,7 @@ public class GameSaveController {
                             """
                             select id, name, seed, created_at, updated_at
                             from game_save
-                            order by created_at desc
+                            order by updated_at desc nulls last, created_at desc
                             """,
                             this::mapSummary);
             return ResponseEntity.ok(rows);
@@ -82,19 +83,13 @@ public class GameSaveController {
         int seed = body.seed() == null ? 0 : body.seed();
         try {
             String json = objectMapper.writeValueAsString(body.gameState());
+            Long existingId = existingSaveId(name);
             List<GameSaveSummary> rows =
-                    jdbc.query(
-                            """
-                            insert into game_save (name, seed, game_state, created_at, updated_at)
-                            values (?, ?, cast(? as jsonb), now(), now())
-                            returning id, name, seed, created_at, updated_at
-                            """,
-                            this::mapSummary,
-                            name,
-                            seed,
-                            json);
+                    existingId == null
+                            ? insertSave(name, seed, json)
+                            : updateSave(existingId, seed, json);
             if (rows.isEmpty()) {
-                return error(HttpStatus.INTERNAL_SERVER_ERROR, "Save did not return a new row.");
+                return error(HttpStatus.INTERNAL_SERVER_ERROR, "Save did not return a row.");
             }
             return ResponseEntity.ok(rows.get(0));
         } catch (JsonProcessingException e) {
@@ -104,6 +99,62 @@ public class GameSaveController {
             log.error("Failed to save game: {}", e.getMessage());
             return error(HttpStatus.INTERNAL_SERVER_ERROR, "Could not save the game: " + detail(e));
         }
+    }
+
+    @DeleteMapping("/api/saves/{id}")
+    public ResponseEntity<?> deleteSave(@PathVariable long id) {
+        try {
+            int removed = jdbc.update("delete from game_save where id = ?", id);
+            if (removed == 0) {
+                return error(HttpStatus.NOT_FOUND, "That save was not found.");
+            }
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("Failed to delete game save {}: {}", id, e.getMessage());
+            return error(HttpStatus.INTERNAL_SERVER_ERROR, "Could not delete that save: " + detail(e));
+        }
+    }
+
+    private Long existingSaveId(String name) {
+        List<Long> ids =
+                jdbc.query(
+                        """
+                        select id
+                        from game_save
+                        where name = ?
+                        order by updated_at desc nulls last, id desc
+                        limit 1
+                        """,
+                        (rs, rowNum) -> rs.getLong("id"),
+                        name);
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
+    private List<GameSaveSummary> insertSave(String name, int seed, String json) {
+        return jdbc.query(
+                """
+                insert into game_save (name, seed, game_state, created_at, updated_at)
+                values (?, ?, cast(? as jsonb), now(), now())
+                returning id, name, seed, created_at, updated_at
+                """,
+                this::mapSummary,
+                name,
+                seed,
+                json);
+    }
+
+    private List<GameSaveSummary> updateSave(long id, int seed, String json) {
+        return jdbc.query(
+                """
+                update game_save
+                set seed = ?, game_state = cast(? as jsonb), updated_at = now()
+                where id = ?
+                returning id, name, seed, created_at, updated_at
+                """,
+                this::mapSummary,
+                seed,
+                json,
+                id);
     }
 
     private GameSaveSummary mapSummary(ResultSet rs, int rowNum) throws SQLException {

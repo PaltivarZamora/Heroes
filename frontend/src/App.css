@@ -47,6 +47,15 @@
   white-space: nowrap;
 }
 
+.town-readonly-banner {
+  margin: 0 16px 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #4a3b12;
+  color: #f5e6a8;
+  font-size: 13px;
+}
+
 .resource-debug {
   width: 100%;
   display: flex;
@@ -69,18 +78,66 @@
   z-index: 3;
   margin: 0;
   padding: 8px 10px;
+  min-width: 280px;
+  max-width: min(90vw, 720px);
+  max-height: 70vh;
+  overflow: auto;
   background: #111;
   border: 1px solid #444;
   border-radius: 4px;
   color: #e8e8e8;
   font: 12px/1.4 ui-monospace, 'Cascadia Code', Consolas, monospace;
-  white-space: pre;
   text-align: left;
+}
+
+.debug-peek pre {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  white-space: pre-wrap;
+}
+
+.debug-setup {
+  margin: 0;
+}
+
+.debug-setup summary {
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+}
+
+.debug-setup .debug-setup-open {
+  display: none;
+}
+
+.debug-setup[open] .debug-setup-closed {
+  display: none;
+}
+
+.debug-setup[open] .debug-setup-open {
+  display: inline;
+}
+
+.debug-setup[open] pre {
+  margin-top: 6px;
+}
+
+.debug-peek-body {
+  margin-top: 8px;
 }
 
 .debug-copy:hover .debug-peek,
 .debug-copy:focus-within .debug-peek {
   display: block;
+}
+
+.hud-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
 }
 
 .hex-scale-switch {
@@ -557,10 +614,8 @@
 }
 
 .options-menu {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 30;
+  position: relative;
+  z-index: 5;
   font: 14px/1.4 system-ui, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -576,13 +631,39 @@
 }
 
 .options-choices {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 6;
   margin-top: 4px;
   display: flex;
   flex-direction: column;
-  min-width: 140px;
+  min-width: 180px;
   background: #1b1b1b;
   border: 1px solid #555;
   border-radius: 4px;
+}
+
+.options-flyout {
+  position: relative;
+}
+
+.options-submenu {
+  display: none;
+  position: absolute;
+  right: 100%;
+  top: 0;
+  z-index: 7;
+  min-width: 140px;
+  flex-direction: column;
+  background: #1b1b1b;
+  border: 1px solid #555;
+  border-radius: 4px;
+}
+
+.options-flyout:hover > .options-submenu,
+.options-flyout:focus-within > .options-submenu {
+  display: flex;
 }
 
 .options-choices button {
@@ -595,6 +676,11 @@
 .options-toggle:hover,
 .options-actions button:hover {
   background: #333;
+}
+
+.options-choices button.active {
+  background: #4caf50;
+  color: #111;
 }
 
 .options-choices button:disabled {
@@ -668,7 +754,7 @@
 
 .new-game-player-row {
   display: grid;
-  grid-template-columns: 88px minmax(120px, 0.7fr) minmax(0, 1.4fr);
+  grid-template-columns: 88px minmax(180px, 0.9fr) minmax(0, 1.4fr);
   gap: 8px;
   align-items: end;
 }
@@ -775,6 +861,20 @@
   top: 0;
   z-index: 2;
   background: #111;
+}
+
+.combat-debug-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.combat-screen .debug-peek {
+  position: fixed;
+  top: 52px;
+  right: 24px;
+  z-index: 40;
 }
 
 .combat-target-icon {
@@ -1365,51 +1465,54 @@ button.town-army-portrait {
   margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  width: 100%;
   gap: 8px;
+  justify-items: stretch;
+  box-sizing: border-box;
 }
 
-.hero-ability-list-cast {
+ul.hero-ability-list.hero-ability-list-tier-1,
+ul.hero-ability-list.hero-ability-list-tier-2 {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   width: 100%;
 }
 
-.hero-ability-list-tier-1,
-.hero-ability-list-tier-2 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.hero-ability-list-tier-3 {
+ul.hero-ability-list.hero-ability-list-tier-3 {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
 }
 
-.hero-ability-list-cast > li {
+.hero-ability-list > li {
   min-width: 0;
 }
 
-.hero-ability-list-cast .ability-tip {
+.hero-ability-list .ability-tip {
   display: block;
   width: 100%;
+  max-width: none;
 }
 
 .hero-ability-name {
-  display: inline-block;
-  padding: 6px 10px;
-  border: 1px solid #555;
-  border-radius: 4px;
-  background: #1b1b1b;
-}
-
-.hero-ability-list-cast .hero-ability-name {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   width: 100%;
+  max-width: none;
   min-height: 2.6em;
+  padding: 6px 10px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #1b1b1b;
   box-sizing: border-box;
   text-align: center;
+}
+
+ul.hero-ability-list button.hero-ability-name {
+  width: 100%;
 }
 
 .hero-ability-lock {
