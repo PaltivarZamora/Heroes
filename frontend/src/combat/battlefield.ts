@@ -6,7 +6,6 @@ import { pickTerrainVariantIndex } from '../hex/terrainTextures'
 import type { ReferenceCatalog } from '../town/catalog'
 import { terrainByName, terrainIsRandomEligible } from '../town/catalog'
 import { getTile } from '../hex/world'
-import type { CombatTile } from './battle'
 
 export const COMBAT_COLUMNS = 15
 export const COMBAT_ROWS = 11
@@ -55,14 +54,17 @@ export function siegeTileTerrain(
   if (col === siegeMoatColForRow(row)) {
     return SIEGE_MOAT_TERRAIN
   }
-  if (
-    col === siegeWallColForRow(row) ||
-    col >= SIEGE_WALL_COL ||
-    col >= SIEGE_INTERIOR_COL_START
-  ) {
+  // Interior follows the per-row wall column — a fixed SIEGE_WALL_COL left a
+  // standable gap on bowed rows (and wrong attack stands at the tapered ends).
+  if (col >= siegeWallColForRow(row)) {
     return SIEGE_STONE_FLOOR
   }
   return sampled
+}
+
+/** Attacker-side of the tapered wall on this row (col strictly left of wall). */
+export function isSiegeExteriorCol(col: number, row: number): boolean {
+  return col < siegeWallColForRow(row)
 }
 
 const COMBAT_GRID_PADDING = 28
@@ -137,6 +139,14 @@ export function neighborhoodTerrains(a: Axial, b: Axial): string[] {
   return [...seen]
 }
 
+/** Blocked hexes (Water, Trees, Mountains, …) sample less often than open ground.
+ * 0.49 = prior 0.7 cut, then another ~30% (units were locking when all three mixed). */
+const BLOCKED_TERRAIN_WEIGHT = 0.49
+
+function isBarrierTerrainName(name: string): boolean {
+  return name.replaceAll(' ', '_').toLowerCase() === 'barrier'
+}
+
 export function pickCombatTerrain(
   pool: readonly string[],
   seed: number,
@@ -144,11 +154,17 @@ export function pickCombatTerrain(
   r: number,
   catalog?: ReferenceCatalog | null,
 ): string {
-  const eligible = pool.filter((name) =>
-    terrainIsRandomEligible(terrainByName(catalog, name)),
-  )
+  const eligible = pool.filter((name) => {
+    if (isBarrierTerrainName(name)) {
+      return false
+    }
+    return terrainIsRandomEligible(terrainByName(catalog, name))
+  })
   const fallback = (catalog?.terrain_type ?? [])
-    .filter(terrainIsRandomEligible)
+    .filter(
+      (row) =>
+        !isBarrierTerrainName(row.name) && terrainIsRandomEligible(row),
+    )
     .map((row) => row.name)
   const list =
     eligible.length > 0
@@ -160,7 +176,10 @@ export function pickCombatTerrain(
     seed,
     q,
     r,
-    list.map(() => ({ weight: 1 })),
+    list.map((name) => {
+      const blocked = terrainByName(catalog, name)?.is_blocked === true
+      return { weight: blocked ? BLOCKED_TERRAIN_WEIGHT : 1 }
+    }),
   )
   return list[index] ?? 'Grass'
 }
@@ -178,71 +197,4 @@ export function combatEncounterSeed(
       (defender.r * 50331653)) >>>
     0
   )
-}
-
-const BARRIER_COUNT_MIN = 5
-const BARRIER_COUNT_MAX = 8
-
-function u32(n: number): number {
-  return n >>> 0
-}
-
-function barrierRand(seed: number, n: number): number {
-  let h = u32(
-    Math.imul(seed, 0x9e3779b1) ^ Math.imul(n + 0x7f4a7c15, 0x85ebca6b),
-  )
-  h = u32((h ^ (h >>> 16)) * 0x7feb352d)
-  h = u32((h ^ (h >>> 15)) * 0x846ca68b)
-  return u32(h ^ (h >>> 16))
-}
-
-/**
- * Overlay 5–8 Barrier hexes after terrain is assigned. Skips army
- * placement columns so starting stacks are never boxed in.
- */
-export function applyCombatBarriers(
-  tiles: CombatTile[],
-  colByKey: ReadonlyMap<string, number>,
-  reservedCols: readonly number[],
-  seed: number,
-  catalog: ReferenceCatalog,
-): CombatTile[] {
-  const reserved = new Set(reservedCols)
-  const eligible: number[] = []
-  for (let i = 0; i < tiles.length; i += 1) {
-    const tile = tiles[i]!
-    const col = colByKey.get(`${tile.q},${tile.r}`)
-    if (col == null || reserved.has(col)) {
-      continue
-    }
-    eligible.push(i)
-  }
-  if (eligible.length === 0) {
-    return tiles
-  }
-  for (let i = eligible.length - 1; i > 0; i -= 1) {
-    const j = barrierRand(seed, i + 1) % (i + 1)
-    const tmp = eligible[i]!
-    eligible[i] = eligible[j]!
-    eligible[j] = tmp
-  }
-  const span = BARRIER_COUNT_MAX - BARRIER_COUNT_MIN + 1
-  const count = Math.min(
-    eligible.length,
-    BARRIER_COUNT_MIN + (barrierRand(seed, 0) % span),
-  )
-  const barrier = terrainByName(catalog, 'Barrier')
-  const next = tiles.slice()
-  for (let n = 0; n < count; n += 1) {
-    const i = eligible[n]!
-    const tile = next[i]!
-    next[i] = {
-      ...tile,
-      terrain: barrier?.name ?? 'Barrier',
-      movementCostMultiplier: barrier?.move_cost ?? null,
-      blocked: barrier?.is_blocked ?? true,
-      blocksLos: barrier?.blocks_los ?? true,
-    }
-  }
-  return next
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, Fragment, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   formatAmount,
   formatResourceLine,
@@ -11,6 +11,7 @@ import {
   buildingGrowth,
   constructionCost,
   destroyCostOf,
+  emptySlotPreviewLines,
   hasPrerequisite,
   effectLine,
   fetchCatalog,
@@ -26,7 +27,7 @@ import {
   isTavernBuilding,
   isUndesignedSlot,
   maxAffordableQty,
-  missingArmyPrerequisiteLine,
+  lockedArmyPrerequisiteLines,
   missingGenericPrerequisiteLine,
   nextInChain,
   scaleCost,
@@ -46,9 +47,11 @@ import {
   GENERIC_EMPTY_ART_FILENAME,
   slotArtFilename,
   slotArtUrl,
+  townSkylineFilename,
 } from './slotArt'
 import { Marketplace } from './Marketplace'
 import { Library } from './Library'
+import { AbilityTip } from './AbilityTip'
 import { getSession, subscribe, updateSession } from '../session/store'
 import { NECROPOLIS_TOWN_TYPE_ID, type GameSession } from '../session/types'
 import {
@@ -184,6 +187,8 @@ export function TownManagement({
   const [message, setMessage] = useState<string | null>(null)
   const townTypeId =
     findTownById(session, townId)?.town_type_id ?? NECROPOLIS_TOWN_TYPE_ID
+  const townTypeLabel =
+    catalog?.town.find((row) => row.id === townTypeId)?.name ?? 'Necropolis'
   const layoutRows = catalog ? townLayoutFor(catalog, townTypeId) : []
   const layoutError = catalog ? townLayoutError(catalog, townTypeId) : null
 
@@ -286,15 +291,22 @@ export function TownManagement({
           row.level >= 1 &&
           row.building_id != null,
       )
-      .map((row) => row.building_id as number),
+      .map((row) => Number(row.building_id))
+      .filter((id) => Number.isInteger(id) && id > 0),
   )
+
+  const closePanel = () => {
+    setOpenSlot(null)
+    setPanelAnchor(null)
+    setMessage(null)
+  }
 
   const build = (id: number, building: BuildingRow) => {
     if (hasActedToday || !catalog) {
       return
     }
     if (!hasPrerequisite(building, builtBuildingIds)) {
-      setMessage('Requires the prerequisite building in this town.')
+      setMessage(missingGenericPrerequisiteLine(catalog, building, builtBuildingIds))
       return
     }
     if (
@@ -316,6 +328,7 @@ export function TownManagement({
         ensureLibraryOffers(current, catalog, townId, townTypeId, id),
       )
     }
+    closePanel()
   }
 
   const upgrade = (id: number, next: BuildingRow) => {
@@ -324,7 +337,7 @@ export function TownManagement({
       return
     }
     if (!hasPrerequisite(next, builtBuildingIds)) {
-      setMessage('Requires the prerequisite building in this town.')
+      setMessage(missingGenericPrerequisiteLine(catalog, next, builtBuildingIds))
       return
     }
     if (
@@ -346,6 +359,7 @@ export function TownManagement({
         ensureLibraryOffers(current, catalog, townId, townTypeId, id),
       )
     }
+    closePanel()
   }
 
   const destroy = (id: number, current: BuildingRow) => {
@@ -356,6 +370,7 @@ export function TownManagement({
       return
     }
     onActed()
+    closePanel()
   }
 
   const recruit = (id: number, qty: number): boolean => {
@@ -406,10 +421,11 @@ export function TownManagement({
       role="dialog"
       aria-modal="true"
       aria-labelledby="town-management-title"
+      data-tip-contain=""
     >
       <img
         className="town-management-skyline"
-        src="/assets/towns/Necropolis_Skyline.png"
+        src={slotArtUrl(townSkylineFilename(townTypeLabel))}
         alt=""
       />
       <header className="town-management-bar">
@@ -450,18 +466,32 @@ export function TownManagement({
               : false
             const unbuilt = state.level <= 0
             const filename = unbuilt
-              ? emptySlotArtFilename(id)
-              : slotArtFilename(id, state.level, building?.image_path ?? null)
-            return (
+              ? emptySlotArtFilename(id, townTypeLabel)
+              : slotArtFilename(
+                  id,
+                  state.level,
+                  building?.image_path ?? null,
+                  townTypeLabel,
+                )
+            const hoverPreview =
+              unbuilt && catalog
+                ? emptySlotPreviewLines(
+                    catalog,
+                    id,
+                    townTypeId,
+                    builtBuildingIds,
+                  ).join('\n')
+                : ''
+            const slotStyle = townLayoutSlotStyle(layout, layoutRows)
+            const slotButton = (
               <button
-                key={id}
                 type="button"
                 className={
                   emptyPlaceholder && state.level <= 0
                     ? 'town-building-slot town-building-slot-empty'
                     : 'town-building-slot'
                 }
-                style={townLayoutSlotStyle(layout, layoutRows)}
+                style={hoverPreview ? { inset: 0, width: '100%', height: '100%' } : slotStyle}
                 aria-label={`Slot ${id}`}
                 onClick={(event) => {
                   setOpenSlot(id)
@@ -473,6 +503,19 @@ export function TownManagement({
                   <SlotArt filename={filename} unbuilt={unbuilt} />
                 )}
               </button>
+            )
+            if (!hoverPreview) {
+              return <Fragment key={id}>{slotButton}</Fragment>
+            }
+            return (
+              <AbilityTip
+                key={id}
+                description={hoverPreview}
+                className="town-building-slot-tip"
+                style={slotStyle}
+              >
+                {slotButton}
+              </AbilityTip>
             )
           })
         )}
@@ -1085,6 +1128,17 @@ function BuildingPanel({
     nextCandidate && hasPrerequisite(nextCandidate, builtBuildingIds)
       ? nextCandidate
       : null
+  const lockedUpgradeLine =
+    catalog &&
+    nextCandidate &&
+    !next &&
+    !hasPrerequisite(nextCandidate, builtBuildingIds)
+      ? missingGenericPrerequisiteLine(
+          catalog,
+          nextCandidate,
+          builtBuildingIds,
+        )
+      : null
 
   return (
     <div
@@ -1128,6 +1182,7 @@ function BuildingPanel({
           hasActedToday={hasActedToday}
           onUpgrade={onUpgrade}
           onLearn={onOpenLibrary}
+          lockedUpgradeLine={lockedUpgradeLine}
         />
       ) : current ? (
         <FilledSlotActions
@@ -1144,6 +1199,7 @@ function BuildingPanel({
           garrisonOccupied={garrisonOccupied}
           hireCandidates={hireCandidates}
           onHire={onHire}
+          lockedUpgradeLine={lockedUpgradeLine}
         />
       ) : (
         <p>Unknown building.</p>
@@ -1195,34 +1251,35 @@ function EmptySlotActions({
     )
     if (options.length === 0) {
       return (
-        <p>
-          {missingArmyPrerequisiteLine(
+        <div className="town-building-branches">
+          {lockedArmyPrerequisiteLines(
             catalog,
             slotId,
             townTypeId,
             builtBuildingIds,
-          )}
-        </p>
+          ).map((line, index) => (
+            <p key={`${slotId}-lock-${index}`}>{line}</p>
+          ))}
+        </div>
       )
     }
     return (
       <div className="town-building-branches">
         {options.map((building) => {
-          const klass = heroTypeName(catalog, building.class_id)
+          const unitName = unitForBuilding(catalog, building.id)?.name?.trim()
+          const label = unitName
+            ? `Build ${building.name} (${unitName}): ${formatCost(constructionCost(catalog, building))}`
+            : `Build ${building.name}: ${formatCost(constructionCost(catalog, building))}`
           return (
             <div key={building.id} className="town-building-option">
-              <h3>
-                Build {building.name}
-                {klass ? ` (${klass})` : ''}
-              </h3>
               <p>{effectLine(building)}</p>
-              <p>Cost: {formatCost(constructionCost(catalog, building))}</p>
               <button
                 type="button"
+                className="town-building-action"
                 disabled={hasActedToday}
                 onClick={() => onBuild(building)}
               >
-                Build
+                {label}
               </button>
               <ActedLabel visible={hasActedToday} />
             </div>
@@ -1242,15 +1299,14 @@ function EmptySlotActions({
   }
   return (
     <div className="town-building-option">
-      <h3>Build {root.name}</h3>
       <p>{effectLine(root)}</p>
-      <p>Cost: {formatCost(constructionCost(catalog, root))}</p>
       <button
         type="button"
+        className="town-building-action"
         disabled={hasActedToday}
         onClick={() => onBuild(root)}
       >
-        Build
+        Build {root.name}: {formatCost(constructionCost(catalog, root))}
       </button>
       <ActedLabel visible={hasActedToday} />
     </div>
@@ -1264,6 +1320,7 @@ function LibraryFilledActions({
   hasActedToday,
   onUpgrade,
   onLearn,
+  lockedUpgradeLine,
 }: {
   current: BuildingRow
   next: BuildingRow | null
@@ -1271,6 +1328,7 @@ function LibraryFilledActions({
   hasActedToday: boolean
   onUpgrade: (next: BuildingRow) => void
   onLearn: () => void
+  lockedUpgradeLine?: string | null
 }) {
   return (
     <div className="town-building-option">
@@ -1278,24 +1336,22 @@ function LibraryFilledActions({
       <p>{effectLine(current)}</p>
       {next ? (
         <>
-          <p>
-            Upgrade to {next.name}: {formatCost(constructionCost(catalog, next))}
-          </p>
           <button
             type="button"
+            className="town-building-action"
             disabled={hasActedToday}
             onClick={() => onUpgrade(next)}
           >
-            Upgrade
+            Upgrade to {next.name}: {formatCost(constructionCost(catalog, next))}
           </button>
           <ActedLabel visible={hasActedToday} />
         </>
+      ) : lockedUpgradeLine ? (
+        <p>{lockedUpgradeLine}</p>
       ) : null}
-      <p>
-        <button type="button" onClick={onLearn}>
-          Learn
-        </button>
-      </p>
+      <button type="button" className="town-building-action" onClick={onLearn}>
+        Learn
+      </button>
     </div>
   )
 }
@@ -1314,6 +1370,7 @@ function FilledSlotActions({
   garrisonOccupied,
   hireCandidates,
   onHire,
+  lockedUpgradeLine,
 }: {
   army: boolean
   current: BuildingRow
@@ -1328,6 +1385,7 @@ function FilledSlotActions({
   garrisonOccupied: boolean
   hireCandidates: HeroPoolRow[]
   onHire: (pick: HeroPoolRow) => boolean
+  lockedUpgradeLine?: string | null
 }) {
   const [confirmDestroy, setConfirmDestroy] = useState(false)
   const [recruiting, setRecruiting] = useState(false)
@@ -1345,31 +1403,29 @@ function FilledSlotActions({
 
   return (
     <div className="town-building-option">
-      <h3>{current.name}</h3>
+      <h3>
+        {current.name}
+        {unit?.name?.trim() ? ` (${unit.name.trim()})` : ''}
+      </h3>
       <p>{effectLine(current)}</p>
       {next ? (
-        <>
-          <p>
-            Upgrade to {next.name}: {formatCost(constructionCost(catalog, next))}
-          </p>
-          <button
-            type="button"
-            disabled={hasActedToday}
-            onClick={() => onUpgrade(next)}
-          >
-            Upgrade
-          </button>
-        </>
+        <button
+          type="button"
+          className="town-building-action"
+          disabled={hasActedToday}
+          onClick={() => onUpgrade(next)}
+        >
+          Upgrade to {next.name}: {formatCost(constructionCost(catalog, next))}
+        </button>
+      ) : lockedUpgradeLine ? (
+        <p>{lockedUpgradeLine}</p>
       ) : null}
       {isTavernBuilding(current) ? (
         <div className="town-hire">
           {garrisonOccupied ? (
-            <>
-              <p>A hero is visiting — cannot hire</p>
-              <button type="button" disabled>
-                Hire Hero
-              </button>
-            </>
+            <button type="button" className="town-building-action" disabled>
+              A hero is visiting — cannot hire
+            </button>
           ) : hiring ? (
             <div className="town-hire-list">
               <p>Hire Hero: {formatCost(hireHeroCostMap())}</p>
@@ -1380,6 +1436,7 @@ function FilledSlotActions({
                   <button
                     key={pick.id}
                     type="button"
+                    className="town-building-action"
                     onClick={() => {
                       if (onHire(pick)) {
                         setHiring(false)
@@ -1393,13 +1450,18 @@ function FilledSlotActions({
                   </button>
                 ))
               )}
-              <button type="button" onClick={() => setHiring(false)}>
+              <button
+                type="button"
+                className="town-building-action"
+                onClick={() => setHiring(false)}
+              >
                 Cancel
               </button>
             </div>
           ) : (
             <button
               type="button"
+              className="town-building-action"
               disabled={hireCandidates.length === 0}
               onClick={() => setHiring(true)}
             >
@@ -1410,25 +1472,29 @@ function FilledSlotActions({
       ) : null}
       {army ? (
         <>
-          <p>{formatAmount(recruitQty)} available to recruit</p>
           {recruiting ? (
             <div className="town-recruit">
-              <label className="town-recruit-qty">
-                Quantity
-                <input
-                  type="number"
-                  min={1}
-                  max={recruitQty}
-                  value={qtyText}
-                  onChange={(event) => setQtyText(event.target.value)}
-                />
-              </label>
-              <p>
-                Cost:{' '}
-                {formatCost(
-                  scaleCost(perUnitCost, Math.max(1, Number.parseInt(qtyText, 10) || 1)),
-                )}
-              </p>
+              <div className="town-recruit-row">
+                <label className="town-recruit-qty">
+                  Quantity
+                  <input
+                    type="number"
+                    min={1}
+                    max={recruitQty}
+                    value={qtyText}
+                    onChange={(event) => setQtyText(event.target.value)}
+                  />
+                </label>
+                <span className="town-recruit-cost">
+                  Cost:{' '}
+                  {formatCost(
+                    scaleCost(
+                      perUnitCost,
+                      Math.max(1, Number.parseInt(qtyText, 10) || 1),
+                    ),
+                  )}
+                </span>
+              </div>
               <div className="town-recruit-actions">
                 <button
                   type="button"
@@ -1448,6 +1514,7 @@ function FilledSlotActions({
           ) : (
             <button
               type="button"
+              className="town-building-action"
               disabled={recruitQty < 1 || unit == null}
               onClick={() => {
                 setQtyText(
@@ -1458,11 +1525,13 @@ function FilledSlotActions({
                 setRecruiting(true)
               }}
             >
-              Recruit
+              {formatAmount(recruitQty)}{' '}
+              {unit?.name?.trim() ? `${unit.name.trim()} ` : ''}
+              to Recruit
             </button>
           )}
           {confirmDestroy && !hasActedToday ? (
-            <div className="town-building-confirm">
+            <div className="town-building-confirm town-building-destroy-gap">
               <p>
                 Are you sure? This will destroy {current.name} and cost{' '}
                 {formatCost(destroyCost)}. This cannot be undone.
@@ -1477,19 +1546,14 @@ function FilledSlotActions({
               </div>
             </div>
           ) : (
-            <>
-              <p>
-                Destroy: {formatCost(destroyCost)}
-                {current.destroy_cost == null ? ' (placeholder TBD)' : ''}
-              </p>
-              <button
-                type="button"
-                disabled={hasActedToday}
-                onClick={() => setConfirmDestroy(true)}
-              >
-                Destroy
-              </button>
-            </>
+            <button
+              type="button"
+              className="town-building-action town-building-destroy-gap"
+              disabled={hasActedToday}
+              onClick={() => setConfirmDestroy(true)}
+            >
+              Destroy {current.name}: {formatCost(destroyCost)}
+            </button>
           )}
         </>
       ) : null}

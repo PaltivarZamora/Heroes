@@ -10,6 +10,11 @@ const AXIAL_NEIGHBORS: Axial[] = [
   { q: 0, r: 1 },
 ]
 
+/** Six axial step vectors (pointy-top). Lines along ±dir are the same axis. */
+export function axialNeighborDirs(): readonly Axial[] {
+  return AXIAL_NEIGHBORS
+}
+
 /** Catalog move_cost 99: enter by dumping remaining MP, not a literal 99 cost. */
 const DUMP_REMAINING_MOVE_COST = 99
 
@@ -189,7 +194,8 @@ export function findPathOnBoard(
  * `blocked` is other heroes, towns, and resource nodes for this path only —
  * not baked into terrain. Callers omit the destination when that hex is a
  * walk-onto target (town, mine, or pickup). Heroes are never omitted.
- * Default stays in explored fog; pass `ignoreFog` for player hover/click.
+ * Default stays in explored fog; pass `ignoreFog` only for rare
+ * debug/admin tools — player movement never ignores fog.
  */
 export function findPath(
   from: Axial,
@@ -214,15 +220,16 @@ export function findPath(
 }
 
 /**
- * Player hover/click: path through fog, or as close as passable terrain allows.
- * AI still uses `findPath` (explored only).
+ * Player hover/click: path toward the goal without entering Fog of War.
+ * If the goal is unexplored/unreachable, approach as close as explored
+ * passable terrain allows. AI still uses `findPath` (explored only).
  */
 export function findPathToward(
   from: Axial,
   to: Axial,
   blocked?: ReadonlySet<string>,
 ): Axial[] | null {
-  const direct = findPath(from, to, blocked, true)
+  const direct = findPath(from, to, blocked, false)
   if (direct) {
     return direct
   }
@@ -254,6 +261,10 @@ export function findPathToward(
     for (const next of neighborHexes(current)) {
       const nextKey = key(next.q, next.r)
       if (blocked?.has(nextKey) && nextKey !== startKey) {
+        continue
+      }
+      // Stay in explored fog — never path into or through unexplored hexes.
+      if (!isPathHexOpen(next.q, next.r, blocked, false)) {
         continue
       }
       const cost = terrainEnterCost(next.q, next.r)

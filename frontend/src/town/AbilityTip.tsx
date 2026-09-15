@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react'
+import { useRef, type CSSProperties, type ReactNode } from 'react'
 
 const PAD = 8
 const GAP = 6
@@ -64,9 +64,13 @@ function clearTip(body: HTMLElement) {
 export function AbilityTip({
   description,
   children,
+  className,
+  style,
 }: {
   description: string
   children: ReactNode
+  className?: string
+  style?: CSSProperties
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
   const bodyRef = useRef<HTMLSpanElement>(null)
@@ -76,7 +80,8 @@ export function AbilityTip({
   return (
     <span
       ref={rootRef}
-      className="ability-tip"
+      className={className ? `ability-tip ${className}` : 'ability-tip'}
+      style={style}
       onMouseEnter={() => {
         const root = rootRef.current
         const body = bodyRef.current

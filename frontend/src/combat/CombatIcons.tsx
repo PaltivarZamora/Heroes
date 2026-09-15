@@ -41,6 +41,26 @@ function KindSvg({ kind }: { kind: TargetIconKind }) {
       </svg>
     )
   }
+  if (kind === 'invalid') {
+    return (
+      <svg className="combat-target-svg" viewBox="0 0 32 32" aria-hidden="true">
+        <circle
+          cx="16"
+          cy="16"
+          r="11"
+          fill="none"
+          stroke="#ef9a9a"
+          strokeWidth="2.4"
+        />
+        <path
+          d="M10 10 L22 22 M22 10 L10 22"
+          stroke="#ef9a9a"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    )
+  }
   if (kind === 'aoe') {
     return (
       <svg className="combat-target-svg" viewBox="0 0 32 32" aria-hidden="true">

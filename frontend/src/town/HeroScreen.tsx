@@ -2,13 +2,17 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatResourceLine, RESOURCES } from '../hex/resources'
 import { humanPlayer, walletFromSession } from '../session/accessors'
 import { getSession, subscribe } from '../session/store'
-import { ARMY_STACK_SLOTS } from '../session/types'
 import { getCachedCatalog, formatHeroLevelLine, heroEffectiveStats, heroTypeName, subscribeCatalog } from './catalog'
 import { classDisciplines } from './libraryRules'
 import { HeroAbilitiesPanel } from './HeroAbilitiesPanel'
 import { ReservedCorner } from './ReservedCorner'
-import { ArmyRow } from './ArmyRow'
-import { stackView } from './unitStack'
+import { ArmyTransfer } from './ArmyTransfer'
+import {
+  disciplineResourceId,
+  poolCurrent,
+  poolMax,
+  resourceLabel,
+} from '../combat/heroCast'
 import {
   GENERIC_EMPTY_ART_FILENAME,
   heroPortraitUrl,
@@ -136,13 +140,6 @@ export function HeroScreen({
   while (otherHeroes.length < 7) {
     otherHeroes.push(null)
   }
-  const armySlots = [...(hero?.army.slots_1_to_6 ?? [])]
-  while (armySlots.length < ARMY_STACK_SLOTS) {
-    armySlots.push(null)
-  }
-  const armyStacks = armySlots.slice(0, ARMY_STACK_SLOTS).map((id) =>
-    stackView(session, id, catalog),
-  )
   const typeName = catalog ? heroTypeName(catalog, hero?.class_id ?? null) : ''
   const abilitiesTitle = typeName ? `${typeName} Abilities` : 'Abilities'
   const level = hero?.current_level ?? 1
@@ -156,6 +153,21 @@ export function HeroScreen({
   const stats = catalog
     ? heroEffectiveStats(catalog, hero?.class_id ?? null, level)
     : null
+  const selectedDiscipline =
+    disciplines.find((row) => row.id === disciplineId) ?? null
+  const resourceId =
+    catalog && disciplineId != null
+      ? disciplineResourceId(catalog, disciplineId)
+      : null
+  const resourceCurrent =
+    hero && resourceId != null ? poolCurrent(hero, resourceId) : 0
+  const resourceMax =
+    catalog && hero && resourceId != null
+      ? poolMax(catalog, hero, resourceId)
+      : 0
+  const resourceBarLabel =
+    selectedDiscipline?.name ??
+    (catalog && resourceId != null ? resourceLabel(catalog, resourceId) : '')
 
   return (
     <div
@@ -193,6 +205,30 @@ export function HeroScreen({
             </div>
           </div>
           <h2>{abilitiesTitle}</h2>
+          {catalog && resourceId != null ? (
+            <div
+              className="combat-hero-resource"
+              data-resource={resourceId === 1 ? 'energy' : 'mana'}
+              aria-label={`${resourceBarLabel} pool`}
+            >
+              <span
+                className="combat-hero-resource-fill"
+                style={{
+                  width: `${
+                    resourceMax > 0
+                      ? Math.min(
+                          100,
+                          Math.max(0, (resourceCurrent / resourceMax) * 100),
+                        )
+                      : 0
+                  }%`,
+                }}
+              />
+              <span className="combat-hero-resource-text">
+                {resourceBarLabel} ({resourceCurrent} / {resourceMax})
+              </span>
+            </div>
+          ) : null}
           {catalog ? (
             <HeroAbilitiesPanel
               catalog={catalog}
@@ -237,41 +273,47 @@ export function HeroScreen({
           onTown={() => onCycleTown?.()}
           onScrolls={() => setScrollsOpen(true)}
         />
-        <div className="town-army-rows" aria-label="Hero roster and army">
-          <div className="town-army-row" aria-label="Other heroes">
-            {otherHeroes.map((other, col) => {
-              if (!other) {
+        <ArmyTransfer
+          session={session}
+          townId=""
+          catalog={catalog}
+          leading={
+            <div className="town-army-row" aria-label="Other heroes">
+              {otherHeroes.map((other, col) => {
+                if (!other) {
+                  return (
+                    <div
+                      key={`empty-roster-${col}`}
+                      className="town-army-box town-army-portrait"
+                    />
+                  )
+                }
                 return (
-                  <div
-                    key={`empty-roster-${col}`}
+                  <button
+                    key={other.id}
+                    type="button"
                     className="town-army-box town-army-portrait"
-                  />
+                    aria-label={other.name}
+                    onClick={() => onSelectHero(other.id)}
+                  >
+                    <Face
+                      filename={other.image_path ?? null}
+                      label={other.name}
+                    />
+                  </button>
                 )
-              }
-              return (
-                <button
-                  key={other.id}
-                  type="button"
-                  className="town-army-box town-army-portrait"
-                  aria-label={other.name}
-                  onClick={() => onSelectHero(other.id)}
-                >
-                  <Face
-                    filename={other.image_path ?? null}
-                    label={other.name}
-                  />
-                </button>
-              )
-            })}
-          </div>
-          <ArmyRow
-            row="hero"
-            heroId={heroId}
-            portraitLabel={hero?.name ?? 'Hero'}
-            portraitFilename={hero?.image_path ?? null}
-            armyStacks={armyStacks}
-          />
-        </div>
+              })}
+            </div>
+          }
+          rows={[
+            {
+              row: 'hero',
+              heroId,
+              portraitLabel: hero?.name ?? 'Hero',
+              portraitFilename: hero?.image_path ?? null,
+            },
+          ]}
+        />
       </div>
       {scrollsOpen ? (
         <div

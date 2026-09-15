@@ -14,6 +14,7 @@
   z-index: 1;
   width: 100%;
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
@@ -168,6 +169,7 @@
   line-height: 0;
   cursor: grab;
   touch-action: none;
+  position: relative;
 }
 
 .hex-map.is-panning {
@@ -176,6 +178,20 @@
 
 .hex-map canvas {
   display: block;
+}
+
+.world-hover-tip {
+  position: absolute;
+  z-index: 5;
+  max-width: 220px;
+  padding: 6px 8px;
+  border: 1px solid #666;
+  border-radius: 4px;
+  background: rgba(12, 12, 12, 0.95);
+  color: #f4f4f4;
+  font: 13px/1.35 system-ui, 'Segoe UI', Roboto, sans-serif;
+  pointer-events: none;
+  white-space: pre-line;
 }
 
 .town-management {
@@ -254,6 +270,7 @@
   min-height: 0;
   padding: 0;
   box-sizing: border-box;
+  z-index: 1;
 }
 
 .town-building-layout-error {
@@ -316,6 +333,17 @@
   overflow: hidden;
 }
 
+.town-building-slot-tip.ability-tip {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.town-building-slot-tip .town-building-slot {
+  position: absolute;
+}
+
 .town-building-slot:hover,
 .town-building-slot:focus-visible {
   background: transparent;
@@ -356,7 +384,7 @@
   right: auto;
   bottom: auto;
   top: 120px;
-  z-index: 2;
+  z-index: 50;
   width: min(520px, 42%);
   max-height: calc(100% - 140px);
   overflow: auto;
@@ -392,6 +420,20 @@
   background: #2a2a2a;
   color: #f4f4f4;
   cursor: pointer;
+}
+
+.town-building-action {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 8px;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.town-hire .town-building-action {
+  margin-bottom: 8px;
 }
 
 .town-building-branches {
@@ -437,20 +479,47 @@
   background: rgba(48, 12, 12, 0.7);
 }
 
-.town-building-confirm-actions {
+.town-building-destroy-gap {
+  margin-top: 1.35em;
+}
+
+.town-building-confirm-actions,
+.town-recruit-actions {
   display: flex;
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.town-building-confirm-actions button,
+.town-recruit-actions button {
+  flex: 1 1 50%;
+  min-width: 0;
+  text-align: center;
 }
 
 .town-recruit {
   margin: 8px 0;
 }
 
+.town-recruit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+
 .town-recruit-qty {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 8px;
+  margin: 0;
+}
+
+.town-recruit-cost {
+  margin: 0;
+  white-space: nowrap;
 }
 
 .town-recruit-qty input {
@@ -460,11 +529,6 @@
   border-radius: 4px;
   background: #1a1a1a;
   color: #f4f4f4;
-}
-
-.town-recruit-actions {
-  display: flex;
-  gap: 8px;
 }
 
 .town-army-rows {
@@ -669,7 +733,50 @@
 .options-choices button {
   border: 0;
   border-radius: 0;
+  text-align: center;
+}
+
+.options-separator {
+  height: 1px;
+  margin: 6px 10px;
+  background: #555;
+  flex-shrink: 0;
+}
+
+.debug-panel-toggle {
+  padding: 6px 12px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #1b1b1b;
+  color: #e8e8e8;
+  cursor: pointer;
+  font: inherit;
+}
+
+.debug-panel-toggle:hover {
+  background: #333;
+}
+
+.debug-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.debug-tools button {
+  padding: 6px 10px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #1b1b1b;
+  color: #e8e8e8;
+  cursor: pointer;
+  font: inherit;
   text-align: left;
+}
+
+.debug-tools button:hover {
+  background: #333;
 }
 
 .options-choices button:hover,
@@ -696,6 +803,13 @@
   background: #1b3d1e;
   color: #c8e6c9;
   font: 13px/1.4 system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+.hud-options-notice {
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+  max-width: min(520px, 40vw);
 }
 
 .options-modal {
@@ -746,23 +860,39 @@
 }
 
 .new-game-players {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 88px minmax(140px, 0.9fr) minmax(0, 1.4fr);
+  column-gap: 8px;
+  row-gap: 8px;
+  align-items: center;
   margin: 0 0 12px;
 }
 
+.new-game-col-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: #aaa;
+}
+
 .new-game-player-row {
-  display: grid;
-  grid-template-columns: 88px minmax(180px, 0.9fr) minmax(0, 1.4fr);
-  gap: 8px;
-  align-items: end;
+  display: contents;
 }
 
 .new-game-player-label {
-  padding-bottom: 10px;
   font-size: 13px;
   color: #ccc;
+}
+
+.new-game-players input,
+.new-game-players select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #111;
+  color: #f4f4f4;
+  font: inherit;
 }
 
 .new-game-hero-field {
@@ -879,11 +1009,63 @@
 
 .combat-target-icon {
   position: absolute;
-  z-index: 3;
-  pointer-events: none;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.combat-target-label {
+  margin-top: 2px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(20, 20, 20, 0.85);
+  color: #ef9a9a;
+  font: 600 12px/1.2 system-ui, 'Segoe UI', Roboto, sans-serif;
+  white-space: nowrap;
+}
+
+.combat-stack-hover-tip {
+  position: absolute;
+  z-index: 6;
+  transform: translate(-50%, -100%);
+  min-width: 160px;
+  max-width: 240px;
+  padding: 6px 8px;
+  border: 1px solid #666;
+  border-radius: 4px;
+  background: rgba(12, 12, 12, 0.95);
+  color: #f4f4f4;
+  font: 12px/1.35 system-ui, 'Segoe UI', Roboto, sans-serif;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.combat-stack-hover-tip.is-below {
+  transform: translate(-50%, 0);
+}
+
+.combat-stack-hover-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
+}
+
+.combat-stack-hover-row span:first-child {
+  color: #aaa;
+}
+
+.combat-stack-hover-row span:last-child:not(:only-child) {
+  color: #f0f0f0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.combat-stack-hover-row span:only-child {
+  color: #f0f0f0;
 }
 
 .combat-wedge-arrow {
@@ -927,6 +1109,46 @@
 
 .combat-stack-fixture {
   z-index: 1;
+}
+
+.combat-tombstone {
+  z-index: 1;
+  opacity: 0.92;
+}
+
+.combat-ground-effect {
+  position: absolute;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.combat-ground-effect-below {
+  z-index: 1;
+}
+
+.combat-ground-effect-above {
+  z-index: 3;
+}
+
+.combat-ground-effect-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+}
+
+.combat-ground-effect-fallback {
+  font: 700 9px/1.2 system-ui, 'Segoe UI', Roboto, sans-serif;
+  color: #eceff1;
+  text-shadow: 0 1px 2px #000;
+}
+
+.combat-ground-effect-hidden .combat-ground-effect-img {
+  opacity: 0.92;
 }
 
 .combat-stack img {
@@ -1078,6 +1300,46 @@
 
 .date-notice-card p + p {
   margin-top: 8px;
+}
+
+.date-notice-ok {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 16px;
+  padding: 8px 12px;
+  border: 1px solid #666;
+  border-radius: 4px;
+  background: #2a2a2a;
+  color: #f4f4f4;
+  font: inherit;
+  cursor: pointer;
+}
+
+.date-notice-ok:hover {
+  background: #333;
+}
+
+.surrender-prompt-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.surrender-prompt-actions button {
+  min-width: 88px;
+  padding: 8px 16px;
+  border: 1px solid #888;
+  border-radius: 4px;
+  background: #2a2a2a;
+  color: #f4f4f4;
+  font: 15px/1.2 system-ui, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+}
+
+.surrender-prompt-actions button:hover {
+  background: #3a3a3a;
 }
 
 .combat-summary-card {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { clearCachedGrid, getSelectedMapHeroId, setHeroMovementRemaining } from '../hex/HexMap'
+import { clearCachedGrid, getSelectedMapHeroId, setHeroMovementRemaining, setMapCameraFollowMoves } from '../hex/HexMap'
 import type { DataStatus } from '../hex/debug'
 import {
   createSave,
@@ -12,21 +12,28 @@ import {
 import { getSession, setSession, updateSession } from '../session/store'
 import type { GameSession } from '../session/types'
 import {
-  grantHeroStartingArmy,
+  activePlayer,
+  grantBuildArmy,
+  grantClassAbilitiesAtTier,
   grantOpenChest,
-  grantAllClassAbilities,
-  heroArmyStackCount,
   normalizeHeroProgress,
   restoreAllHeroMovement,
 } from '../session/accessors'
-import { fetchCatalog, getCachedCatalog, heroMovementPoints, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
+import {
+  awardHeroXp,
+  levelUpNoticeForAward,
+  type LevelUpNotice,
+} from '../session/xp'
+import { fetchCatalog, getCachedCatalog, heroResourcePools, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
+import { LIBRARY_TIERS } from '../town/libraryRules'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
-import { aiTestGameConfig } from '../ai/scenario'
 import { archName } from '../ai/weights'
-import { addWorldMobs } from '../session/mobs'
 import { getExploredHexes } from '../hex/world'
 import { HEX_SCALES, type HexScaleName } from '../hex/hexScale'
+import type { FixedFightKind } from '../session/fixedFight'
+
+const STEPS_UNLIMITED = 1000
 
 type Panel = 'new' | 'save' | 'load' | 'quit' | null
 
@@ -35,6 +42,11 @@ type OptionsMenuProps = {
   onDataStatus: (status: DataStatus) => void
   onCopyDebug: () => void
   onStartGame: (config: GameConfig) => void
+  onLevelUpNotice: (notice: LevelUpNotice | null) => void
+  /** Lift green status into the map HUD gap (between End Turn and Debug). */
+  onHudNotice?: (notice: string | null) => void
+  /** Debug Fixed Fight scenarios (starts combat). */
+  onStartFixedFight?: (kind: FixedFightKind) => void
   hexScale: HexScaleName
   onHexScale: (name: HexScaleName) => void
 }
@@ -156,6 +168,9 @@ export function OptionsMenu({
   onDataStatus,
   onCopyDebug,
   onStartGame,
+  onLevelUpNotice,
+  onHudNotice,
+  onStartFixedFight,
   hexScale,
   onHexScale,
 }: OptionsMenuProps) {
@@ -168,6 +183,7 @@ export function OptionsMenu({
   const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [stepsUnlimited, setStepsUnlimited] = useState(false)
 
   useEffect(() => {
     if (!notice) {
@@ -176,6 +192,10 @@ export function OptionsMenu({
     const timer = window.setTimeout(() => setNotice(null), 2500)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => {
+    onHudNotice?.(notice)
+  }, [notice, onHudNotice])
 
   const closePanel = () => {
     if (busy) {
@@ -356,9 +376,132 @@ export function OptionsMenu({
     }
   }
 
-  const setSteps = (remaining: number) => {
-    setHeroMovementRemaining(remaining)
+  const applyStepsMode = (unlimited: boolean) => {
+    setStepsUnlimited(unlimited)
+    if (unlimited) {
+      updateSession((current) => ({
+        ...current,
+        heroes: current.heroes.map((hero) => ({
+          ...hero,
+          movement_remaining: STEPS_UNLIMITED,
+        })),
+      }))
+      setHeroMovementRemaining(STEPS_UNLIMITED)
+    } else {
+      setSession(restoreAllHeroMovement(getSession()))
+      const session = getSession()
+      const selected = getSelectedMapHeroId()
+      const liveHero =
+        (selected
+          ? session.heroes.find((row) => row.id === selected)
+          : undefined) ?? session.heroes[0]
+      if (liveHero) {
+        setHeroMovementRemaining(liveHero.movement_remaining)
+      }
+    }
     setExpanded(false)
+  }
+
+  const toggleSteps = () => {
+    applyStepsMode(!stepsUnlimited)
+  }
+
+  const restoreSelectedHeroPools = () => {
+    const catalog = getCachedCatalog()
+    if (!catalog) {
+      setExpanded(false)
+      setNotice('Catalog not loaded')
+      return
+    }
+    const session = getSession()
+    const selectedId = getSelectedMapHeroId()
+    const selected = selectedId
+      ? session.heroes.find((row) => row.id === selectedId)
+      : undefined
+    const human = session.players.find((player) => !player.is_ai)
+    const hero =
+      selected ??
+      (human
+        ? session.heroes.find((row) => row.player_id === human.id)
+        : undefined) ??
+      session.heroes[0]
+    if (!hero) {
+      setExpanded(false)
+      setNotice('No hero to restore')
+      return
+    }
+    const pools = heroResourcePools(catalog, hero)
+    updateSession((current) => ({
+      ...current,
+      heroes: current.heroes.map((row) =>
+        row.id === hero.id
+          ? {
+              ...row,
+              current_mana: pools.current_mana,
+              current_energy: pools.current_energy,
+            }
+          : row,
+      ),
+    }))
+    setExpanded(false)
+    setNotice(
+      `${hero.name}: Energy ${pools.current_energy}, Mana ${pools.current_mana}`,
+    )
+  }
+
+  const learnAllAbilities = () => {
+    const catalog = getCachedCatalog()
+    if (!catalog) {
+      setExpanded(false)
+      setNotice('Catalog not loaded')
+      return
+    }
+    updateSession((current) => {
+      let next = current
+      for (const tier of LIBRARY_TIERS) {
+        next = grantClassAbilitiesAtTier(next, tier)
+      }
+      return next
+    })
+    setExpanded(false)
+    setNotice('Every hero learned all abilities from their two disciplines')
+  }
+
+  const grantDebugLevelUp = () => {
+    const catalog = getCachedCatalog()
+    if (!catalog) {
+      setExpanded(false)
+      setNotice('Catalog not loaded')
+      return
+    }
+    const session = getSession()
+    const selectedId = getSelectedMapHeroId()
+    const selected = selectedId
+      ? session.heroes.find((row) => row.id === selectedId)
+      : undefined
+    const human = session.players.find((player) => !player.is_ai)
+    const hero =
+      selected ??
+      (human
+        ? session.heroes.find((row) => row.player_id === human.id)
+        : undefined) ??
+      session.heroes[0]
+    if (!hero) {
+      setExpanded(false)
+      setNotice('No hero to level up')
+      return
+    }
+    let notice: LevelUpNotice | null = null
+    updateSession((current) => {
+      const awarded = awardHeroXp(current, catalog, hero.id, 1000)
+      notice = levelUpNoticeForAward(catalog, awarded)
+      return awarded.session
+    })
+    setExpanded(false)
+    if (notice) {
+      onLevelUpNotice(notice)
+    }
+    setNotice(`${hero.name} +1000 XP`)
   }
 
   const setAiPlayerArch = (playerId: string, archId: number, name: string) => {
@@ -377,6 +520,29 @@ export function OptionsMenu({
 
   const aiPlayers = getSession().players.filter((player) => player.is_ai)
   const arches = aiArchRows()
+  const seeAiOn =
+    aiPlayers.length > 0 && aiPlayers.every((player) => player.ai_spectator)
+
+  const toggleSeeAi = () => {
+    if (aiPlayers.length === 0) {
+      setExpanded(false)
+      setNotice('No AI players in this game')
+      return
+    }
+    const next = !seeAiOn
+    updateSession((current) => ({
+      ...current,
+      players: current.players.map((player) =>
+        player.is_ai ? { ...player, ai_spectator: next } : player,
+      ),
+    }))
+    const actor = activePlayer(getSession())
+    if (actor?.is_ai) {
+      setMapCameraFollowMoves(next)
+    }
+    setExpanded(false)
+    setNotice(next ? 'See AI: On' : 'See AI: Off')
+  }
 
   return (
     <div className="options-menu">
@@ -394,28 +560,116 @@ export function OptionsMenu({
           <button type="button" role="menuitem" onClick={() => openPanel('new')}>
             New Game
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setExpanded(false)
-              onStartGame(aiTestGameConfig())
-            }}
-          >
-            Load AI Test (DEV)
+          <button type="button" role="menuitem" onClick={() => openPanel('load')}>
+            Load Game
           </button>
           <button type="button" role="menuitem" onClick={() => openPanel('save')}>
-            Save
-          </button>
-          <button type="button" role="menuitem" onClick={() => openPanel('load')}>
-            Load
+            Save Game
           </button>
           <button type="button" role="menuitem" onClick={() => openPanel('quit')}>
             Quit
           </button>
+          <div className="options-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              updateSession(grantOpenChest)
+              setExpanded(false)
+              setNotice('Opened a chest: 10,000 Gold and 20 of each other resource')
+            }}
+          >
+            Open Chest
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const result = grantBuildArmy(getSession(), 1)
+              setSession(result.session)
+              setExpanded(false)
+              setNotice(result.notice)
+            }}
+          >
+            Build Army 1
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const result = grantBuildArmy(getSession(), 2)
+              setSession(result.session)
+              setExpanded(false)
+              setNotice(result.notice)
+            }}
+          >
+            Build Army 2
+          </button>
+          <button type="button" role="menuitem" onClick={learnAllAbilities}>
+            Learn
+          </button>
+          <button type="button" role="menuitem" onClick={grantDebugLevelUp}>
+            Level Up
+          </button>
+          <button type="button" role="menuitem" onClick={toggleSteps}>
+            Steps: {stepsUnlimited ? String(STEPS_UNLIMITED) : 'Speed'}
+          </button>
+          <button type="button" role="menuitem" onClick={restoreSelectedHeroPools}>
+            Restore
+          </button>
+          {onStartFixedFight ? (
+            <div className="options-flyout">
+              <button type="button" role="menuitem" aria-haspopup="true">
+                Fixed Fight
+              </button>
+              <div className="options-submenu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('pit_fiends')
+                    setExpanded(false)
+                  }}
+                >
+                  Pit Fiends
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('raise_demons')
+                    setExpanded(false)
+                  }}
+                >
+                  Raise Demons
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('holy_wrath')
+                    setExpanded(false)
+                  }}
+                >
+                  Holy Wrath
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('for_the_hoard')
+                    setExpanded(false)
+                  }}
+                >
+                  For the Hoard
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="options-separator" role="separator" />
           <div className="options-flyout">
             <button type="button" role="menuitem" aria-haspopup="true">
-              Grid Size
+              Grid Size: {hexScale}
             </button>
             <div className="options-submenu" role="menu">
               {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (
@@ -434,107 +688,9 @@ export function OptionsMenu({
               ))}
             </div>
           </div>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onCopyDebug()
-              setExpanded(false)
-              setNotice('Debug copied')
-            }}
-          >
-            Copy Debug
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={reloading}
-            onClick={() => void onReloadReference()}
-          >
-            Reload Reference Data
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              updateSession(grantOpenChest)
-              setExpanded(false)
-              setNotice('Opened a chest: 10,000 Gold and 20 of each other resource')
-            }}
-          >
-            Open Chest
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const session = getSession()
-              const selectedId = getSelectedMapHeroId()
-              const hero =
-                (selectedId
-                  ? session.heroes.find((row) => row.id === selectedId)
-                  : undefined) ?? session.heroes[0]
-              if (!hero) {
-                setNotice('No hero selected')
-                setExpanded(false)
-                return
-              }
-              if (hero.class_id == null) {
-                setNotice(`${hero.name} has no class — cannot roll starting units`)
-                setExpanded(false)
-                return
-              }
-              if (heroArmyStackCount(session, hero.id) > 0) {
-                setNotice(`${hero.name} already has units`)
-                setExpanded(false)
-                return
-              }
-              updateSession((current) => grantHeroStartingArmy(current, hero.id))
-              const after = getSession()
-              const added = heroArmyStackCount(after, hero.id)
-              setExpanded(false)
-              setNotice(
-                added > 0
-                  ? `Added starting units to ${hero.name}`
-                  : `No class-branch units found for ${hero.name}`,
-              )
-            }}
-          >
-            Add Starting Units
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const before = getSession().mobs.length
-              updateSession(addWorldMobs)
-              const added = getSession().mobs.length - before
-              setExpanded(false)
-              setNotice(
-                added > 0
-                  ? `Added ${added} world mob${added === 1 ? '' : 's'}`
-                  : 'No room (or catalog) to add world mobs',
-              )
-            }}
-          >
-            Add World Mobs to Current Map
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const catalog = getCachedCatalog()
-              if (!catalog) {
-                setExpanded(false)
-                setNotice('Catalog not loaded')
-                return
-              }
-              updateSession(grantAllClassAbilities)
-              setExpanded(false)
-              setNotice('Every hero learned all abilities from their two disciplines')
-            }}
-          >
-            Learn Everything
+          <div className="options-separator" role="separator" />
+          <button type="button" role="menuitem" onClick={toggleSeeAi}>
+            See AI: {seeAiOn ? 'On' : 'Off'}
           </button>
           <div className="options-flyout">
             <button type="button" role="menuitem" aria-haspopup="true">
@@ -597,31 +753,23 @@ export function OptionsMenu({
           <button
             type="button"
             role="menuitem"
-            onClick={() => setSteps(1000)}
+            disabled={reloading}
+            onClick={() => void onReloadReference()}
           >
-            Increase Steps to 1000
+            Reload Reference Data
           </button>
           <button
             type="button"
             role="menuitem"
             onClick={() => {
-              const session = getSession()
-              const selectedId = getSelectedMapHeroId()
-              const liveHero =
-                (selectedId
-                  ? session.heroes.find((row) => row.id === selectedId)
-                  : undefined) ?? session.heroes[0]
-              setSteps(heroMovementPoints(getCachedCatalog(), liveHero))
+              onCopyDebug()
+              setExpanded(false)
+              setNotice('Debug copied')
             }}
           >
-            Reset Steps to Speed
+            Copy Debug
           </button>
         </div>
-      ) : null}
-      {notice ? (
-        <p className="options-notice" role="status">
-          {notice}
-        </p>
       ) : null}
 
       {panel === 'new' ? (

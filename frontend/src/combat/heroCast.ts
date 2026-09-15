@@ -14,6 +14,13 @@ const ENERGY_RESOURCE_ID = 1
 export type HeroCast = {
   stackId: string
   abilityId: number | null
+  /** Shadow Step: unit chosen to teleport; next click is the landing hex. */
+  teleportUnitId?: string
+  /**
+   * Barrier / line placement: index into the 6 axial neighbor dirs (0–5).
+   * ±dir is the same wall axis; player cycles to pick orientation.
+   */
+  lineDirIndex?: number
 }
 
 export function disciplineResourceId(

@@ -1,12 +1,32 @@
 import type { GameSession, Hero, Town } from '../session/types'
-import { NECROPOLIS_TOWN_TYPE_ID, slotFromPlayerId } from '../session/types'
-import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { dummyArmyQty, retaliationCharges, unitById } from '../town/catalog'
+import { ARMY_STACK_SLOTS, slotFromPlayerId } from '../session/types'
+import type { ReferenceCatalog } from '../town/catalog'
+import { retaliationCharges, unitById } from '../town/catalog'
 import { stacksWithoutOverlap } from './occupancy'
 import { siegeStructureStacks } from './siege'
 import { tickRoundConditions, type ConditionExtra } from './condition'
+import { applyStackHeal } from './attack'
+import type { CombatHeroes } from './attack'
+import { tickShadowGrowth } from './shadow'
+import { freezeArmyTagCounts, HUMANOID_TAG } from './armyTags'
+import {
+  applyBattleStartArmyPassives,
+  freezeArmyTownCounts,
+} from './heroArmyPassives'
+import { applyTempleEndOfRoundPassives } from './templePassive'
 
 export type CombatSide = 'atk' | 'def'
+
+/** Tag id → creature qty per side, frozen when the battle opens. */
+export type ArmyTagCounts = Record<number, Partial<Record<CombatSide, number>>>
+
+/** Town-scoped counts for S6-46 army passives, frozen at battle start. */
+export type ArmyTownCounts = Partial<
+  Record<
+    'grove' | 'fortress' | 'confluence' | 'factory_nonliving',
+    Partial<Record<CombatSide, number>>
+  >
+>
 
 export type CombatTile = {
   q: number
@@ -60,6 +80,8 @@ export type CombatStack = {
   conditions?: Record<number, number>
   /** Polymorph-style extras keyed by condition.id. */
   conditionExtra?: Record<number, ConditionExtra>
+  /** Hyper Focus: remaining condition-block attempts (any condition). */
+  conditionImmunityUsesLeft?: number
   /** Flat speed change for the rest of the battle (Mass Slow). */
   speedMod?: number
   /** Multiplies catalog `max_dmg` before flat bonuses (Berserk). */
@@ -72,6 +94,8 @@ export type CombatStack = {
   defensePct?: number
   /** Floor for live Defense after % (Blood Lust). */
   defenseFloor?: number
+  /** Signed % on live Resistance after base/flat (Druid Grove passive). */
+  resistancePct?: number
   /** Added to the owning hero's crit_pct for this stack's attacks. */
   critPctBonus?: number
   /** Added to the owning hero's crit_amt for this stack's attacks. */
@@ -97,12 +121,69 @@ export type CombatStack = {
   barragePct?: number
   /** Remaining Barrage second-attacks this battle. Omitted = uncapped. */
   barrageUsesLeft?: number
+  /** Deflect: flat % of attacker min roll, no mitigation; use budget. */
+  deflect?: { pct: number; usesLeft: number }
+  /** Double Tap: extra attack after the defender retaliates; use budget. */
+  doubleTapUsesLeft?: number
+  /** Preemptive Strike: retaliate before incoming damage; use budget. */
+  preemptiveStrikeUsesLeft?: number
+  /** Battle Cry: override retaliation damage % for a use budget. */
+  battleCryRetaliation?: { pct: number; usesLeft: number }
+  /** Charge: temporary flat speed from caster hero Speed. */
+  speedBoost?: { amount: number; roundsLeft: number }
+  /** Guard: Defense multiplier for a number of rounds. */
+  defenseMult?: { mult: number; roundsLeft: number }
+  /** Shield Wall: Resistance multiplier for a number of rounds. */
+  resistanceMult?: { mult: number; roundsLeft: number }
+  /** Immunity: remaining hits that deal zero damage (any source). */
+  immunityHitsLeft?: number
+  /** One-shot: this stack does not retaliate after the hit that just resolved. */
+  skipRetaliationOnce?: boolean
   /** Camouflage: flat miss chance for incoming attacks, ticked at round start. */
   evasion?: { pct: number; roundsLeft: number }
   /** Mark Target: remaining hits that deal the attacker's guaranteed max_dmg. */
   markHitsLeft?: number
+  /** Disarm: force outgoing min dmg; ticked at round start. */
+  disarm?: { roundsLeft: number; physicalOnly: boolean }
+  /** Sunder Armor: Physical (or all) attacks skip target Defense soak. */
+  ignoreTargetArmor?: boolean
+  /** When true with ignoreTargetArmor, only Physical attacks bypass soak. */
+  ignoreTargetArmorPhysicalOnly?: boolean
+  /** Reflect: bounce a % of incoming damage for a hit budget. */
+  reflect?: { pct: number; hitsLeft: number; physicalOnly: boolean }
+  /**
+   * Spell Reflect: next Magic hits are redirected to a random enemy.
+   * Uses consume per redirected attack (not bounce Reflect).
+   */
+  spellReflect?: { usesLeft: number }
+  /** Expose: enemy stats visible on inspect for the rest of the battle. */
+  exposed?: boolean
+  /** Battle-start hex (Forced Retreat paths back here). */
+  startHex?: { q: number; r: number }
+  /** Forced Retreat: on next turn, walk toward startHex and end turn. */
+  forcedRetreatPending?: boolean
+  /**
+   * Absolute Speed override for N rounds (Chronomancer Temporal Bolt swap).
+   * When set, replaces live speed entirely (does not stack with speedBoost).
+   */
+  speedLock?: { value: number; roundsLeft: number }
+  /** Fervor: chance to repeat turn/retaliation; ticked each round. */
+  fervor?: { chancePct: number; roundsLeft: number; streak?: number }
   /** Ordinary attacks use Finger of Death overflow kills (Execute). */
   killOnOverflow?: boolean
+  /**
+   * Guardian Angel: cast-time qty snapshot. If a hit would wipe this stack,
+   * restore to snapshotQty once, then clear. Separate from startingQty
+   * (battle-start / vampiric / resurrection caps).
+   */
+  guardianAngel?: { snapshotQty: number; usesLeft: number }
+  /** Fortify: ignore hits that would not kill at least one creature. */
+  ignoresSublethal?: boolean
+  /**
+   * Last Stand: qty cannot drop below minQty; when floored, front unit
+   * sits at lastUnitHp (other creatures remain implicitly full HP).
+   */
+  lastStand?: { minQty: number; lastUnitHp: number }
   /** Flat deltas on live combat stats (Mutation). Current HP is never stored here. */
   statFlat?: CombatStatFlat
   /** Time Warp: extra turn after this stack's normal turn this round. */
@@ -175,6 +256,27 @@ export function stackMaxHealth(
   return Math.max(1, base + (stack.statFlat?.health ?? 0))
 }
 
+/**
+ * Apply a signed percentage to an integer-ish base (floor).
+ * Nonzero modifiers that would otherwise round to no change get a ±1 floor
+ * so a real buff/debuff is never indistinguishable from casting nothing.
+ */
+export function scaleBySignedPct(n: number, signedPct: number): number {
+  if (!signedPct) {
+    return Math.max(0, n)
+  }
+  if (n <= 0) {
+    // 0 × anything % is still 0 before rounding — still force ±1 when the
+    // modifier itself is nonzero so the cast is visible.
+    return Math.max(0, signedPct > 0 ? 1 : 0)
+  }
+  const scaled = Math.floor((n * (100 + signedPct)) / 100)
+  if (scaled === n) {
+    return Math.max(0, n + (signedPct > 0 ? 1 : -1))
+  }
+  return Math.max(0, scaled)
+}
+
 export function stackDefense(
   stack: CombatStack,
   catalog: ReferenceCatalog,
@@ -184,10 +286,13 @@ export function stackDefense(
   }
   const base = unitById(catalog, stack.unitId)?.defense ?? 0
   const flat = base + (stack.statFlat?.defense ?? 0)
+  const mult = stack.defenseMult?.mult
+  const multiplied =
+    mult != null && Number.isFinite(mult) && mult > 0
+      ? Math.max(0, Math.floor(flat * mult))
+      : flat
   const pct = stack.defensePct ?? 0
-  const scaled = pct
-    ? Math.floor((flat * (100 + pct)) / 100)
-    : flat
+  const scaled = scaleBySignedPct(multiplied, pct)
   const floor = stack.defenseFloor ?? 0
   return Math.max(floor, scaled)
 }
@@ -197,7 +302,14 @@ export function stackResistance(
   catalog: ReferenceCatalog,
 ): number {
   const base = unitById(catalog, stack.unitId)?.resistance ?? 0
-  return Math.max(0, base + (stack.statFlat?.resistance ?? 0))
+  const flat = Math.max(0, base + (stack.statFlat?.resistance ?? 0))
+  const mult = stack.resistanceMult?.mult
+  const multiplied =
+    mult != null && Number.isFinite(mult) && mult > 0
+      ? Math.max(0, Math.floor(flat * mult))
+      : flat
+  const pct = stack.resistancePct ?? 0
+  return scaleBySignedPct(multiplied, pct)
 }
 
 export function stackMinDmg(
@@ -241,6 +353,86 @@ export type SiegeGate = {
   moatR: number
 }
 
+/** Marker left when a creature stack is wiped. Battle-scoped only. */
+export type CombatTombstone = {
+  /** Former combat stack id — reused on successful Resurrection. */
+  id: string
+  side: CombatSide
+  unitId: number
+  q: number
+  r: number
+  /** Revive qty cap (battle-start count). */
+  startingQty: number
+  /** Creatures lost when the stack was wiped (usually === startingQty). */
+  deadQty: number
+  sessionStackId?: string
+  armySlot?: number
+  slot: number
+}
+
+/**
+ * Placed battlefield zone from a `ground_effect` template + casting ability.
+ * Numbers are snapshotted at cast time; template only defines mechanic kind.
+ */
+export type CombatGroundEffect = {
+  id: string
+  templateId: number
+  name: string
+  imagePath: string | null
+  /** From ground_effect.display_rules.layer — default below units. */
+  layer: 'above_units' | 'below_units'
+  hexKeys: string[]
+  casterSide: CombatSide
+  /** Invisible to opposing UI/AI; caster still sees it. */
+  hidden: boolean
+  /** Null = until cleared / triggered. */
+  roundsLeft: number | null
+  mechanicType: string
+  effect: string
+  triggerMoveTypes: Array<'ground' | 'flying' | 'hover' | 'submerge'>
+  evasionPct: number
+  flatDmg: number
+  explodeRadius: number
+  stunChancePct: number
+  stunConditionId: number
+  resistStat: 'resistance' | 'defense' | null
+  consumeOnTrigger: boolean
+  /** When false, detonation never damages/stuns the caster's side. */
+  friendlyTakesDmg: boolean
+  /** Barricade-style: hexes block standing / pathing. */
+  blocksMovement?: boolean
+  /** Barricade-style: hexes block line of sight. */
+  blocksLos?: boolean
+  /**
+   * Tile snapshots taken when this zone stamped blocking onto the board.
+   * Restored when Sanctify / Gaia / overlap-replace clears the zone.
+   */
+  tilePrevious?: Array<{
+    q: number
+    r: number
+    terrain: string
+    blocked: boolean
+    blocksLos: boolean
+    movementCostMultiplier: number | null
+  }>
+}
+
+/** Mid-battle terrain stamp (Void leave-behind). */
+export type CombatTerrainPatch = {
+  q: number
+  r: number
+  terrainTypeId: number
+  name: string
+  imagePath: string | null
+  /** Snapshot of the hex before the stamp (for Sanctify / Gaia clear). */
+  previous?: {
+    terrain: string
+    blocked: boolean
+    blocksLos: boolean
+    movementCostMultiplier: number | null
+  }
+}
+
 export type CombatBattle = {
   round: number
   stacks: CombatStack[]
@@ -254,8 +446,42 @@ export type CombatBattle = {
   siegeGate?: SiegeGate | null
   /** Kills this battle, keyed by catalog unit id. Source for tag-based summons. */
   unitDeaths: Record<number, number>
+  /** Kills this round only (Phoenix self-rez). Cleared when a new round starts. */
+  roundUnitDeaths?: Record<number, number>
+  /**
+   * Markers for fully wiped creature stacks. Block movement; Resurrection
+   * may revive own-side tombstones. Cleared when combat ends (battle state).
+   */
+  tombstones: CombatTombstone[]
+  /**
+   * Reusable battlefield zones (Smoke, traps, …). Newest placement replaces
+   * any overlapping zone hex. Hidden zones must not inform AI decisions.
+   */
+  groundEffects: CombatGroundEffect[]
+  /**
+   * Tag → side → creature qty, frozen at battle start (Humanoid for Citadel
+   * passives; reusable for Factory Non-Living-style synergies later).
+   */
+  armyTagCounts?: ArmyTagCounts
+  /**
+   * Town / scoped counts frozen at battle start (Grove, Fortress, Confluence,
+   * Non-Living Factory) for S6-46 army passives.
+   */
+  armyTownCounts?: ArmyTownCounts
+  /** Void leave-behind: terrain_type stamps on vacated hexes. */
+  terrainPatches?: CombatTerrainPatch[]
   /** Start-of-round condition logs (Polymorph break/expiry). */
   roundLog?: string[]
+  /** End-of-round splash keys (Paladin execute / Cleric heal). */
+  roundHitKeys?: string[]
+  roundHealKeys?: string[]
+  /** Brisk Renewal-style heals: tick at end of every round for the side. */
+  recurringHeals?: Array<{
+    side: CombatSide
+    healPctStat: number
+    healMin: number
+    intel: number
+  }>
 }
 
 /**
@@ -299,6 +525,10 @@ export function noteUnitDeaths(
       ...(battle.unitDeaths ?? {}),
       [unitId]: (battle.unitDeaths?.[unitId] ?? 0) + killed,
     },
+    roundUnitDeaths: {
+      ...(battle.roundUnitDeaths ?? {}),
+      [unitId]: (battle.roundUnitDeaths?.[unitId] ?? 0) + killed,
+    },
   }
 }
 
@@ -321,67 +551,14 @@ function playerNumber(hero: Hero | undefined): number {
   return slotFromPlayerId(hero?.player_id ?? '') ?? 1
 }
 
-function necropolisUnits(catalog: ReferenceCatalog): UnitRow[] {
-  const buildingIds = new Set(
-    catalog.building
-      .filter((row) => row.town_id === NECROPOLIS_TOWN_TYPE_ID)
-      .map((row) => row.id),
-  )
-  const fromTown = catalog.unit.filter(
-    (row) =>
-      row.bldg_id != null &&
-      buildingIds.has(row.bldg_id) &&
-      (row.speed ?? 0) > 0,
-  )
-  const pool =
-    fromTown.length > 0
-      ? fromTown
-      : catalog.unit.filter((row) => (row.speed ?? 0) > 0)
-  return [...pool].sort((a, b) => a.id - b.id)
-}
-
-function heroTypeName(
-  catalog: ReferenceCatalog,
-  hero: Hero | undefined,
-): string | undefined {
-  if (hero?.class_id == null) {
-    return undefined
+function padArmySlots(
+  slots: Array<string | null> | undefined,
+): Array<string | null> {
+  const next = (slots ?? []).slice(0, ARMY_STACK_SLOTS)
+  while (next.length < ARMY_STACK_SLOTS) {
+    next.push(null)
   }
-  return catalog.hero_type.find((row) => row.id === hero.class_id)?.name
-}
-
-function catalogUnitNamed(
-  catalog: ReferenceCatalog,
-  name: string,
-): UnitRow | undefined {
-  const key = name.trim().toLowerCase()
-  return catalog.unit.find((row) => row.name.trim().toLowerCase() === key)
-}
-
-/**
- * Test-army only: Necromancer uses Skeleton Riders in place of Lich and
- * Shadow Dragon; Death Knight uses Shadow Dragon in place of Bats.
- */
-function dummyUnitForHero(
-  unit: UnitRow,
-  catalog: ReferenceCatalog,
-  hero: Hero | undefined,
-): UnitRow {
-  const typeName = heroTypeName(catalog, hero)
-  if (
-    typeName === 'Necromancer' &&
-    (unit.name === 'Lich' || unit.name === 'Shadow Dragon')
-  ) {
-    return (
-      catalogUnitNamed(catalog, 'Skeleton Riders') ??
-      catalogUnitNamed(catalog, 'Skeletal Riders') ??
-      unit
-    )
-  }
-  if (typeName === 'Death Knight' && unit.name === 'Bats') {
-    return catalogUnitNamed(catalog, 'Shadow Dragon') ?? unit
-  }
-  return unit
+  return next
 }
 
 function stackFromSlotId(
@@ -408,6 +585,7 @@ function stackFromSlotId(
     startingQty: unitStack.qty,
     q: start.q,
     r: start.r,
+    startHex: { q: start.q, r: start.r },
     hasActedThisRound: false,
     retaliationsLeft: retaliationCharges(unitById(catalog, unitStack.unit_id)),
     sessionStackId: unitStack.id,
@@ -453,7 +631,7 @@ function defendingHero(
   })
 }
 
-/** Defending hero army if present, else town garrison. Empty → generated fill. */
+/** Defending hero army if present, else town garrison. */
 function siegeDefenderSlots(
   session: GameSession,
   town: Town,
@@ -484,58 +662,41 @@ export function defenderArmyIsGarrison(
   return hasLivingStacks(session, town.garrison.slots_1_to_6)
 }
 
+/**
+ * Army slot index N maps only to the battlefield start for slot N.
+ * Empty army slots leave the matching battlefield stand empty — never pack
+ * living stacks upward to fill gaps.
+ */
 function stacksForSide(
   session: GameSession,
   catalog: ReferenceCatalog,
   slotIds: Array<string | null> | undefined,
   side: CombatSide,
   starts: SlotStart[],
-  seedOffset: number,
-  flavorHero?: Hero,
 ): CombatStack[] {
-  const sideStarts = starts.filter((start) => start.side === side)
+  const slots = padArmySlots(slotIds)
+  const startBySlot = new Map<number, SlotStart>()
+  for (const start of starts) {
+    if (start.side !== side) {
+      continue
+    }
+    if (start.slot < 0 || start.slot >= ARMY_STACK_SLOTS) {
+      continue
+    }
+    startBySlot.set(start.slot, start)
+  }
   const live: CombatStack[] = []
-  for (const start of sideStarts) {
-    const stack = stackFromSlotId(
-      session,
-      catalog,
-      slotIds?.[start.slot],
-      side,
-      start,
-    )
+  for (let slot = 0; slot < ARMY_STACK_SLOTS; slot += 1) {
+    const start = startBySlot.get(slot)
+    if (!start) {
+      continue
+    }
+    const stack = stackFromSlotId(session, catalog, slots[slot], side, start)
     if (stack) {
       live.push(stack)
     }
   }
-  if (live.length > 0) {
-    return live
-  }
-  const pool = necropolisUnits(catalog)
-  if (pool.length === 0) {
-    return []
-  }
-  return sideStarts.map((start, index) => {
-    const unit = dummyUnitForHero(
-      pool[(seedOffset + index) % pool.length]!,
-      catalog,
-      flavorHero,
-    )
-    const qty = dummyArmyQty(catalog)
-    return {
-      id: `combat-${side}-${start.slot}`,
-      side,
-      slot: start.slot,
-      unitId: unit.id,
-      qty,
-      topHealth: fullHealth(catalog, unit.id),
-      startingQty: qty,
-      q: start.q,
-      r: start.r,
-      hasActedThisRound: false,
-      retaliationsLeft: retaliationCharges(unit),
-      armySlot: start.slot,
-    }
-  })
+  return live
 }
 
 export function stackCombatSpeed(
@@ -546,12 +707,16 @@ export function stackCombatSpeed(
   if (base == null) {
     return null
   }
+  if (stack.speedLock != null) {
+    return Math.max(0, stack.speedLock.value)
+  }
   return Math.max(
     0,
     base +
       (stack.speedMod ?? 0) +
       (stack.statFlat?.speed ?? 0) +
-      (stack.speedUses?.amount ?? 0),
+      (stack.speedUses?.amount ?? 0) +
+      (stack.speedBoost?.amount ?? 0),
   )
 }
 
@@ -641,15 +806,47 @@ export function initiativeOrder(
 }
 
 /**
+ * Sides whose live combat speed changed between two battle snapshots
+ * (buff or debuff). Used to re-sort initiative for the affected side(s).
+ */
+export function combatSpeedChangedSides(
+  before: CombatBattle,
+  after: CombatBattle,
+  catalog: ReferenceCatalog,
+): CombatSide[] {
+  const prev = new Map(
+    before.stacks.map((stack) => [
+      stack.id,
+      stackCombatSpeed(stack, catalog),
+    ]),
+  )
+  const sides = new Set<CombatSide>()
+  for (const stack of after.stacks) {
+    if (stack.qty <= 0) {
+      continue
+    }
+    const was = prev.get(stack.id)
+    const now = stackCombatSpeed(stack, catalog)
+    if (was !== now) {
+      sides.add(stack.side)
+    }
+  }
+  return [...sides]
+}
+
+/**
  * Re-sort only the remaining (not-yet-acted) suffix of this round's queue.
- * Prefix through the current actor is frozen. Enemy suffix slots stay put;
- * friendly remaining entries permute among their existing suffix slots by
+ * Prefix through the current actor is frozen. Other sides' suffix slots stay
+ * put; `side`'s remaining entries permute among their existing suffix slots by
  * live speed (desc), then army slot (asc). No RNG.
+ *
+ * Call once per side that had a speed buff or debuff — slowed enemies must
+ * shift later the same way hastened allies shift earlier.
  */
 export function resortRemainingInitiative(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
-  casterSide: CombatSide,
+  side: CombatSide,
 ): CombatBattle {
   const actorIdx = battle.activeIndex
   if (actorIdx < 0 || actorIdx >= battle.order.length) {
@@ -667,7 +864,7 @@ export function resortRemainingInitiative(
     if (
       !stack ||
       stack.qty <= 0 ||
-      stack.side !== casterSide ||
+      stack.side !== side ||
       stack.hasActedThisRound
     ) {
       return
@@ -696,6 +893,19 @@ export function resortRemainingInitiative(
   return { ...battle, order: nextOrder }
 }
 
+/** Re-sort each listed side's remaining initiative (buff or debuff). */
+export function resortRemainingInitiativeForSides(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  sides: readonly CombatSide[],
+): CombatBattle {
+  let next = battle
+  for (const side of sides) {
+    next = resortRemainingInitiative(next, catalog, side)
+  }
+  return next
+}
+
 /**
  * Splice a newly summoned stack into the remaining (not-yet-acted) suffix
  * by live speed, descending. Prefix through the current actor is frozen.
@@ -708,6 +918,13 @@ export function insertIntoRemainingInitiative(
   const stack = battle.stacks.find((row) => row.id === stackId)
   if (!stack || stack.qty <= 0) {
     return battle
+  }
+  // Wall / Arcane Shield / other null-speed fixtures never join the queue.
+  if (stackCombatSpeed(stack, catalog) == null) {
+    return {
+      ...battle,
+      order: battle.order.filter((id) => id !== stackId),
+    }
   }
   const speed = stackCombatSpeed(stack, catalog) ?? 0
   const actorIdx = Math.max(0, battle.activeIndex)
@@ -783,22 +1000,117 @@ function tickEvasion(stack: CombatStack): CombatStack {
   return { ...stack, evasion: { ...ev, roundsLeft: left } }
 }
 
+function tickDisarm(stack: CombatStack): CombatStack {
+  const debuff = stack.disarm
+  if (!debuff) {
+    return stack
+  }
+  const left = debuff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, disarm: undefined }
+  }
+  return { ...stack, disarm: { ...debuff, roundsLeft: left } }
+}
+
+function tickFervor(stack: CombatStack): CombatStack {
+  const buff = stack.fervor
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, fervor: undefined }
+  }
+  return { ...stack, fervor: { ...buff, roundsLeft: left } }
+}
+
+function tickSpeedBoost(stack: CombatStack): CombatStack {
+  const boost = stack.speedBoost
+  if (!boost) {
+    return stack
+  }
+  const left = boost.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, speedBoost: undefined }
+  }
+  return { ...stack, speedBoost: { ...boost, roundsLeft: left } }
+}
+
+function tickSpeedLock(stack: CombatStack): CombatStack {
+  const lock = stack.speedLock
+  if (!lock) {
+    return stack
+  }
+  const left = lock.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, speedLock: undefined }
+  }
+  return { ...stack, speedLock: { ...lock, roundsLeft: left } }
+}
+
+function tickDefenseMult(stack: CombatStack): CombatStack {
+  const buff = stack.defenseMult
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, defenseMult: undefined }
+  }
+  return { ...stack, defenseMult: { ...buff, roundsLeft: left } }
+}
+
+function tickResistanceMult(stack: CombatStack): CombatStack {
+  const buff = stack.resistanceMult
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, resistanceMult: undefined }
+  }
+  return { ...stack, resistanceMult: { ...buff, roundsLeft: left } }
+}
+
+function tickDurationBuffs(stack: CombatStack): CombatStack {
+  return tickResistanceMult(
+    tickDefenseMult(
+      tickSpeedLock(tickSpeedBoost(tickFervor(tickDisarm(tickEvasion(stack))))),
+    ),
+  )
+}
+
 export function startRound(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   random: () => number = Math.random,
+  opts?: { skipDurationTicks?: boolean },
 ): CombatBattle {
-  const ticked = tickRoundConditions(battle.stacks, catalog, random)
+  const skipTicks = opts?.skipDurationTicks === true
+  const ticked = skipTicks
+    ? { stacks: battle.stacks, lines: [] as string[] }
+    : tickRoundConditions(battle.stacks, catalog, random)
   const newRound = battle.round + 1
-  const stacks: CombatStack[] = ticked.stacks.map((stack) =>
-    tickEvasion({
+  const stacks: CombatStack[] = ticked.stacks.map((stack) => {
+    const reset: CombatStack = {
       ...stack,
       hasActedThisRound: false,
       extraTurnThisRound: false,
       retaliationsLeft: retaliationCharges(unitById(catalog, stack.unitId)),
-    }),
-  )
+    }
+    return skipTicks ? reset : tickDurationBuffs(reset)
+  })
   const order = initiativeOrder(stacks, catalog, random)
+  let groundEffects = battle.groundEffects ?? []
+  if (!skipTicks && groundEffects.length > 0) {
+    groundEffects = groundEffects
+      .map((row) =>
+        row.roundsLeft == null
+          ? row
+          : { ...row, roundsLeft: row.roundsLeft - 1 },
+      )
+      .filter((row) => row.roundsLeft == null || row.roundsLeft > 0)
+  }
   return {
     ...battle,
     round: newRound,
@@ -806,6 +1118,126 @@ export function startRound(
     order,
     activeIndex: 0,
     roundLog: ticked.lines,
+    groundEffects,
+    roundUnitDeaths: {},
+  }
+}
+
+/** End-of-round recurring heals (Brisk Renewal), then start the next round. */
+function applyRecurringEndOfRoundHeals(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+): { battle: CombatBattle; lines: string[] } {
+  const entries = battle.recurringHeals ?? []
+  if (entries.length === 0) {
+    return { battle, lines: [] }
+  }
+  let stacks = battle.stacks
+  const lines: string[] = []
+  for (const entry of entries) {
+    const amount = Math.max(
+      entry.healMin,
+      Math.floor(entry.intel * (entry.healPctStat / 100)),
+    )
+    if (amount <= 0) {
+      continue
+    }
+    for (const stack of stacks) {
+      if (
+        stack.side !== entry.side ||
+        stack.qty <= 0 ||
+        isHeroStack(stack) ||
+        stack.indestructible
+      ) {
+        continue
+      }
+      const full = stackMaxHealth(stack, catalog)
+      if (stack.topHealth >= full) {
+        continue
+      }
+      const healed = applyStackHeal(stack, amount, full)
+      if (healed.healed <= 0) {
+        continue
+      }
+      stacks = stacks.map((row) =>
+        row.id === stack.id ? healed.stack : row,
+      )
+      const unit = unitById(catalog, stack.unitId)
+      lines.push(
+        `Brisk Renewal: ${stack.qty} ${unit?.name ?? 'unit'} healed ${healed.healed}.`,
+      )
+    }
+  }
+  return {
+    battle: { ...battle, stacks },
+    lines,
+  }
+}
+
+export function advanceTurn(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  random: () => number = Math.random,
+  opts?: {
+    tiles?: CombatTile[]
+    heroes?: CombatHeroes
+  },
+): CombatBattle {
+  const next = battle.order.findIndex((id) => {
+    const stack = battle.stacks.find((row) => row.id === id)
+    return stack != null && !stack.hasActedThisRound
+  })
+  if (next < 0) {
+    return forceEndRound(battle, catalog, random, {
+      skipDurationTicks: false,
+      tiles: opts?.tiles,
+      heroes: opts?.heroes,
+    })
+  }
+  return { ...battle, activeIndex: next, roundLog: [] }
+}
+
+/** Jump straight to the next round (Rally). Optionally skip duration ticks. */
+export function forceEndRound(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  random: () => number = Math.random,
+  opts?: {
+    skipDurationTicks?: boolean
+    tiles?: CombatTile[]
+    heroes?: CombatHeroes
+  },
+): CombatBattle {
+  const healed = applyRecurringEndOfRoundHeals(battle, catalog)
+  const temple = applyTempleEndOfRoundPassives(
+    healed.battle,
+    catalog,
+    opts?.heroes,
+  )
+  const grown =
+    opts?.tiles && opts.tiles.length > 0
+      ? tickShadowGrowth(
+          temple.battle,
+          catalog,
+          opts.heroes,
+          opts.tiles,
+          random,
+        )
+      : { battle: temple.battle, lines: [] as string[] }
+  const started = startRound(grown.battle, catalog, random, {
+    skipDurationTicks: opts?.skipDurationTicks,
+  })
+  const prefix = [...healed.lines, ...temple.lines, ...grown.lines]
+  const hitKeys = [...(temple.hitKeys ?? [])]
+  const healKeys = [...(temple.healKeys ?? [])]
+  if (prefix.length === 0 && hitKeys.length === 0 && healKeys.length === 0) {
+    return started
+  }
+  return {
+    ...started,
+    roundLog: [...prefix, ...(started.roundLog ?? [])],
+    roundHitKeys: hitKeys.length > 0 ? hitKeys : undefined,
+    roundHealKeys: healKeys.length > 0 ? healKeys : undefined,
   }
 }
 
@@ -832,6 +1264,7 @@ function makeHeroStack(
     startingQty: 1,
     q: pos.q,
     r: pos.r,
+    startHex: { q: pos.q, r: pos.r },
     hasActedThisRound: false,
     retaliationsLeft: 0,
     indestructible: true,
@@ -873,12 +1306,7 @@ export function createBattle(
     attacker?.army.slots_1_to_6,
     'atk',
     starts,
-    0,
-    attacker,
   )
-  const defHero = siege && town
-    ? defendingHero(session, town, attackerHeroId)
-    : defender
   const defSlots = siege && town
     ? siegeDefenderSlots(session, town, attackerHeroId)
     : (mob?.slots_1_to_6 ?? defender?.army.slots_1_to_6)
@@ -888,8 +1316,6 @@ export function createBattle(
     defSlots,
     'def',
     starts,
-    6,
-    defHero ?? defender,
   )
   const extra = siege
     ? siegeStructureStacks(
@@ -900,10 +1326,21 @@ export function createBattle(
         siege.catapult,
       )
     : []
-  const stacks = stacksWithoutOverlap(
+  const stacksRaw = stacksWithoutOverlap(
     [...portraits, ...atk, ...def, ...extra],
     catalog,
-  ).map((stack) => ({ ...stack, startingQty: stack.qty }))
+  ).map((stack) => ({
+    ...stack,
+    startingQty: stack.qty,
+    startHex: stack.startHex ?? { q: stack.q, r: stack.r },
+  }))
+  const armyTownCounts = freezeArmyTownCounts(stacksRaw, catalog)
+  const stacks = applyBattleStartArmyPassives(
+    stacksRaw,
+    catalog,
+    { atk: attacker, def: defender },
+    armyTownCounts,
+  )
   const gate =
     siege?.drawbridge && siege.drawbridgeMoat
       ? {
@@ -925,6 +1362,11 @@ export function createBattle(
         : slotFromPlayerId(town?.player_id ?? '') ?? (mob ? 2 : 1),
       siegeGate: gate,
       unitDeaths: {},
+      roundUnitDeaths: {},
+      tombstones: [],
+      groundEffects: [],
+      armyTagCounts: freezeArmyTagCounts(stacks, catalog, [HUMANOID_TAG]),
+      armyTownCounts,
     },
     catalog,
     random,
@@ -979,6 +1421,70 @@ export function endStackTurn(
   }
 }
 
+/** Hard stop so STR×pct ≈ 100% cannot hang the engine. */
+export const FERVOR_CHAIN_SAFETY = 32
+
+export function rollFervorChain(
+  stack: CombatStack | null | undefined,
+  random: () => number = Math.random,
+): boolean {
+  return tryFervorChain(stack, random).triggered
+}
+
+/** Fervor roll with chance% for battle-log formatting. */
+export function tryFervorChain(
+  stack: CombatStack | null | undefined,
+  random: () => number = Math.random,
+): { triggered: boolean; chancePct: number } {
+  const buff = stack?.fervor
+  const chancePct = buff?.chancePct ?? 0
+  if (!buff || buff.roundsLeft <= 0 || chancePct <= 0) {
+    return { triggered: false, chancePct }
+  }
+  if ((buff.streak ?? 0) >= FERVOR_CHAIN_SAFETY) {
+    return { triggered: false, chancePct }
+  }
+  return { triggered: random() * 100 < chancePct, chancePct }
+}
+
+/** After a completed turn, Fervor lets the stack act again immediately. */
+export function grantFervorExtraTurn(
+  battle: CombatBattle,
+  stackId: string,
+): CombatBattle {
+  return {
+    ...battle,
+    stacks: battle.stacks.map((row) => {
+      if (row.id !== stackId) {
+        return row
+      }
+      const buff = row.fervor
+      return {
+        ...row,
+        hasActedThisRound: false,
+        fervor: buff
+          ? { ...buff, streak: (buff.streak ?? 0) + 1 }
+          : undefined,
+      }
+    }),
+  }
+}
+
+export function clearFervorStreak(
+  battle: CombatBattle,
+  stackId: string,
+): CombatBattle {
+  return {
+    ...battle,
+    stacks: battle.stacks.map((row) => {
+      if (row.id !== stackId || !row.fervor || row.fervor.streak == null) {
+        return row
+      }
+      return { ...row, fervor: { ...row.fervor, streak: 0 } }
+    }),
+  }
+}
+
 function consumeTurnUses(stack: CombatStack): CombatStack {
   return consumeChargeRush(consumeSpeedUse(stack))
 }
@@ -1014,19 +1520,4 @@ export function applyMove(
   r: number,
 ): CombatBattle {
   return endStackTurn(moveStack(battle, stackId, q, r), stackId)
-}
-
-export function advanceTurn(
-  battle: CombatBattle,
-  catalog: ReferenceCatalog,
-  random: () => number = Math.random,
-): CombatBattle {
-  const next = battle.order.findIndex((id) => {
-    const stack = battle.stacks.find((row) => row.id === id)
-    return stack != null && !stack.hasActedThisRound
-  })
-  if (next < 0) {
-    return startRound(battle, catalog, random)
-  }
-  return { ...battle, activeIndex: next, roundLog: [] }
 }

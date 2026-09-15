@@ -2,11 +2,14 @@
 export const DEFAULT_AI_ARCH_ID = 1
 /** World mobs always fight with Aggressive `combat_action` weights. */
 export const MOB_ARCH_ID = 3
+/** Neutral town garrisons fight with Defend `combat_action` weights. */
+export const NEUTRAL_GARRISON_ARCH_ID = 4
 
 export const WORLD_MOVE_DECISION = 'world_move'
 export const TOWN_BUILD_DECISION = 'town_build'
 export const ARMY_ALLOC_DECISION = 'army_alloc'
 export const COMBAT_ACTION_DECISION = 'combat_action'
+export const MOB_FLEE_RESPONSE_DECISION = 'mob_flee_response'
 
 export const WORLD_MOVE_FACTORS = [
   'safety',

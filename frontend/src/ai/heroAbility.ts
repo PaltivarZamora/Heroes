@@ -1,4 +1,5 @@
 import type { Axial } from '../hex/hero'
+import { axialNeighborDirs } from '../hex/pathfinding'
 import type { Hero, Player } from '../session/types'
 import {
   abilityCastCost,
@@ -42,7 +43,6 @@ import {
   type AbilityRow,
   type ReferenceCatalog,
 } from '../town/catalog'
-import { combatDisplayLearnedIds } from '../town/libraryRules'
 import {
   HERO_ABILITY_DECISION,
   type HeroAbilityFactor,
@@ -68,12 +68,12 @@ export type AbilityEffectKind =
 
 export type HeroAbilityIntent = {
   ability: AbilityRow
-  aim: { targetId: string | null; hex: Axial }
+  aim: { targetId: string | null; hex: Axial; lineDir?: Axial | null }
   kind: AbilityEffectKind
 }
 
 type AimOption = {
-  aim: { targetId: string | null; hex: Axial }
+  aim: { targetId: string | null; hex: Axial; lineDir?: Axial | null }
   stacks: CombatStack[]
 }
 
@@ -96,6 +96,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function asFinite(value: unknown): number | null {
   const n = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(n) ? n : null
+}
+
+function asFlag(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true'
 }
 
 function letter(index: number): string {
@@ -218,6 +222,13 @@ function rawAbilityDamage(
   if (intel != null) {
     return Math.max(0, Math.floor(intel * casterStat(catalog, caster, 2)))
   }
+  const minD = asFinite(stats.min_dmg)
+  const maxD = asFinite(stats.max_dmg)
+  if (minD != null || maxD != null) {
+    const lo = Math.floor(minD ?? maxD ?? 0)
+    const hi = Math.floor(maxD ?? minD ?? 0)
+    return Math.max(0, Math.floor((lo + hi) / 2))
+  }
   return null
 }
 
@@ -233,6 +244,10 @@ function classify(
   if (isSummonStats(stats)) {
     return 'summon'
   }
+  // Seeds of Shadow: utility scatter, not a damage spell.
+  if (asFinite(stats.seed_count_stat) != null) {
+    return 'buff'
+  }
   const cond = Math.floor(asFinite(stats.inflicts_condition) ?? 0)
   if (cond > 0) {
     return 'condition'
@@ -242,11 +257,13 @@ function classify(
   if (
     probe.flat_dmg != null ||
     probe.str_dmg != null ||
-    probe.int_dmg != null
+    probe.int_dmg != null ||
+    probe.min_dmg != null ||
+    probe.max_dmg != null
   ) {
     return 'dmg'
   }
-  if (probe.flat_heal != null || probe.drain_heal === true) {
+  if (probe.flat_heal != null || probe.drain_heal === true || probe.heals_to_full === true) {
     return 'heal'
   }
   const typeName =
@@ -517,6 +534,12 @@ function impactOf(
   if (kind === 'summon') {
     return impactSummon(stats, battle, catalog, caster, ability)
   }
+  // Seeds of Shadow: value ≈ tile count × modest board-control weight.
+  const seedFactor = asFinite(stats.seed_count_stat)
+  if (seedFactor != null) {
+    const intel = casterStat(catalog, caster, 2)
+    return Math.max(0, Math.floor(intel * seedFactor)) * 8
+  }
   if (kind === 'dmg') {
     const raw = rawAbilityDamage(probe, catalog, caster)
     if (raw == null) {
@@ -525,6 +548,20 @@ function impactOf(
     return impactDamage(raw, targets, catalog, ability, heroes)
   }
   if (kind === 'heal') {
+    if (probe.heals_to_full === true) {
+      let impact = 0
+      for (const target of targets) {
+        const full = stackMaxHealth(target, catalog)
+        const missing = Math.max(0, full - target.topHealth)
+        if (missing <= 0) {
+          continue
+        }
+        const avg =
+          (stackMinDmg(target, catalog) + stackMaxDmg(target, catalog)) / 2
+        impact += missing * avg
+      }
+      return impact
+    }
     const pool =
       probe.drain_heal === true
         ? rawAbilityDamage(stats, catalog, caster) ?? 0
@@ -572,6 +609,7 @@ function aimOptions(
   tiles: CombatTile[],
   casterSide: CombatSide,
   heroHex: Axial,
+  caster?: Hero | null,
 ): AimOption[] {
   const parsed = parseTarget(catalog, ability)
   const living = livingCreatures(battle, catalog).filter((row) =>
@@ -580,9 +618,33 @@ function aimOptions(
   if (!abilityNeedsHexTarget(catalog, ability) || parsed.spread === 'all') {
     return [{ aim: { targetId: null, hex: heroHex }, stacks: living }]
   }
+  // Explosive Trap / Barrier: score empty standable hexes (never use explosion radius).
+  if (asFlag(_stats.targets_empty_hexes)) {
+    const valid = abilityValidHexKeys(
+      catalog,
+      ability,
+      casterSide,
+      battle,
+      tiles,
+    )
+    // Barrier: try each unique wall axis (±dir is the same line).
+    const dirs: Array<Axial | null> =
+      asFinite(_stats.line_length_stat_div) != null
+        ? axialNeighborDirs().slice(0, 3).map((dir) => ({ ...dir }))
+        : [null]
+    return valid.flatMap((key) => {
+      const [qs, rs] = key.split(',')
+      const hex = { q: Number(qs), r: Number(rs) }
+      return dirs.map((lineDir) => ({
+        aim: { targetId: null, hex, lineDir },
+        stacks: [] as CombatStack[],
+      }))
+    })
+  }
   if (parsed.spread === 'aoe') {
     const options: AimOption[] = []
     const seen = new Set<string>()
+    const isGroundPlace = asFinite(_stats.ground_effect_id) != null
     for (const tile of tiles) {
       const keys = abilityAimImpactKeys(
         catalog,
@@ -591,6 +653,7 @@ function aimOptions(
         battle,
         tiles,
         { q: tile.q, r: tile.r },
+        caster,
       )
       const stacks = stacksFromKeys(
         battle,
@@ -599,13 +662,16 @@ function aimOptions(
         casterSide,
         parsed.group,
       )
-      if (stacks.length === 0) {
+      // Smoke: prefer covering friendlies; still allow empty aims for cover.
+      if (stacks.length === 0 && !isGroundPlace) {
         continue
       }
-      const sig = stacks
-        .map((row) => row.id)
-        .sort()
-        .join('|')
+      const sig = isGroundPlace
+        ? keys.slice().sort().join('|')
+        : stacks
+            .map((row) => row.id)
+            .sort()
+            .join('|')
       if (seen.has(sig)) {
         continue
       }
@@ -661,6 +727,7 @@ function bestAim(
     tiles,
     casterSide,
     heroHex,
+    caster,
   )
   if (kind === 'summon') {
     const impact = impactOf(
@@ -715,11 +782,12 @@ export function decideHeroAbility(
   if (heroStack.hasActedThisRound) {
     return null
   }
-  const learned = new Set(
-    (hero.learned_abilities ?? []).length > 0
-      ? hero.learned_abilities
-      : combatDisplayLearnedIds(catalog, hero),
-  )
+  // Strict: only abilities this hero has actually learned (Library / debug).
+  // Do not fall back to the full class list — that was combat UI test padding.
+  const learned = new Set(hero.learned_abilities ?? [])
+  if (learned.size === 0) {
+    return null
+  }
   const minRatio = aiAbilityMinValueRatio(catalog)
   const length = remainingRoundsEstimate(battle, catalog, heroStack.side)
   const roundsLeft = length.rounds

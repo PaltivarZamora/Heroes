@@ -3,6 +3,7 @@ import { appendAiTrace } from '../ai/trace'
 import { xpHpMult } from '../ai/weights'
 import {
   HERO_STAT_KEYS,
+  heroResourcePools,
   xpToReachLevel,
   unitById,
   type HeroStatKey,
@@ -30,16 +31,26 @@ export type AwardHeroXpResult = {
   xpAfter: number
   levelsGained: number[]
   lines: string[]
+  /** Hero that received XP (for level-up UI). */
+  heroId: string | null
+}
+
+/** Human-only level-up popup payload. */
+export type LevelUpNotice = {
+  heroName: string
+  level: number
+  /** One "+N Display Name" line per bumped stat (multi-level bumps summed). */
+  bumps: string[]
 }
 
 const STAT_BUMP_LABEL: Record<HeroStatKey, string> = {
   speed: 'Speed',
   stamina: 'Stamina',
-  strength: 'STR',
-  intel: 'INT',
+  strength: 'Strength',
+  intel: 'Intelligence',
   defense: 'Defense',
-  resist: 'Resist',
-  crit_pct: 'Crit Chance',
+  resist: 'Resistance',
+  crit_pct: 'Crit %',
   crit_amt: 'Crit Amount',
 }
 
@@ -53,6 +64,7 @@ function emptyAward(session: GameSession): AwardHeroXpResult {
     xpAfter: 0,
     levelsGained: [],
     lines: [],
+    heroId: null,
   }
 }
 
@@ -63,32 +75,86 @@ function formatBumpAmount(amount: number): string {
   return `${amount}`
 }
 
+/** Sum `stat_bumps` across every level id in `levels` (order irrelevant). */
+export function accumulateStatBumpLines(
+  catalog: ReferenceCatalog,
+  classId: number | null,
+  levels: number[],
+): string[] {
+  if (classId == null || levels.length === 0) {
+    return []
+  }
+  const totals: Partial<Record<HeroStatKey, number>> = {}
+  for (const levelId of levels) {
+    const row = catalog.hero_levels.find(
+      (entry) => entry.hero_type_id === classId && entry.level_id === levelId,
+    )
+    if (!row) {
+      continue
+    }
+    for (const key of HERO_STAT_KEYS) {
+      const bump = row.stat_bumps[key]
+      if (typeof bump !== 'number' || !Number.isFinite(bump) || bump === 0) {
+        continue
+      }
+      totals[key] = (totals[key] ?? 0) + bump
+    }
+  }
+  const lines: string[] = []
+  for (const key of HERO_STAT_KEYS) {
+    const amount = totals[key]
+    if (amount == null || amount === 0) {
+      continue
+    }
+    lines.push(`${formatBumpAmount(amount)} ${STAT_BUMP_LABEL[key]}`)
+  }
+  return lines
+}
+
 function formatBumpsForLevel(
   catalog: ReferenceCatalog,
   classId: number | null,
   levelId: number,
 ): string | null {
-  if (classId == null) {
-    return null
-  }
-  const row = catalog.hero_levels.find(
-    (entry) => entry.hero_type_id === classId && entry.level_id === levelId,
-  )
-  if (!row) {
-    return null
-  }
-  const parts: string[] = []
-  for (const key of HERO_STAT_KEYS) {
-    const bump = row.stat_bumps[key]
-    if (typeof bump !== 'number' || !Number.isFinite(bump) || bump === 0) {
-      continue
-    }
-    parts.push(`${formatBumpAmount(bump)} ${STAT_BUMP_LABEL[key]}`)
-  }
+  const parts = accumulateStatBumpLines(catalog, classId, [levelId])
   if (parts.length === 0) {
     return null
   }
   return `Level ${levelId}: ${parts.join(', ')}`
+}
+
+/**
+ * Popup for a human hero who gained levels with at least one non-zero bump.
+ * AI heroes and empty bump tables return null.
+ */
+export function levelUpNoticeForAward(
+  catalog: ReferenceCatalog,
+  result: AwardHeroXpResult,
+): LevelUpNotice | null {
+  if (!result.heroId || result.levelsGained.length === 0) {
+    return null
+  }
+  const hero = result.session.heroes.find((row) => row.id === result.heroId)
+  if (!hero) {
+    return null
+  }
+  const owner = result.session.players.find((row) => row.id === hero.player_id)
+  if (!owner || owner.is_ai) {
+    return null
+  }
+  const bumps = accumulateStatBumpLines(
+    catalog,
+    hero.class_id,
+    result.levelsGained,
+  )
+  if (bumps.length === 0) {
+    return null
+  }
+  return {
+    heroName: hero.name,
+    level: result.toLevel,
+    bumps,
+  }
 }
 
 /** "Leveled up to Level 2, 3, and 4" — every crossed threshold named. */
@@ -205,7 +271,8 @@ export function awardHeroXp(
   )
   const levelsGained: number[] = []
   while (level < maxLevel) {
-    const need = xpToReachLevel(catalog, level + 1)
+    // levels.xp at id = current level = cumulative XP to advance out of it.
+    const need = xpToReachLevel(catalog, level)
     if (need == null || xp < need) {
       break
     }
@@ -229,11 +296,25 @@ export function awardHeroXp(
     levelsGained,
     bumpLines,
   })
-  const heroes = session.heroes.map((row) =>
-    row.id === heroId
-      ? { ...row, current_xp: xp, current_level: level }
-      : row,
-  )
+  const heroes = session.heroes.map((row) => {
+    if (row.id !== heroId) {
+      return row
+    }
+    const leveled = {
+      ...row,
+      current_xp: xp,
+      current_level: level,
+    }
+    if (levelsGained.length === 0) {
+      return leveled
+    }
+    const pools = heroResourcePools(catalog, leveled)
+    return {
+      ...leveled,
+      current_mana: pools.current_mana,
+      current_energy: pools.current_energy,
+    }
+  })
   const next = setNamedProgress(
     { ...session, heroes },
     hero.name,
@@ -248,6 +329,7 @@ export function awardHeroXp(
     xpAfter: xp,
     levelsGained,
     lines,
+    heroId,
   }
 }
 

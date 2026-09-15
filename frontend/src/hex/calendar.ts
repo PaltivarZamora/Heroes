@@ -62,3 +62,8 @@ export function sameCalendar(a: Calendar, b: Calendar): boolean {
 export function calendarDayNumber(calendar: Calendar): number {
   return (calendar.month - 1) * 28 + (calendar.week - 1) * 7 + calendar.day
 }
+
+/** Monotonic week index (M1W1 = 1). Used for neutral-town growth schedule. */
+export function absoluteWeekNumber(calendar: Calendar): number {
+  return (calendar.month - 1) * 4 + calendar.week
+}

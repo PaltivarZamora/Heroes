@@ -21,6 +21,12 @@ export type Game = {
   seed: number
   calendar: Calendar
   settings: GameSettings
+  /**
+   * Heroes in owned towns at last day boundary (kept for saves / tooling).
+   * Full Energy/Mana restore at day end applies to whoever is in an owned town
+   * when the calendar advances — not gated on this list.
+   */
+  town_pool_restore_ids?: string[]
 }
 
 export type Player = {

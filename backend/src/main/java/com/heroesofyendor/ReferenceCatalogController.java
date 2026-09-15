@@ -53,6 +53,7 @@ public class ReferenceCatalogController {
         body.put("ai_arch_weight", decodeRows(referenceData.rows("ai_arch_weight"), resourceNameToId));
         body.put("levels", decodeRows(referenceData.rows("levels"), resourceNameToId));
         body.put("hero_levels", decodeRows(referenceData.rows("hero_levels"), resourceNameToId));
+        body.put("ground_effect", decodeRows(referenceData.rows("ground_effect"), resourceNameToId));
         return body;
     }
 

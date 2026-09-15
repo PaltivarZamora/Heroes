@@ -17,7 +17,6 @@ import {
   PLAYER_COUNT_MAX,
   PLAYER_COUNT_MIN,
   PLAYER_CONTROLLER_OPTIONS,
-  controllerLabel,
   type GameConfig,
   type PlayerConfig,
   type PlayerController,
@@ -53,12 +52,16 @@ function parseHeroValue(value: string): number | null {
 
 export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
-  const defaults = defaultGameConfig()
-  const [mapSize, setMapSize] = useState<MapSizeName>(defaults.mapSize)
-  const [playerCount, setPlayerCount] = useState(defaults.playerCount)
-  const [difficultyId, setDifficultyId] = useState(defaults.difficultyId)
-  const [slots, setSlots] = useState<PlayerConfig[]>(defaultPlayerSlots)
-  const [assembled, setAssembled] = useState<GameConfig | null>(null)
+  const bootDefaults = defaultGameConfig(catalog)
+  const [mapSize, setMapSize] = useState<MapSizeName>(bootDefaults.mapSize)
+  const [playerCount, setPlayerCount] = useState(bootDefaults.playerCount)
+  const [difficultyId, setDifficultyId] = useState(bootDefaults.difficultyId)
+  const [slots, setSlots] = useState<PlayerConfig[]>(() =>
+    defaultPlayerSlots(catalog),
+  )
+  // false until catalog is applied once this mount — never skip when catalog was
+  // already cached (F5) or we would keep stale pre-app_config form state.
+  const [defaultsApplied, setDefaultsApplied] = useState(false)
   const [catalogError, setCatalogError] = useState<string | null>(null)
 
   const difficulties = catalog?.difficulty ?? []
@@ -66,7 +69,7 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     difficulties.find((row) => row.id === difficultyId) ?? null
 
   useEffect(() => {
-    if (difficulties.length > 0) {
+    if (catalog) {
       return
     }
     let cancelled = false
@@ -80,10 +83,23 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     return () => {
       cancelled = true
     }
-  }, [difficulties.length])
+  }, [catalog])
+
+  // Pre-fill once from app_config when catalog is ready; do not overwrite edits after.
+  useEffect(() => {
+    if (!catalog || defaultsApplied) {
+      return
+    }
+    const defaults = defaultGameConfig(catalog)
+    setMapSize(defaults.mapSize)
+    setPlayerCount(defaults.playerCount)
+    setDifficultyId(defaults.difficultyId)
+    setSlots(defaultPlayerSlots(catalog))
+    setDefaultsApplied(true)
+  }, [catalog, defaultsApplied])
 
   useEffect(() => {
-    if (difficulties.length === 0) {
+    if (!defaultsApplied || difficulties.length === 0) {
       return
     }
     if (difficulties.some((row) => row.id === difficultyId)) {
@@ -93,7 +109,7 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
       (row) => row.name.trim().toLowerCase() === 'normal',
     )
     setDifficultyId(normal?.id ?? difficulties[0]?.id ?? 0)
-  }, [difficulties, difficultyId])
+  }, [difficulties, difficultyId, defaultsApplied])
 
   const setSlotHero = (index: number, heroTypeId: number | null) => {
     setSlots((current) =>
@@ -117,60 +133,10 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
       slots,
       difficultyId,
     })
-    console.log('GameConfig', config)
-    setAssembled(config)
+    onStartGame(config)
   }
 
-  const heroTypes = catalog?.hero_type ?? []
-  const assembledDifficulty = assembled
-    ? (catalog?.difficulty.find((row) => row.id === assembled.difficultyId) ?? null)
-    : null
-
-  if (assembled) {
-    return (
-      <div
-        className="options-modal"
-        role="dialog"
-        aria-labelledby="new-game-confirm-title"
-      >
-        <div className="options-dialog new-game-dialog">
-          <h2 id="new-game-confirm-title">Game Config</h2>
-          <p className="new-game-confirm-note">
-            Config assembled. Launch to start the session.
-          </p>
-          <ul className="new-game-summary">
-            <li>Map Size: {mapSizeChoiceLabel(assembled.mapSize)}</li>
-            <li>Players: {assembled.playerCount}</li>
-            <li>
-              Difficulty:{' '}
-              {assembledDifficulty?.name ?? `#${assembled.difficultyId}`}
-              {difficultyDisplay(assembledDifficulty)
-                ? ` — ${difficultyDisplay(assembledDifficulty)}`
-                : ''}
-            </li>
-            {assembled.players.map((player) => (
-              <li key={player.slot}>
-                Player {player.slot} — {controllerLabel(player.controller)} —{' '}
-                {heroLabel(player.heroTypeId, catalog)}
-              </li>
-            ))}
-          </ul>
-          <pre className="new-game-json">{JSON.stringify(assembled, null, 2)}</pre>
-          <div className="options-actions">
-            <button type="button" onClick={() => onStartGame(assembled)}>
-              Launch Game
-            </button>
-            <button type="button" onClick={() => setAssembled(null)}>
-              Back
-            </button>
-            <button type="button" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const heroTypes = [...(catalog?.hero_type ?? [])].sort((a, b) => a.id - b.id)
 
   return (
     <div className="options-modal" role="dialog" aria-labelledby="new-game-title">
@@ -225,47 +191,48 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
           </p>
         ) : null}
         <div className="new-game-players">
+          <span className="new-game-col-head">Player</span>
+          <span className="new-game-col-head">Controller</span>
+          <span className="new-game-col-head">Hero</span>
           {slots.slice(0, playerCount).map((slot, index) => (
             <div key={slot.slot} className="new-game-player-row">
               <span className="new-game-player-label">Player {slot.slot}</span>
-              <label className="options-field">
-                Controller
-                {index === 0 ? (
-                  <input value="Human" readOnly tabIndex={-1} />
-                ) : (
-                  <select
-                    value={slot.controller}
-                    onChange={(event) =>
-                      setSlotController(
-                        index,
-                        event.target.value as PlayerController,
-                      )
-                    }
-                  >
-                    {PLAYER_CONTROLLER_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </label>
-              <label className="options-field new-game-hero-field">
-                Hero
+              {index === 0 ? (
+                <input value="Human" readOnly tabIndex={-1} />
+              ) : (
                 <select
-                  value={slot.heroTypeId ?? ''}
+                  value={
+                    slot.controller === 'ai_spectator' ? 'ai' : slot.controller
+                  }
+                  aria-label={`Player ${slot.slot} controller`}
                   onChange={(event) =>
-                    setSlotHero(index, parseHeroValue(event.target.value))
+                    setSlotController(
+                      index,
+                      event.target.value as PlayerController,
+                    )
                   }
                 >
-                  <option value="">Random</option>
-                  {heroTypes.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {heroLabel(row.id, catalog)}
+                  {PLAYER_CONTROLLER_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
-              </label>
+              )}
+              <select
+                value={slot.heroTypeId ?? ''}
+                aria-label={`Player ${slot.slot} hero`}
+                onChange={(event) =>
+                  setSlotHero(index, parseHeroValue(event.target.value))
+                }
+              >
+                <option value="">Random</option>
+                {heroTypes.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {heroLabel(row.id, catalog)}
+                  </option>
+                ))}
+              </select>
             </div>
           ))}
         </div>

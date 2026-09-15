@@ -55,10 +55,13 @@ export function HeroAbilityPopup({
 
   const typeName = heroTypeName(catalog, hero.class_id)
   const title = typeName ? `${typeName} Abilities` : 'Abilities'
+  const selectedDiscipline =
+    disciplines.find((row) => row.id === disciplineId) ?? null
   const resourceId =
     disciplineId != null ? disciplineResourceId(catalog, disciplineId) : null
   const resourceName =
-    resourceId != null ? resourceLabel(catalog, resourceId) : ''
+    selectedDiscipline?.name ??
+    (resourceId != null ? resourceLabel(catalog, resourceId) : '')
   const current = resourceId != null ? poolCurrent(hero, resourceId) : 0
   const max = resourceId != null ? poolMax(catalog, hero, resourceId) : 0
 
@@ -95,7 +98,7 @@ export function HeroAbilityPopup({
               }}
             />
             <span className="combat-hero-resource-text">
-              {resourceName} {current} / {max}
+              {resourceName} ({current} / {max})
             </span>
           </div>
         ) : null}

@@ -10,12 +10,14 @@ import {
 } from '../hex/resources'
 import type { SlotState } from '../town/townSlots'
 import {
+  armyOptions,
   buildingById,
   buildingGrowth,
   goldIncomeGrant,
   heroMovementPoints,
   heroResourcePools,
   isArmySlot,
+  isBuildRoot,
   isLibraryBuilding,
   resourceYieldGrant,
   scaleCost,
@@ -33,9 +35,10 @@ import {
   type ReferenceCatalog,
 } from '../town/catalog'
 import { applyWeeklyMobGrowth } from './mobs'
+import { applyWeeklyNeutralTownGrowth } from './neutralTowns'
 import {
   abilityById,
-  classAbilityIds,
+  classAbilityIdsAtTier,
   findOffer,
   goldCostForLevel,
   heroHasDiscipline,
@@ -134,17 +137,74 @@ export function isPlayerEliminated(session: GameSession, player: Player): boolea
   return session.towns.length > 0 || session.heroes.length > 0
 }
 
+/** Mines owned by eliminated players revert to Neutral (unclaimed). */
+export function releaseEliminatedPlayerMines(
+  session: GameSession,
+  eliminatedIds: ReadonlySet<string>,
+): GameSession {
+  if (eliminatedIds.size === 0) {
+    return session
+  }
+  let changed = false
+  const nodes = session.nodes.map((node) => {
+    if (
+      node.kind !== 'mine' ||
+      node.player_id == null ||
+      !eliminatedIds.has(node.player_id)
+    ) {
+      return node
+    }
+    changed = true
+    return { ...node, player_id: null }
+  })
+  return changed ? { ...session, nodes } : session
+}
+
 export function withEliminations(session: GameSession): GameSession {
   let changed = false
+  const newlyEliminated = new Set<string>()
   const players = session.players.map((player) => {
     const eliminated = isPlayerEliminated(session, player)
     if (eliminated === player.eliminated) {
       return player
     }
     changed = true
+    if (eliminated && !player.eliminated) {
+      newlyEliminated.add(player.id)
+    }
     return { ...player, eliminated }
   })
-  return changed ? { ...session, players } : session
+  let next: GameSession = changed ? { ...session, players } : session
+  if (newlyEliminated.size > 0) {
+    next = releaseEliminatedPlayerMines(next, newlyEliminated)
+  }
+  return next
+}
+
+/** Surviving players when the match has a sole remaining side. */
+export function matchVictors(session: GameSession): Player[] {
+  const alive = session.players.filter(
+    (player) => !isPlayerEliminated(session, player),
+  )
+  if (alive.length === 1 && session.players.length > 1) {
+    return alive
+  }
+  return []
+}
+
+export function matchVictoryResult(session: GameSession): {
+  winners: Player[]
+  losers: Player[]
+} | null {
+  const winners = matchVictors(session)
+  if (winners.length === 0) {
+    return null
+  }
+  const winnerIds = new Set(winners.map((player) => player.id))
+  return {
+    winners,
+    losers: session.players.filter((player) => !winnerIds.has(player.id)),
+  }
 }
 
 export function nextActivePlayerIndex(session: GameSession): {
@@ -169,8 +229,14 @@ export function nextActivePlayerIndex(session: GameSession): {
 
 export function endTurn(session: GameSession): GameSession {
   let current = withEliminations(session)
+  const ending = activePlayer(current)
   const { index, dayAdvance } = nextActivePlayerIndex(current)
   current = { ...current, activePlayerIndex: index }
+  // Flat +1 Energy and +1 Mana for the player whose turn just ended (capped at max).
+  // Separate from day-rollover / town full-restore and from regen_pure/hybrid.
+  if (ending) {
+    current = regenHeroPoolsEndOfTurn(current, ending.id)
+  }
   if (dayAdvance) {
     const previous = current.game.calendar
     const next = advanceDay(previous)
@@ -186,11 +252,20 @@ export function endTurn(session: GameSession): GameSession {
         used_abilities_today: [],
       })),
     }
+    current = restoreHeroPoolsEndingDayInTown(current)
+    current = {
+      ...current,
+      game: {
+        ...current.game,
+        town_pool_restore_ids: heroIdsInOwnedTown(current),
+      },
+    }
     if (isWeekRollover(previous, next)) {
       const catalog = getCachedCatalog()
       if (catalog) {
         current = applyWeeklyGrowth(current, catalog)
         current = applyWeeklyMobGrowth(current, catalog)
+        current = applyWeeklyNeutralTownGrowth(current, catalog, next)
       }
     }
   }
@@ -566,9 +641,14 @@ export function applyWalletStockpiles(
 const CHEST_GOLD = 10000
 const CHEST_EACH = 20
 
-/** Debug/options: 10,000 gold plus 20 of every other resource. */
-/** Debug: every hero learns every ability from their class's two disciplines. */
-export function grantAllClassAbilities(session: GameSession): GameSession {
+/**
+ * Debug: every hero learns all abilities at one Library tier (exclusive —
+ * that tier only, both class disciplines). Does not grant other tiers.
+ */
+export function grantClassAbilitiesAtTier(
+  session: GameSession,
+  levelId: number,
+): GameSession {
   const catalog = getCachedCatalog()
   if (!catalog) {
     return session
@@ -576,12 +656,12 @@ export function grantAllClassAbilities(session: GameSession): GameSession {
   return {
     ...session,
     heroes: session.heroes.map((hero) => {
-      const fromClass = classAbilityIds(catalog, hero.class_id)
-      if (fromClass.length === 0) {
+      const fromTier = classAbilityIdsAtTier(catalog, hero.class_id, levelId)
+      if (fromTier.length === 0) {
         return hero
       }
       const have = new Set(hero.learned_abilities ?? [])
-      for (const id of fromClass) {
+      for (const id of fromTier) {
         have.add(id)
       }
       return { ...hero, learned_abilities: [...have] }
@@ -589,6 +669,7 @@ export function grantAllClassAbilities(session: GameSession): GameSession {
   }
 }
 
+/** Debug/options: 10,000 gold plus 20 of every other resource. */
 export function grantOpenChest(session: GameSession): GameSession {
   const player = activePlayer(session)
   if (!player) {
@@ -609,6 +690,61 @@ export function grantOpenChest(session: GameSession): GameSession {
     players: session.players.map((row) =>
       row.id === player.id ? { ...row, resources } : row,
     ),
+  }
+}
+
+/**
+ * Debug/options: place basic (level-1) army dwellings for slots 4–9 on the
+ * player's first controlled town. `armyChoice` 1 = first root per slot (by id),
+ * 2 = second. Includes one week of initial growth in recruit_qty.
+ */
+export function grantBuildArmy(
+  session: GameSession,
+  armyChoice: 1 | 2,
+): { session: GameSession; notice: string } {
+  const player = activePlayer(session)
+  if (!player) {
+    return { session, notice: 'No active player.' }
+  }
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return { session, notice: 'Catalog not loaded.' }
+  }
+  const town = session.towns.find((row) => row.player_id === player.id)
+  if (!town) {
+    return { session, notice: 'You do not control a town.' }
+  }
+  const rootIndex = armyChoice - 1
+  let next = session
+  let built = 0
+  for (let slotNum = 4; slotNum <= 9; slotNum += 1) {
+    if (!isArmySlot(slotNum)) {
+      continue
+    }
+    const roots = armyOptions(catalog, slotNum, town.town_type_id)
+      .filter(isBuildRoot)
+      .sort((a, b) => a.id - b.id)
+    const building = roots[rootIndex]
+    if (!building) {
+      continue
+    }
+    next = patchBuildingSlot(next, town.id, slotNum - 1, {
+      level: 1,
+      buildingId: building.id,
+      recruitQty: buildingGrowth(building),
+    })
+    built += 1
+  }
+  if (built === 0) {
+    return {
+      session,
+      notice: `No Army ${armyChoice} buildings defined for this town.`,
+    }
+  }
+  const townLabel = town.name?.trim() || 'your first town'
+  return {
+    session: next,
+    notice: `Built Army ${armyChoice} (slots 4–9) in ${townLabel} with initial growth`,
   }
 }
 
@@ -2363,6 +2499,84 @@ export function restorePlayerHeroMovement(
         : hero,
     ),
   }
+}
+
+/** Heroes currently standing on a town hex they own. */
+export function heroIdsInOwnedTown(session: GameSession): string[] {
+  const ids: string[] = []
+  for (const hero of session.heroes) {
+    const town = findTownAt(session, hero.position.q, hero.position.r)
+    if (town && town.player_id === hero.player_id) {
+      ids.push(hero.id)
+    }
+  }
+  return ids
+}
+
+/**
+ * Full Energy + Mana at calendar day end for heroes standing in an owned town.
+ * Entering town mid-day does not restore immediately — only the day boundary
+ * does — so ending the day parked in town counts as spending the night.
+ */
+function restoreHeroPoolsEndingDayInTown(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  let changed = false
+  const heroes = session.heroes.map((hero) => {
+    const town = findTownAt(session, hero.position.q, hero.position.r)
+    if (!town || town.player_id !== hero.player_id) {
+      return hero
+    }
+    const pools = heroResourcePools(catalog, hero)
+    if (
+      hero.current_mana === pools.current_mana &&
+      hero.current_energy === pools.current_energy
+    ) {
+      return hero
+    }
+    changed = true
+    return {
+      ...hero,
+      current_mana: pools.current_mana,
+      current_energy: pools.current_energy,
+    }
+  })
+  return changed ? { ...session, heroes } : session
+}
+
+/** World-map end-of-turn: +1 Energy and +1 Mana for that player's heroes (cap at max). */
+function regenHeroPoolsEndOfTurn(
+  session: GameSession,
+  playerId: string,
+): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  let changed = false
+  const heroes = session.heroes.map((hero) => {
+    if (hero.player_id !== playerId) {
+      return hero
+    }
+    const pools = heroResourcePools(catalog, hero)
+    const nextEnergy = Math.min(pools.current_energy, hero.current_energy + 1)
+    const nextMana = Math.min(pools.current_mana, hero.current_mana + 1)
+    if (
+      nextEnergy === hero.current_energy &&
+      nextMana === hero.current_mana
+    ) {
+      return hero
+    }
+    changed = true
+    return {
+      ...hero,
+      current_energy: nextEnergy,
+      current_mana: nextMana,
+    }
+  })
+  return changed ? { ...session, heroes } : session
 }
 
 export function restoreAllHeroMovement(session: GameSession): GameSession {

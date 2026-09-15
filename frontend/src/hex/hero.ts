@@ -112,3 +112,36 @@ export function movementSteps(
   }
   return steps
 }
+
+/** Exact-reach leg for world-map waypoint staging. */
+export function resolveWorldWaypointLeg(
+  grid: Grid<Hex>,
+  from: Axial,
+  to: Axial,
+  remaining: number,
+  blocked?: ReadonlySet<string>,
+): { steps: Axial[]; remaining: number } | null {
+  if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
+    return null
+  }
+  const hexes = movementSteps(grid, from, to, remaining, blocked)
+  if (hexes.length === 0) {
+    return null
+  }
+  const last = hexes[hexes.length - 1]
+  if (!last || last.q !== to.q || last.r !== to.r) {
+    return null
+  }
+  let mp = remaining
+  const steps: Axial[] = []
+  for (const hex of hexes) {
+    const tile = getTile(hex.q, hex.r)
+    const cost = tile?.movementCostMultiplier
+    if (cost == null) {
+      return null
+    }
+    steps.push({ q: hex.q, r: hex.r })
+    mp = spendMovement(mp, cost)
+  }
+  return { steps, remaining: mp }
+}

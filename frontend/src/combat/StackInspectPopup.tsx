@@ -1,20 +1,33 @@
-import type { CombatStack } from './battle'
+import type { CombatBattle, CombatSide, CombatStack } from './battle'
 import type { ReferenceCatalog } from '../town/catalog'
-import { inspectConditions, inspectRows } from './inspect'
+import type { CombatHeroes } from './attack'
+import { inspectActiveEffects, inspectRows } from './inspect'
 
 type StackInspectPopupProps = {
   catalog: ReferenceCatalog
   stack: CombatStack
+  viewerSide?: CombatSide | null
+  battle?: CombatBattle
+  heroes?: CombatHeroes
   onClose: () => void
 }
 
 export function StackInspectPopup({
   catalog,
   stack,
+  viewerSide,
+  battle,
+  heroes,
   onClose,
 }: StackInspectPopupProps) {
-  const rows = inspectRows(stack, catalog)
-  const conditions = inspectConditions(stack, catalog)
+  const rows = inspectRows(stack, catalog, viewerSide, battle, heroes)
+  const effects = inspectActiveEffects(
+    stack,
+    catalog,
+    viewerSide,
+    battle,
+    heroes,
+  )
   const title = rows.find((row) => row.label === 'name')?.value ?? 'Stack'
   return (
     <div
@@ -37,14 +50,14 @@ export function StackInspectPopup({
           ×
         </button>
         <h2 id="combat-inspect-title">{title}</h2>
-        {conditions.length > 0 ? (
-          <section className="combat-inspect-conditions" aria-label="Active conditions">
-            <h3>Conditions</h3>
+        {effects.length > 0 ? (
+          <section className="combat-inspect-conditions" aria-label="Active effects">
+            <h3>Active effects</h3>
             <ul>
-              {conditions.map((row) => (
-                <li key={row.name}>
-                  <span>{row.name}</span>
-                  <span>{row.remaining}</span>
+              {effects.map((row) => (
+                <li key={`${row.label}:${row.value}`}>
+                  <span>{row.label}</span>
+                  <span>{row.value}</span>
                 </li>
               ))}
             </ul>

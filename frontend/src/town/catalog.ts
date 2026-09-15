@@ -36,6 +36,8 @@ export type UnitRow = {
   id: number
   name: string
   bldg_id: number | null
+  /** Catalog `unit.town_id` (faction). Null falls back to dwelling town. */
+  town_id: number | null
   /** Catalog `unit.class_id`. Null falls back to the dwelling's class. */
   class_id: number | null
   /** Catalog `unit.tier`. Null falls back to the dwelling's tier/slot. */
@@ -77,6 +79,22 @@ export type UnitRetaliation = {
   dmgPct: number | 'max' | 'default'
   times: number | 'unlimited'
   preemptive: boolean
+  /**
+   * When set (and not `single`), retaliation uses the same geometry as
+   * normal attacks (pulse, cleave, …). Omitted = classic single-target.
+   */
+  shape?: AttackShapeKind
+  radius?: number
+  /** Chain retaliation: hop count (Zealot). */
+  jumps?: number
+  /** Chain retaliation: % damage drop per hop (Zealot). */
+  falloff?: number
+  /** Chronomancer: on retaliation trigger, roll to teleport the attacker. */
+  teleportsAttacker?: boolean
+  /** Flat % chance (before resist) for teleportsAttacker. */
+  teleportChancePct?: number
+  /** Stat the attacker rolls to resist the teleport. */
+  resistStat?: 'resistance' | 'defense' | null
 }
 
 export type AttackShapeKind =
@@ -86,9 +104,14 @@ export type AttackShapeKind =
   | 'pulse'
   | 'chain'
   | 'beam'
+  | 'line'
+  /** Move like CHARGE; pierce-damage enemies on the traveled origin→target corridor. */
+  | 'charge_line'
   | 'multi'
   | 'rain'
   | 'breath'
+  /** Pyromaniac: single-target damage + clockwise Fire spiral (no AOE damage). */
+  | 'spiral'
 
 export type AutoTargetKind =
   | 'random_wall_segment'
@@ -111,6 +134,136 @@ export type UnitCombatAbilities = {
   resistStat: 'resistance' | 'defense' | null
   /** Forced turns remaining when the condition lands. */
   conditionDuration: number
+  /** Mud Golem: split qty before acting (after first turn). */
+  autoSplitOnTurn: boolean
+  /** With autoSplitOnTurn: do not split on the turn a stack was created (summon or split). */
+  skipFirstTurn: boolean
+  /** Finger of Death / Assassin: overflow kills an extra creature. */
+  killOnOverflow: boolean
+  /** Assassin: % chance of a free second attack on own turns. */
+  chancePct: number | null
+  /** When true with chancePct, bonus attack never fires on retaliation. */
+  extraAttackOnAttackOnly: boolean
+  /** Leave ground_effect while moving (Void origin, or full_path trail). */
+  leavesGroundEffectOnMove: boolean
+  /** Leave ground_effect on attack geometry (any shape via geometricHexes). */
+  leavesGroundEffectOnAttack: boolean
+  /** Catalog ground_effect.id for leave-on-move / leave-on-attack. */
+  groundEffectId: number | null
+  /** Fire (and similar): take zero damage from Fire entry/turn-start. */
+  immuneToFire: boolean
+  /** Storm / Lightning: take zero damage from Storm entry/turn-start. */
+  immuneToLightning: boolean
+  /**
+   * When true with leaves_ground_effect_on_move: paint every entered hex
+   * (Worms / Skeleton Riders). When false: only the single vacated origin
+   * hex once per move (Void).
+   */
+  fullPath: boolean
+  /** Goblin Hammersmith: may also target allies with this unit_tag.id. */
+  canTargetAllyIfTag: number | null
+  /** When targeting a tagged ally, heal instead of damaging. */
+  healOnAllyTarget: boolean
+  /** Heal amount per creature in this stack (× qty). */
+  healAmtPerUnit: number | null
+  /** Void: place this terrain_type.id on the vacated hex before moving. */
+  leavesTerrainTypeOnMove: number | null
+  /** Bouncy Bomb: when this stack's creatures die, pulse min_dmg × deaths. */
+  killChainPulse: boolean
+  /** Flesh Golem: flat % chance per Living kill to grow qty by growsQtyOnKill. */
+  killAbsorbChancePct: number | null
+  /** Victim must have this unit_tag.id to be absorbable (legacy single-tag). */
+  killAbsorbTagRequired: number | null
+  /** Victim must have ALL of these unit_tag.ids (e.g. Humanoid+Living). */
+  killAbsorbTagsRequired: number[]
+  /** Victim creature tier must equal this (Pit Fiend Arch). */
+  killAbsorbRequiresTier: number | null
+  /**
+   * `per_attack`: +growsQtyOnKill once when the attack kills ≥1 qualifying
+   * creature. Default / omitted: roll or grant once per creature killed.
+   */
+  killAbsorbTrigger: 'per_attack' | null
+  /** Qty (and startingQty) gained on a successful absorb. */
+  growsQtyOnKill: number | null
+  /** Line shape: flat damage adds this × hex-distance to min_dmg. */
+  dmgIncreasePerHex: number | null
+  /** Charge: escalate damage once per hex walked before the strike. */
+  chargeDmgEscalation: boolean
+  /** Charge: chance% = hero.strength × this (usually 1). */
+  escalationChancePctStat: number | null
+  /** Charge: multiply current damage by this on a successful roll (e.g. 1.5). */
+  escalationMult: number | null
+  /** Charge: if floor(mult) gains &lt; this, force +this instead. */
+  escalationMinIncrease: number | null
+  /**
+   * Flat speed cut of floor(hero.strength / div) on hit (Gladiator).
+   * Uses chancePct + resistStat + conditionDuration for proc/resist/length.
+   */
+  speedDebuffFlatStatDiv: number | null
+  /** Bonus damage vs targets with any of these unit_tag.ids (with bonusDmgMult). */
+  bonusDmgTags: number[]
+  /** Multiply strike damage when the target has any bonusDmgTags entry (e.g. 2 = double). */
+  bonusDmgMult: number | null
+  /** Illusions: AI threat scoring treats this stack as a real combat threat. */
+  aiTreatAsThreat: boolean
+  /** Arcane Shield: Magic damage is fully negated; Physical applies normally. */
+  immuneToMagicDmg: boolean
+  /**
+   * Blink movement: relocate to any LOS hex (ignore Speed distance budget).
+   * Pair with requiresLos / respectsHexSize.
+   */
+  blinkMovement: boolean
+  /** When blinkMovement: destination must have clear line of sight. */
+  requiresLos: boolean
+  /** When blinkMovement: footprint/hex_size must fit (always enforced). */
+  respectsHexSize: boolean
+  /** Chronomancer: swap Speeds with a faster target for speedSwapDuration. */
+  speedSwapIfTargetFaster: boolean
+  /** Rounds the speed swap lasts (default 1). */
+  speedSwapDuration: number
+  /** High Priestess: after a kill, fully heal the most-injured Temple ally. */
+  healMostInjuredOnKill: boolean
+  /** With healMostInjuredOnKill: restore the stack completely (qty + front HP). */
+  healFull: boolean
+  /**
+   * Inquisitor Grand: after a kill, chance% = hero.strength × this to act again.
+   * Uncapped across successive turns (Fervor-style).
+   */
+  extraTurnOnKill: boolean
+  /** Multiplier for strength→% chance (extra_turn_on_kill / similar). */
+  chancePctFlatStat: number | null
+  /** Angelic Warrior: always fire a second strike in the same action. */
+  dualAttack: boolean
+  /** Damage type of the second dual-attack strike. */
+  secondAttackDmgType: 'Physical' | 'Magic' | null
+  secondAttackMinDmg: number | null
+  secondAttackMaxDmg: number | null
+  /** Dual attack: defender retaliates once after both hits (not between). */
+  retaliateOnceAfterBoth: boolean
+  /** Divine Aura Master: ally stacks within this hex radius pool into attack qty (+1 per stack). */
+  auraRadius: number | null
+  /** When true with auraRadius: +1 effective qty per nearby Temple ally stack (not sum of their units). */
+  auraCountsAlliesAsExtraQty: boolean
+  /** Mud Sprite: grow qty when on this terrain_type.id. */
+  terrainGrowthTerrainTypeId: number | null
+  /** Mud Sprite: qty (and startingQty) gained per growth tick. */
+  terrainGrowthAmount: number | null
+  /** Tidal Caller: clear this ground_effect.id along the attack path (Fire = 6). */
+  clearsGroundEffectId: number | null
+  /** Thunder Lizard / Tempest: chance% = hero.intel × this. */
+  chancePctIntelStat: number | null
+  /** Tempest: after move stops, scatter ground_effect in attack radius. */
+  scatterGroundEffectOnMoveStop: boolean
+  /** Pyromaniac spiral: % subtracted from chance after each successful Fire place. */
+  spiralChanceDecayPct: number | null
+  /** Phoenix: roll self-rez immediately on full wipe. */
+  selfRezOnWipe: boolean
+  /** Phoenix: chance uses floor(intel / this). */
+  selfRezChanceStatDiv: number | null
+  /** Phoenix: max self-rez chance (never 100%). */
+  selfRezCapPct: number | null
+  /** Phoenix: multiply chance by Phoenix deaths this round (incl. wipe). */
+  selfRezBasedOnKillsThisRound: boolean
 }
 
 export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
@@ -132,6 +285,64 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   inflictsCondition: null,
   resistStat: null,
   conditionDuration: 1,
+  autoSplitOnTurn: false,
+  skipFirstTurn: false,
+  killOnOverflow: false,
+  chancePct: null,
+  extraAttackOnAttackOnly: false,
+  leavesGroundEffectOnMove: false,
+  leavesGroundEffectOnAttack: false,
+  groundEffectId: null,
+  immuneToFire: false,
+  immuneToLightning: false,
+  fullPath: false,
+  canTargetAllyIfTag: null,
+  healOnAllyTarget: false,
+  healAmtPerUnit: null,
+  leavesTerrainTypeOnMove: null,
+  killChainPulse: false,
+  killAbsorbChancePct: null,
+  killAbsorbTagRequired: null,
+  killAbsorbTagsRequired: [],
+  killAbsorbRequiresTier: null,
+  killAbsorbTrigger: null,
+  growsQtyOnKill: null,
+  dmgIncreasePerHex: null,
+  chargeDmgEscalation: false,
+  escalationChancePctStat: null,
+  escalationMult: null,
+  escalationMinIncrease: null,
+  speedDebuffFlatStatDiv: null,
+  bonusDmgTags: [],
+  bonusDmgMult: null,
+  aiTreatAsThreat: false,
+  immuneToMagicDmg: false,
+  blinkMovement: false,
+  requiresLos: false,
+  respectsHexSize: false,
+  speedSwapIfTargetFaster: false,
+  speedSwapDuration: 1,
+  healMostInjuredOnKill: false,
+  healFull: false,
+  extraTurnOnKill: false,
+  chancePctFlatStat: null,
+  dualAttack: false,
+  secondAttackDmgType: null,
+  secondAttackMinDmg: null,
+  secondAttackMaxDmg: null,
+  retaliateOnceAfterBoth: false,
+  auraRadius: null,
+  auraCountsAlliesAsExtraQty: false,
+  terrainGrowthTerrainTypeId: null,
+  terrainGrowthAmount: null,
+  clearsGroundEffectId: null,
+  chancePctIntelStat: null,
+  scatterGroundEffectOnMoveStop: false,
+  spiralChanceDecayPct: null,
+  selfRezOnWipe: false,
+  selfRezChanceStatDiv: null,
+  selfRezCapPct: null,
+  selfRezBasedOnKillsThisRound: false,
 }
 
 export type MoveTypeRow = {
@@ -171,6 +382,8 @@ export type HeroTypeRow = {
   crit_pct: number
   crit_amt: number
   stamina: number
+  /** Town synergy passive (first engine support: Necromancer / Death Knight). */
+  passive_ability: Record<string, unknown> | null
 }
 
 export const HERO_STAT_KEYS = [
@@ -342,6 +555,23 @@ export type ReferenceCatalog = {
   ai_arch_weight: AiArchWeightRow[]
   levels: LevelRow[]
   hero_levels: HeroLevelRow[]
+  ground_effect: GroundEffectRow[]
+}
+
+export type GroundEffectLayer = 'above_units' | 'below_units'
+
+export type GroundEffectDisplayRules = {
+  layer: GroundEffectLayer
+}
+
+export type GroundEffectRow = {
+  id: number
+  name: string
+  description: string | null
+  mechanic: Record<string, unknown> | null
+  hidden: boolean
+  image_path: string | null
+  display_rules: GroundEffectDisplayRules | null
 }
 
 function costKeyToId(key: string): number | null {
@@ -434,6 +664,10 @@ function asRequires(value: unknown): RequireClause[] | null {
       return null
     }
   }
+  // Some rows store a bare {"any":[...]} / {"all":[...]} instead of a list.
+  if (!Array.isArray(value) && typeof value === 'object') {
+    return asRequires([value])
+  }
   if (!Array.isArray(value) || value.length === 0) {
     return null
   }
@@ -444,11 +678,17 @@ function asRequires(value: unknown): RequireClause[] | null {
     }
     const rec = entry as Record<string, unknown>
     if (Array.isArray(rec.all)) {
-      clauses.push({ all: asIdList(rec.all) })
+      const all = asIdList(rec.all)
+      if (all.length > 0) {
+        clauses.push({ all })
+      }
       continue
     }
     if (Array.isArray(rec.any)) {
-      clauses.push({ any: asIdList(rec.any) })
+      const any = asIdList(rec.any)
+      if (any.length > 0) {
+        clauses.push({ any })
+      }
     }
   }
   return clauses.length > 0 ? clauses : null
@@ -662,6 +902,126 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
     .map((row) => {
       const rec = row as Record<string, unknown>
       const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+      const livePassive = asJsonObject(rec.passive_ability)
+      const lower = name.toLowerCase()
+      // Warlock / Heretic (Pandemonium): keep DB payload, finalize display copy.
+      // Knight / Monk (Citadel): ensure Humanoid-scaled passive keys exist when DB
+      // still only has display text.
+      let passive_ability = livePassive
+      if (lower === 'warlock' || lower === 'heretic') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            'Post-battle: Humanoid+Living kills summon demons equal to INT. Tier = min(floor(INT/6), highest enemy tier killed), rounded down to a real Pandemonium demon tier.',
+        }
+      } else if (lower === 'knight') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          second_attack_after_retaliation: true,
+          trigger_chance_pct_per_humanoid_unit: 0.25,
+          cap_pct_stat: 2,
+          display:
+            livePassive?.display ??
+            '0.25% × Humanoid units (cap STR×2%): Citadel units may strike again after being retaliated against.',
+        }
+      } else if (lower === 'monk') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          trigger_chance_pct_per_humanoid_unit: 0.25,
+          cap_pct_stat: 3,
+          display:
+            livePassive?.display ??
+            '0.25% × Humanoid units (cap STR×3%): Citadel attacks may suppress enemy retaliation.',
+        }
+      } else if (lower === 'wizard') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          mana_on_tower_magic_attack: true,
+          mana_gain: 1,
+          display:
+            livePassive?.display ??
+            'When a Tower unit deals Magic damage with an attack, gain +1 Mana (once per attack action, capped at max).',
+        }
+      } else if (lower === 'sorcerer') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          mana_on_tower_magic_taken: true,
+          mana_gain: 1,
+          display:
+            livePassive?.display ??
+            'When a Tower unit takes Magic damage from an attack, gain +1 Mana (once per unit hit per attack action, capped at max).',
+        }
+      } else if (lower === 'cleric') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          end_of_round_temple_heal: true,
+          display:
+            'End of round: heal pool = INT × Temple units. Spend on damaged Temple stacks, most-hurt (deficit) first.',
+        }
+      } else if (lower === 'paladin') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          end_of_round_temple_execute: true,
+          display:
+            'End of round: damage pool = INT × Temple units. Efficiently execute 1 creature at a time on the neediest damaged enemies.',
+        }
+      } else if (lower === 'druid') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '(INT × total Grove units in army)% bonus Resistance, army-wide',
+        }
+      } else if (lower === 'ranger') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '(STR/6 × total Grove units)% chance a Grove unit attack avoids enemy retaliation',
+        }
+      } else if (lower === 'barbarian') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '(STR/3 × total Fortress units)% bonus Physical dmg, half that as Armor reduction, army-wide',
+        }
+      } else if (lower === 'rogue') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '+1 current hero Energy whenever a Fortress unit attack is retaliated against',
+        }
+      } else if (lower === 'forge master') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '(STR/5 × Non-Living Factory unit count)% bonus Physical dmg, applies only to Non-Living Factory units',
+        }
+      } else if (lower === 'conjurer') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '(INT/5 × Non-Living Factory unit count)% bonus Magic dmg, applies only to Non-Living Factory units',
+        }
+      } else if (lower === 'shaman') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            'Once per battle, summons INT/8 totems (random Fire or Lightning each) near map center',
+        }
+      } else if (lower === 'evoker') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            livePassive?.display ??
+            '(INT × total Confluence units)% bonus dmg on Hero own Arcane spell casts',
+        }
+      }
       return {
         id: asInt(rec.id),
         name,
@@ -674,6 +1034,7 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         crit_pct: asInt(rec.crit_pct, 10),
         crit_amt: asInt(rec.crit_amt, 10),
         stamina: asInt(rec.stamina, 10),
+        passive_ability,
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
@@ -765,10 +1126,94 @@ function asAbilities(rows: unknown): AbilityRow[] {
         cooldown_id: asInt(rec.cooldown_id),
         target_id: asOptionalId(rec.target_id),
         ability_type_id: asOptionalId(rec.ability_type_id),
-        stats: asJsonObject(rec.stats),
+        stats: normalizeAbilityStatFlags(asJsonObject(rec.stats)),
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
+}
+
+/** Boolean-like ability.stats keys — coerce 1/"true" at catalog load. */
+const ABILITY_BOOL_STAT_KEYS = [
+  'resorts_remaining_initiative',
+  'reveals_enemy_stats',
+  'forces_return_to_start',
+  'persists_on_summon',
+  'duplicates_target',
+  'places_on_nearest_open_hex',
+  'insert_into_current_round_queue',
+  'summon_as_separate_stacks',
+  'condition_immunity',
+  'revive_on_dmg_dealt',
+  'drain_heal',
+  'vampiric_strike',
+  'grants_extra_turn',
+  'grants_kill_on_overflow',
+  'guaranteed_max_dmg',
+  'guaranteed_hit',
+  'disable_min_range_penalty',
+  'guarantees_miss_next_physical_hit',
+  'instant',
+  'no_turn_cost',
+  'forces_max_dmg_on_target',
+  'forces_min_dmg_on_target',
+  'grants_ignore_target_armor',
+  'physical_only',
+  'reflects_physical_only',
+  'ends_round_immediately',
+  'skips_duration_tick',
+  'direction_by_target_side',
+  'clears_conditions',
+  'clears_terrain',
+  'clears_los_blockers',
+  'heals_to_full',
+  'snapshot_qty_on_cast',
+  'prevents_death_once',
+  'targets_hexes',
+  'friendly_takes_dmg',
+  'no_stat_threshold',
+  'before_retaliation',
+  'ignores_retaliation',
+  'insert_into_current_round_queue',
+  'kill_on_overflow',
+  'breaks_on_damage',
+  'skip_occupied_adjacent',
+  'redistribute_if_single_adjacent',
+  'self_teleport',
+  'respects_hex_size',
+  'ignores_mitigation',
+  'second_attack_after_retaliation',
+  'blocks_direct_targeting',
+  'aoe_still_hits',
+  'can_still_retaliate',
+  'retaliates_before_attack_resolves',
+  'targets_empty_hexes',
+  'prefers_empty_ground_effect_hexes',
+  'ignores_sublethal_damage',
+  'show_placement_preview',
+  'avoids_occupied_hexes',
+  'stops_if_blocked',
+] as const
+
+function normalizeAbilityStatFlags(
+  stats: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!stats) {
+    return null
+  }
+  let changed = false
+  const next: Record<string, unknown> = { ...stats }
+  for (const key of ABILITY_BOOL_STAT_KEYS) {
+    if (!(key in next) || next[key] == null) {
+      continue
+    }
+    const raw = next[key]
+    const normalized = asBoolFlag(raw)
+    if (raw !== normalized) {
+      next[key] = normalized
+      changed = true
+    }
+  }
+  return changed ? next : stats
 }
 
 function fillDesignedAbilities(
@@ -788,7 +1233,7 @@ function fillDesignedAbilities(
         ...row,
         target_id: row.target_id ?? friendSingle,
         ability_type_id: row.ability_type_id ?? buffType,
-        stats: { ...(row.stats ?? {}), revive_on_dmg_dealt: true },
+        stats: { revive_on_dmg_dealt: true, ...(row.stats ?? {}) },
       }
     }
     if (row.name === 'Raise Skeleton') {
@@ -866,6 +1311,188 @@ function fillDesignedAbilities(
           summon_count: 3,
           persists_on_summon: false,
           silence_schedule: [3, 2, 1],
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Earth Spikes') {
+      const allAoe =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_aoe',
+        )?.id ?? 8
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? allAoe,
+        ability_type_id: row.ability_type_id ?? attackType,
+        stats: {
+          shape: 'multi',
+          radius: 4,
+          bolts_stat: 1,
+          int_dmg: 1.5,
+          friendly_takes_dmg: false,
+          move_type: 'random',
+          move_dist_range: [1, 2],
+          move_dist_fallback: 3,
+          // Terrain object per erupted hex (unit 257) — placed in sync with each bolt.
+          summon_unit_id: 257,
+          targets_hexes: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Brisk Renewal') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const buffTypeId =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'buff')?.id ?? 2
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffTypeId,
+        stats: {
+          recurring_trigger: 'end_of_round',
+          heal_pct_stat: 2,
+          heal_min: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Gift of Gaia') {
+      const allAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_all',
+        )?.id ??
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ??
+        3
+      const utilType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')
+          ?.id ?? 5
+      return {
+        ...row,
+        target_id: row.target_id ?? allAll,
+        ability_type_id: row.ability_type_id ?? utilType,
+        stats: {
+          clear_chance_pct_stat: 2,
+          clears_terrain: true,
+          clears_los_blockers: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Ice Shards') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') ===
+            'enemy_single',
+        )?.id ?? 4
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      // Live DB has swapped stats with Earthquake on some rows — keep placement keys.
+      const raw = { ...(row.stats ?? {}) }
+      delete raw.min_dmg
+      delete raw.max_dmg
+      delete raw.inflicts_condition
+      delete raw.chance_pct_flat_stat
+      delete raw.no_stat_threshold
+      delete raw.duration
+      delete raw.resist_stat
+      return {
+        ...row,
+        target_id: enemySingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        stats: {
+          ...raw,
+          int_dmg: 5,
+          summon_unit_id: 258,
+          summon_count: 5,
+          shard_radius: 1,
+          skip_occupied_adjacent: true,
+          redistribute_if_single_adjacent: true,
+        },
+      }
+    }
+    if (row.name === 'Blizzard') {
+      const enemyAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_all',
+        )?.id ?? 6
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? enemyAll,
+        ability_type_id: row.ability_type_id ?? attackType,
+        stats: {
+          ...(row.stats ?? {}),
+          min_dmg: 10,
+          max_dmg: 20,
+          // Freeze is not in condition table yet — Stun is the proven skip-turn key.
+          inflicts_condition: 2,
+          duration: 1,
+          resist_stat: 'resistance',
+        },
+      }
+    }
+    if (row.name === 'Earthquake') {
+      const enemyAoe =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_aoe',
+        )?.id ?? 5
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      const raw = { ...(row.stats ?? {}) }
+      delete raw.skip_occupied_adjacent
+      delete raw.shard_radius
+      delete raw.redistribute_if_single_adjacent
+      delete raw.summon_unit_id
+      delete raw.summon_count
+      delete raw.int_dmg
+      return {
+        ...row,
+        target_id: row.target_id ?? enemyAoe,
+        ability_type_id: row.ability_type_id ?? attackType,
+        stats: {
+          ...raw,
+          min_dmg: 10,
+          max_dmg: 20,
+          shape: 'aoe',
+          radius: 3,
+          inflicts_condition: 2,
+          duration: 1,
+          resist_stat: 'resistance',
+        },
+      }
+    }
+    if (row.name === 'Summon Mud Golem') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 259,
+          summon_qty_stat_div: 2,
+          persists_on_summon: true,
+          insert_into_current_round_queue: true,
           ...(row.stats ?? {}),
         },
       }
@@ -966,10 +1593,10 @@ function fillDesignedAbilities(
         ...row,
         target_id: row.target_id ?? friendAll,
         ability_type_id: row.ability_type_id ?? buffType,
+        // resorts_remaining_initiative must come from DB stats (not hardcoded).
         stats: {
           speed_buff_stat_div: 4,
           uses: 1,
-          resorts_remaining_initiative: true,
           ...rest,
         },
       }
@@ -1013,8 +1640,8 @@ function fillDesignedAbilities(
         stats: {
           guarantees_miss_next_physical_hit: true,
           uses: 1,
-          ...(row.stats ?? {}),
           ignores_retaliation: true,
+          ...(row.stats ?? {}),
         },
       }
     }
@@ -1119,6 +1746,241 @@ function fillDesignedAbilities(
         },
       }
     }
+    if (row.name === 'Expose') {
+      const enemyAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_all',
+        )?.id ?? 5
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      return {
+        ...row,
+        target_id: row.target_id ?? enemyAll,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        stats: {
+          reveals_enemy_stats: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Forced Retreat' || row.name === 'Retreat') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const debuffType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'debuff')?.id ?? 3
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? debuffType,
+        stats: {
+          forces_return_to_start: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Fervor') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const buffType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'buff')?.id ?? 2
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          chain_trigger_pct_stat: 1,
+          duration: 3,
+          applies_to: ['turn', 'retaliation'],
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Battle Cry') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          retaliation_dmg_pct: 100,
+          uses_stat_div: 6,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Hyper Focus') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          condition_immunity: true,
+          uses: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Illusions') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 260,
+          summon_qty_stat_div: 3,
+          summon_as_separate_stacks: true,
+          placement: 'map_center_scattered',
+          persists_on_summon: false,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Animate Weapon') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 261,
+          summon_qty_stat_div: 2,
+          persists_on_summon: false,
+          insert_into_current_round_queue: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Mirror Image') {
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          duplicates_target: true,
+          duplicate_hp_cap_stat: 1,
+          places_on_nearest_open_hex: true,
+          insert_into_current_round_queue: true,
+          persists_on_summon: false,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Arcane Shield') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const summonType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? summonType,
+        stats: {
+          summon_unit_id: 262,
+          summon_count: 4,
+          placement: 'front_of_target',
+          persists_on_summon: false,
+          ...(row.stats ?? {}),
+          // Pure blocker — never join initiative (same as Wall/Drawbridge).
+          insert_into_current_round_queue: false,
+        },
+      }
+    }
+    if (row.name === 'Charge') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        // resorts_remaining_initiative must come from DB stats (not hardcoded).
+        stats: {
+          speed_buff_flat_stat: 1,
+          duration: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Guard') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          def_mult: 2,
+          duration_stat_div: 5,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Shield Wall') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 1,
+        stats: {
+          def_mult_stat_div: 5,
+          res_mult_stat_div: 5,
+          duration_stat_div: 5,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Immunity') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 1,
+        stats: {
+          dmg_taken_pct: 0,
+          hit_count_stat_div: 9,
+          ignores_retaliation: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Rally') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        stats: {
+          ends_round_immediately: true,
+          skips_duration_tick: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
     if (row.name === 'Mutation') {
       const allSingle =
         targets.find(
@@ -1140,8 +2002,451 @@ function fillDesignedAbilities(
         },
       }
     }
+    if (row.name === 'Cleanse') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          clears_conditions: true,
+          secondary_random_targets_stat_div: 5,
+          secondary_pool: 'friend_with_negative_condition',
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Guardian Angel') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          snapshot_qty_on_cast: true,
+          prevents_death_once: true,
+          uses: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Fortify') {
+      const friendAoe =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_aoe',
+        )?.id ?? 2
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAoe,
+        ability_type_id: row.ability_type_id ?? buffType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 1,
+        stats: {
+          shape: 'aoe',
+          radius_stat_div: 6,
+          ignores_sublethal_damage: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Last Stand') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 1,
+        stats: {
+          min_qty_stat_div: 8,
+          min_qty_last_unit_hp: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Barrier') {
+      const allSingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_single',
+        )?.id ?? 7
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      // Force empty-hex line placement. Live DB still has target_id=8 (all_aoe).
+      const raw = { ...(row.stats ?? {}) }
+      delete raw.targets_empty_hexes
+      delete raw.show_placement_preview
+      return {
+        ...row,
+        target_id: allSingle,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 1,
+        stats: {
+          ground_effect_id: 4,
+          line_length_stat_div: 5,
+          avoids_occupied_hexes: true,
+          ...raw,
+          targets_empty_hexes: true,
+          show_placement_preview: true,
+        },
+      }
+    }
+    if (row.name === 'Push Back') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 1,
+        stats: {
+          str_dmg: 2.5,
+          push_dist_stat_div: 7,
+          push_direction: 'away_from_caster',
+          stops_if_blocked: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Wind Shear' || row.id === 42) {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 2,
+        stats: {
+          shape: 'cleave',
+          int_dmg: 2,
+          chance_pct: 50,
+          resist_stat: 'resistance',
+          push_dist: 1,
+          push_direction: 'away_from_caster',
+          stops_if_blocked: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Chain Lightning' || row.id === 48) {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 2,
+        stats: {
+          shape: 'chain',
+          int_dmg: 3,
+          jumps: 5,
+          falloff: 15,
+          allow_repeat_target: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Fireball' || row.id === 41) {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 2,
+        stats: {
+          int_dmg: 2,
+          ground_effect_id: 6,
+          fire_radius_stat_div: 9,
+          fire_drop_chance_pct: 50,
+          includes_target_hex: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Wildfire' || row.id === 45) {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? attackType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 2,
+        stats: {
+          ground_effect_id: 6,
+          line_from_caster_to_target: true,
+          skips_los_blocker_hexes: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Spell Reflect' || row.id === 46) {
+      const friendSingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') ===
+            'friend_single',
+        )?.id ?? 2
+      const buffType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'buff')?.id ?? 2
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 2,
+        stats: {
+          uses_stat_div: 7,
+          redirects_dmg_type: 'Magic',
+          redirect_target: 'random_enemy',
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Meteor' || row.id === 47) {
+      const allAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_all',
+        )?.id ??
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_aoe',
+        )?.id ??
+        8
+      const attackType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'attack')?.id ?? 1
+      // Force whole-board auto-cast. Live DB may still ship all_aoe / aimed targeting.
+      return {
+        ...row,
+        target_id: allAll,
+        ability_type_id: row.ability_type_id ?? attackType,
+        resource_id: row.resource_id > 0 ? row.resource_id : 2,
+        stats: {
+          shape: 'multi',
+          bolts_stat: 2,
+          targets_hexes: true,
+          avoids_friendly_hexes: true,
+          avoids_los_blocker_hexes: true,
+          int_dmg: 3,
+          drops_fire_on_hit: true,
+          ground_effect_id: 6,
+          move_type: 'random',
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Confuse') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const debuffType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'debuff')?.id ?? 3
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? debuffType,
+        stats: {
+          inflicts_condition: 3,
+          resist_stat: 'resistance',
+          duration: 1,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Shadow Step') {
+      const friendSingleTarget =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_single',
+        )?.id ?? 1
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingleTarget,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        stats: {
+          self_teleport: true,
+          respects_hex_size: true,
+          move_delay_ms: 500,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Deflect') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          takes_dmg_source: 'attacker_min_dmg',
+          dmg_taken_pct: 50,
+          ignores_mitigation: true,
+          uses_stat_div: 7,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Double Tap') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          second_attack_after_retaliation: true,
+          uses_stat_div: 10,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Vanish') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          inflicts_condition: 9,
+          duration_stat_div: 7,
+          blocks_direct_targeting: true,
+          aoe_still_hits: true,
+          can_still_retaliate: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Preemptive Strike') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          retaliates_before_attack_resolves: true,
+          uses_stat_div: 10,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Smoke Bomb') {
+      const allAoe =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'all_aoe',
+        )?.id ?? 8
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')
+          ?.id ?? 5
+      return {
+        ...row,
+        target_id: row.target_id ?? allAoe,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        stats: {
+          shape: 'aoe',
+          radius: 2,
+          ground_effect_id: 1,
+          evasion_pct_flat_stat: 3,
+          // Rod: duration not specified — default 3 rounds until confirmed.
+          duration: 3,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Explosive Trap') {
+      const allSingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') ===
+            'all_single',
+        )?.id ?? 7
+      const utilityType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'utility')
+          ?.id ?? 5
+      // Force placement targeting: empty hexes, never all_aoe. DB currently
+      // ships target_id=8 (all_aoe), which would resolve as a whole-board cast.
+      const raw = { ...(row.stats ?? {}) }
+      delete raw.shape
+      delete raw.radius
+      const num = (value: unknown, fallback: number) => {
+        const n = typeof value === 'number' ? value : Number(value)
+        return Number.isFinite(n) ? n : fallback
+      }
+      return {
+        ...row,
+        target_id: allSingle,
+        ability_type_id: row.ability_type_id ?? utilityType,
+        stats: {
+          ...raw,
+          // Placement: whole-board empty hexes. Explosion radius is separate.
+          targets_empty_hexes: true,
+          ground_effect_id: 2,
+          flat_dmg_flat_stat: num(raw.flat_dmg_flat_stat, 3),
+          radius_stat_div: num(raw.radius_stat_div, 10),
+          chance_pct_flat_stat: num(raw.chance_pct_flat_stat, 3),
+          inflicts_condition: num(raw.inflicts_condition, 2),
+          resist_stat:
+            typeof raw.resist_stat === 'string' ? raw.resist_stat : 'resistance',
+          // Always enemy-only for blast + trigger (DB may omit the flag).
+          friendly_takes_dmg: false,
+        },
+      }
+    }
     return row
   })
+}
+
+function asGroundEffects(rows: unknown): GroundEffectRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const id = asInt(rec.id)
+      const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+      const description =
+        typeof rec.description === 'string' ? rec.description.trim() : null
+      const image =
+        typeof rec.image_path === 'string' ? rec.image_path.trim() : ''
+      const rules = asJsonObject(rec.display_rules)
+      const layerRaw =
+        typeof rules?.layer === 'string' ? rules.layer.trim().toLowerCase() : ''
+      const display_rules: GroundEffectDisplayRules | null =
+        layerRaw === 'above_units' || layerRaw === 'below_units'
+          ? { layer: layerRaw }
+          : null
+      return {
+        id,
+        name,
+        description: description || null,
+        mechanic: asJsonObject(rec.mechanic),
+        hidden: asBoolFlag(rec.hidden),
+        image_path: image || null,
+        display_rules,
+      }
+    })
+    .filter((row) => row.id > 0 && row.name.length > 0)
 }
 
 function asAbilityResources(rows: unknown): AbilityResourceRow[] {
@@ -1238,6 +2543,13 @@ function asHeroDisciplines(rows: unknown): HeroDisciplineRow[] {
 
 function asIntIds(value: unknown): number[] {
   if (!Array.isArray(value)) {
+    // Single id (legacy) — treat as a one-element list.
+    if (value != null && value !== '') {
+      const n = typeof value === 'number' ? value : Number(value)
+      if (Number.isInteger(n) && n > 0) {
+        return [n]
+      }
+    }
     return []
   }
   const ids: number[] = []
@@ -1299,10 +2611,48 @@ function asUnitRetaliation(value: unknown): UnitRetaliation {
       times = Math.max(0, Math.floor(n))
     }
   }
+  const shapeRaw =
+    typeof rec.shape === 'string' ? rec.shape.trim().toLowerCase() : ''
+  const shape =
+    shapeRaw.length > 0 && ATTACK_SHAPES.has(shapeRaw)
+      ? (shapeRaw as AttackShapeKind)
+      : undefined
+  const radiusRaw = Number(rec.radius)
+  const radius =
+    shape != null && Number.isFinite(radiusRaw) && radiusRaw >= 1
+      ? Math.floor(radiusRaw)
+      : shape != null
+        ? 1
+        : undefined
+  const jumpsRaw = Number(rec.jumps)
+  const jumps =
+    shape != null && Number.isFinite(jumpsRaw) && jumpsRaw >= 1
+      ? Math.floor(jumpsRaw)
+      : undefined
+  const falloffRaw = Number(rec.falloff)
+  const falloff =
+    shape != null && Number.isFinite(falloffRaw) && falloffRaw >= 0
+      ? Math.min(100, falloffRaw)
+      : undefined
   return {
     dmgPct,
     times,
     preemptive: rec.preemptive === true,
+    ...(shape != null ? { shape, radius: radius ?? 1 } : {}),
+    ...(jumps != null ? { jumps } : {}),
+    ...(falloff != null ? { falloff } : {}),
+    ...(rec.teleports_attacker === true
+      ? {
+          teleportsAttacker: true,
+          teleportChancePct: (() => {
+            const n = Number(rec.teleport_chance_pct)
+            return Number.isFinite(n) && n > 0
+              ? Math.min(100, Math.floor(n))
+              : 50
+          })(),
+          resistStat: asResistStat(rec.resist_stat),
+        }
+      : {}),
   }
 }
 
@@ -1313,9 +2663,12 @@ const ATTACK_SHAPES = new Set<string>([
   'pulse',
   'chain',
   'beam',
+  'line',
+  'charge_line',
   'multi',
   'rain',
   'breath',
+  'spiral',
 ])
 
 function asAttackShape(raw: string): AttackShapeKind {
@@ -1366,8 +2719,10 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     typeof rec?.shape === 'string' ? rec.shape.trim().toLowerCase() : ''
   const falloffRaw = rec?.falloff
   const falloffNum = Number(falloffRaw)
+  const chanceRaw = Number(rec?.chance_pct)
   return {
-    no_enemy_retaliation: rec?.no_enemy_retaliation === true,
+    no_enemy_retaliation:
+      rec?.no_enemy_retaliation === true || rec?.ignores_retaliation === true,
     shape: asAttackShape(shapeRaw),
     radius: asShapeInt(rec?.radius, DEFAULT_UNIT_ABILITIES.radius),
     jumps: asShapeInt(rec?.jumps, DEFAULT_UNIT_ABILITIES.jumps),
@@ -1382,7 +2737,839 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     inflictsCondition: asOptionalId(rec?.inflicts_condition),
     resistStat: asResistStat(rec?.resist_stat),
     conditionDuration: asShapeInt(rec?.duration, DEFAULT_UNIT_ABILITIES.conditionDuration),
+    autoSplitOnTurn: rec?.auto_split_on_turn === true,
+    skipFirstTurn: rec?.skip_first_turn === true,
+    killOnOverflow: rec?.kill_on_overflow === true,
+    chancePct:
+      Number.isFinite(chanceRaw) && chanceRaw > 0
+        ? Math.min(100, Math.floor(chanceRaw))
+        : null,
+    extraAttackOnAttackOnly: rec?.extra_attack_on_attack_only === true,
+    leavesGroundEffectOnMove: rec?.leaves_ground_effect_on_move === true,
+    leavesGroundEffectOnAttack: rec?.leaves_ground_effect_on_attack === true,
+    groundEffectId: asOptionalId(rec?.ground_effect_id),
+    immuneToFire: rec?.immune_to_fire === true,
+    immuneToLightning: rec?.immune_to_lightning === true,
+    fullPath: rec?.full_path === true,
+    canTargetAllyIfTag: asOptionalId(rec?.can_target_ally_if_tag),
+    healOnAllyTarget: rec?.heal_on_ally_target === true,
+    healAmtPerUnit: (() => {
+      const n = Number(rec?.heal_amt_per_unit)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    leavesTerrainTypeOnMove: asOptionalId(rec?.leaves_terrain_type_on_move),
+    killChainPulse: rec?.kill_chain_pulse === true,
+    killAbsorbChancePct: (() => {
+      const n = Number(rec?.kill_absorb_chance_pct)
+      return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null
+    })(),
+    killAbsorbTagRequired: asOptionalId(rec?.kill_absorb_tag_required),
+    killAbsorbTagsRequired: asIntIds(rec?.kill_absorb_tags_required),
+    killAbsorbRequiresTier: (() => {
+      const n = Number(rec?.kill_absorb_requires_tier)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    killAbsorbTrigger:
+      typeof rec?.kill_absorb_trigger === 'string' &&
+      rec.kill_absorb_trigger.trim().toLowerCase() === 'per_attack'
+        ? 'per_attack'
+        : null,
+    growsQtyOnKill: (() => {
+      const n = Number(rec?.grows_qty_on_kill)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    dmgIncreasePerHex: (() => {
+      const n = Number(rec?.dmg_increase_per_hex)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    chargeDmgEscalation: rec?.charge_dmg_escalation === true,
+    escalationChancePctStat: (() => {
+      const n = Number(rec?.escalation_chance_pct_stat)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    escalationMult: (() => {
+      const n = Number(rec?.escalation_mult)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    escalationMinIncrease: (() => {
+      const n = Number(rec?.escalation_min_increase)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    speedDebuffFlatStatDiv: (() => {
+      const n = Number(rec?.speed_debuff_flat_stat_div)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    bonusDmgTags: asIntIds(rec?.bonus_dmg_tag),
+    bonusDmgMult: (() => {
+      const n = Number(rec?.bonus_dmg_mult)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    aiTreatAsThreat: rec?.ai_treat_as_threat === true,
+    immuneToMagicDmg: rec?.immune_to_magic_dmg === true,
+    blinkMovement: rec?.blink_movement === true,
+    requiresLos: rec?.requires_los === true,
+    respectsHexSize: rec?.respects_hex_size === true,
+    speedSwapIfTargetFaster: rec?.speed_swap_if_target_faster === true,
+    speedSwapDuration: asShapeInt(
+      rec?.speed_swap_duration,
+      DEFAULT_UNIT_ABILITIES.speedSwapDuration,
+    ),
+    healMostInjuredOnKill: rec?.heal_most_injured_on_kill === true,
+    healFull: rec?.heal_full === true,
+    extraTurnOnKill: rec?.extra_turn_on_kill === true,
+    chancePctFlatStat: (() => {
+      const n = Number(rec?.chance_pct_flat_stat)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    dualAttack: rec?.dual_attack === true,
+    secondAttackDmgType: (() => {
+      const raw =
+        typeof rec?.second_attack_dmg_type === 'string'
+          ? rec.second_attack_dmg_type.trim().toLowerCase()
+          : ''
+      if (raw === 'physical') {
+        return 'Physical'
+      }
+      if (raw === 'magic') {
+        return 'Magic'
+      }
+      return null
+    })(),
+    secondAttackMinDmg: (() => {
+      const n = Number(rec?.second_attack_min_dmg)
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
+    })(),
+    secondAttackMaxDmg: (() => {
+      const n = Number(rec?.second_attack_max_dmg)
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
+    })(),
+    retaliateOnceAfterBoth: rec?.retaliate_once_after_both === true,
+    auraRadius: (() => {
+      const n = Number(rec?.aura_radius)
+      return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null
+    })(),
+    auraCountsAlliesAsExtraQty: rec?.aura_counts_allies_as_extra_qty === true,
+    terrainGrowthTerrainTypeId: asOptionalId(
+      rec?.terrain_growth_terrain_type_id,
+    ),
+    terrainGrowthAmount: (() => {
+      const n = Number(rec?.terrain_growth_amount)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    clearsGroundEffectId: asOptionalId(rec?.clears_ground_effect_id),
+    chancePctIntelStat: (() => {
+      const n = Number(rec?.chance_pct_intel_stat)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    scatterGroundEffectOnMoveStop:
+      rec?.scatter_ground_effect_on_move_stop === true,
+    spiralChanceDecayPct: (() => {
+      const n = Number(rec?.spiral_chance_decay_pct)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    selfRezOnWipe: rec?.self_rez_on_wipe === true,
+    selfRezChanceStatDiv: (() => {
+      const n = Number(rec?.self_rez_chance_stat_div)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    selfRezCapPct: (() => {
+      const n = Number(rec?.self_rez_cap_pct)
+      return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null
+    })(),
+    selfRezBasedOnKillsThisRound:
+      rec?.self_rez_based_on_kills_this_round === true,
   }
+}
+
+/** BR S6-42: Arcane summon units when DB rows are not loaded yet. */
+function designedArcaneUnits(): UnitRow[] {
+  const blank = {
+    bldg_id: null as number | null,
+    town_id: null as number | null,
+    class_id: null as number | null,
+    tier: null as number | null,
+    cost: null as CostMap | null,
+    image_path_alt: null as string | null,
+    hex_size: null as number | null,
+    move_type_id: null as number | null,
+    dmg_type: 'Physical' as string | null,
+    min_range: 0,
+    max_range: 1,
+    retaliation: { ...DEFAULT_UNIT_RETALIATION },
+    tags: [] as number[],
+    has_abilities: true,
+    upgrade_cost: null as CostMap | null,
+  }
+  return [
+    {
+      ...blank,
+      id: 260,
+      name: 'Arcane Illusion',
+      image_path: 'Illusion.png',
+      speed: null,
+      stationary: true,
+      health: 1,
+      defense: 0,
+      resistance: 0,
+      min_dmg: 0,
+      max_dmg: 0,
+      blocks_los: false,
+      abilities: {
+        ...DEFAULT_UNIT_ABILITIES,
+        aiTreatAsThreat: true,
+      },
+    },
+    {
+      ...blank,
+      id: 261,
+      name: 'Animated Weapon',
+      image_path: 'Animated_Weapon.png',
+      speed: 8,
+      stationary: false,
+      health: 12,
+      defense: 2,
+      resistance: 2,
+      min_dmg: 5,
+      max_dmg: 8,
+      blocks_los: false,
+      abilities: {
+        ...DEFAULT_UNIT_ABILITIES,
+        autoTarget: 'random_enemy',
+      },
+    },
+    {
+      ...blank,
+      id: 262,
+      name: 'Arcane Shield',
+      image_path: 'Arcane_Shield.png',
+      speed: null,
+      stationary: true,
+      health: 45,
+      defense: 0,
+      resistance: 0,
+      min_dmg: 0,
+      max_dmg: 0,
+      blocks_los: true,
+      abilities: {
+        ...DEFAULT_UNIT_ABILITIES,
+        immuneToMagicDmg: true,
+      },
+    },
+  ]
+}
+
+/** BR S6-46: Shaman totems when DB rows are not loaded yet. */
+function designedTotemUnits(catalogTowns: { id: number; name: string }[]): UnitRow[] {
+  const confluenceId =
+    catalogTowns.find((row) => row.name.trim().toLowerCase() === 'confluence')
+      ?.id ?? null
+  const blank = {
+    bldg_id: null as number | null,
+    town_id: confluenceId,
+    class_id: null as number | null,
+    tier: null as number | null,
+    cost: null as CostMap | null,
+    image_path_alt: null as string | null,
+    hex_size: 1 as number | null,
+    move_type_id: 1 as number | null,
+    dmg_type: 'Magic' as string | null,
+    min_range: 1,
+    max_range: 7,
+    retaliation: { times: 0, dmgPct: 0, preemptive: false },
+    // Construct (9) + Non-Living (11) — match SQL; tag ids are stable in catalog.
+    tags: [9, 11] as number[],
+    has_abilities: true,
+    upgrade_cost: null as CostMap | null,
+  }
+  return [
+    {
+      ...blank,
+      id: 263,
+      name: 'Fire Totem',
+      image_path: 'Fire_Totem.png',
+      speed: 5,
+      stationary: true,
+      health: 1,
+      defense: 0,
+      resistance: 0,
+      min_dmg: 15,
+      max_dmg: 25,
+      blocks_los: false,
+            abilities: {
+        ...DEFAULT_UNIT_ABILITIES,
+        shape: 'single',
+        autoTarget: 'random_enemy',
+        immuneToFire: true,
+      },
+    },
+    {
+      ...blank,
+      id: 264,
+      name: 'Lightning Totem',
+      image_path: 'Lightning_Totem.png',
+      speed: 5,
+      stationary: true,
+      health: 1,
+      defense: 0,
+      resistance: 0,
+      min_dmg: 8,
+      max_dmg: 13,
+      blocks_los: false,
+      abilities: {
+        ...DEFAULT_UNIT_ABILITIES,
+        shape: 'beam',
+        autoTarget: 'random_enemy',
+        immuneToLightning: true,
+      },
+    },
+  ]
+}
+
+function unitDesignedImmuneToFire(unitId: number, unitName: string): boolean {
+  const name = unitName.trim().toLowerCase()
+  return (
+    unitId === 194 ||
+    unitId === 195 ||
+    name === 'homunculus' ||
+    name === 'advanced homunculus' ||
+    unitId === 196 ||
+    unitId === 197 ||
+    name === 'imp' ||
+    name === 'advanced imp' ||
+    unitId === 202 ||
+    unitId === 203 ||
+    name === 'smoldering ooze' ||
+    name === 'advanced smoldering ooze' ||
+    unitId === 204 ||
+    unitId === 205 ||
+    name === 'horned hellion' ||
+    name === 'advanced horned hellion' ||
+    unitId === 216 ||
+    unitId === 217 ||
+    name === 'pit fiend arch' ||
+    name === 'advanced pit fiend arch' ||
+    unitId === 64 ||
+    unitId === 65 ||
+    name === 'arsonist' ||
+    name === 'advanced arsonist' ||
+    unitId === 66 ||
+    unitId === 67 ||
+    name === 'fire giant' ||
+    name === 'advanced fire giant'
+  )
+}
+
+function designedFactoryAbilities(
+  unitId: number,
+  unitName: string,
+): Partial<UnitCombatAbilities> | null {
+  const name = unitName.trim().toLowerCase()
+  if (
+    unitId === 76 ||
+    unitId === 77 ||
+    name === 'goblin hammersmith' ||
+    name === 'advanced goblin hammersmith'
+  ) {
+    return {
+      shape: 'single',
+      canTargetAllyIfTag: 8,
+      healOnAllyTarget: true,
+      healAmtPerUnit: 1,
+    }
+  }
+  if (
+    unitId === 78 ||
+    unitId === 79 ||
+    name === 'void' ||
+    name === 'advanced void'
+  ) {
+    return {
+      shape: 'pulse',
+      radius: 1,
+      leavesGroundEffectOnMove: true,
+      groundEffectId: 5,
+    }
+  }
+  if (
+    unitId === 80 ||
+    unitId === 81 ||
+    name === 'bouncy bomb' ||
+    name === 'advanced bouncy bomb'
+  ) {
+    return {
+      shape: 'pulse',
+      radius: 1,
+      killChainPulse: true,
+    }
+  }
+  if (
+    unitId === 86 ||
+    unitId === 87 ||
+    name === 'flesh golem' ||
+    name === 'advanced flesh golem'
+  ) {
+    return {
+      shape: 'single',
+      killAbsorbChancePct: 33,
+      killAbsorbTagRequired: 10,
+      growsQtyOnKill: 1,
+    }
+  }
+  if (
+    unitId === 216 ||
+    unitId === 217 ||
+    name === 'pit fiend arch' ||
+    name === 'advanced pit fiend arch'
+  ) {
+    return {
+      shape: 'single',
+      killAbsorbRequiresTier: 6,
+      killAbsorbTagsRequired: [2, 10],
+      growsQtyOnKill: 1,
+      killAbsorbTrigger: 'per_attack',
+      immuneToFire: true,
+    }
+  }
+  // S6-35: Fire-immune units (no other designed combat ability required).
+  if (
+    unitId === 194 ||
+    unitId === 195 ||
+    name === 'homunculus' ||
+    name === 'advanced homunculus' ||
+    unitId === 204 ||
+    unitId === 205 ||
+    name === 'horned hellion' ||
+    name === 'advanced horned hellion' ||
+    unitId === 64 ||
+    unitId === 65 ||
+    name === 'arsonist' ||
+    name === 'advanced arsonist' ||
+    unitId === 66 ||
+    unitId === 67 ||
+    name === 'fire giant' ||
+    name === 'advanced fire giant'
+  ) {
+    return { immuneToFire: true }
+  }
+  // S6-43: Weeping Angel — blink + Blind pulse (no enemy retaliation).
+  if (
+    unitId === 136 ||
+    unitId === 137 ||
+    name === 'weeping angel' ||
+    name === 'advanced weeping angel'
+  ) {
+    return {
+      blinkMovement: true,
+      requiresLos: true,
+      respectsHexSize: true,
+      shape: 'pulse',
+      radius: 1,
+      chancePct: 50,
+      resistStat: 'resistance',
+      inflictsCondition: 5,
+      conditionDuration: 1,
+      no_enemy_retaliation: true,
+    }
+  }
+  // S6-43: Blink Dog — LOS blink relocation only.
+  if (
+    unitId === 60 ||
+    unitId === 61 ||
+    name === 'blink dog' ||
+    name === 'advanced blink dog'
+  ) {
+    return {
+      blinkMovement: true,
+      requiresLos: true,
+      respectsHexSize: true,
+    }
+  }
+  // S6-43: Chronomancer — Temporal Bolt speed swap (retaliation is separate JSON).
+  if (
+    unitId === 138 ||
+    unitId === 139 ||
+    name === 'chronomancer' ||
+    name === 'advanced chronomancer'
+  ) {
+    return {
+      shape: 'single',
+      speedSwapIfTargetFaster: true,
+      speedSwapDuration: 1,
+    }
+  }
+  // S6-35: attack-trail Fire droppers (+ immune where listed).
+  if (
+    unitId === 196 ||
+    unitId === 197 ||
+    name === 'imp' ||
+    name === 'advanced imp'
+  ) {
+    return {
+      shape: 'aoe',
+      radius: 1,
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 6,
+      chancePct: 40,
+      immuneToFire: true,
+    }
+  }
+  if (
+    unitId === 202 ||
+    unitId === 203 ||
+    name === 'smoldering ooze' ||
+    name === 'advanced smoldering ooze'
+  ) {
+    return {
+      shape: 'pulse',
+      radius: 1,
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 6,
+      chancePct: 40,
+      immuneToFire: true,
+    }
+  }
+  if (
+    unitId === 208 ||
+    unitId === 209 ||
+    name === 'cerberus' ||
+    name === 'advanced cerberus'
+  ) {
+    return {
+      shape: 'breath',
+      rows: 2,
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 6,
+      chancePct: 40,
+    }
+  }
+  if (
+    unitId === 210 ||
+    unitId === 211 ||
+    name === 'efreti' ||
+    name === 'advanced efreti' ||
+    name === 'efreeti' ||
+    name === 'advanced efreeti'
+  ) {
+    return {
+      shape: 'single',
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 6,
+      chancePct: 100,
+    }
+  }
+  // S6-39 Citadel: CHARGE escalation / flat Slow (DB abilities often still null).
+  // Pangolin charge_line comes from unit.abilities.shape in the DB — no id remap.
+  if (
+    unitId === 158 ||
+    unitId === 159 ||
+    name === 'jouster' ||
+    name === 'advanced jouster'
+  ) {
+    return {
+      shape: 'single',
+      chargeDmgEscalation: true,
+      escalationChancePctStat: 1,
+      escalationMult: 1.5,
+      escalationMinIncrease: 1,
+    }
+  }
+  if (
+    unitId === 162 ||
+    unitId === 163 ||
+    name === 'war mammoth' ||
+    name === 'advanced war mammoth'
+  ) {
+    return {
+      shape: 'cleave',
+      chargeDmgEscalation: true,
+      escalationChancePctStat: 1,
+      escalationMult: 1.5,
+      escalationMinIncrease: 1,
+    }
+  }
+  if (
+    unitId === 164 ||
+    unitId === 165 ||
+    name === 'gladiator' ||
+    name === 'advanced gladiator'
+  ) {
+    return {
+      shape: 'single',
+      chancePct: 80,
+      resistStat: 'resistance',
+      speedDebuffFlatStatDiv: 9,
+      conditionDuration: 1,
+    }
+  }
+  return null
+}
+
+/** BR S6-50: Confluence unit ability fills when DB abilities JSON is absent. */
+function designedConfluenceAbilities(
+  unitId: number,
+  unitName: string,
+): Partial<UnitCombatAbilities> | null {
+  const name = unitName.trim().toLowerCase()
+  const advanced = name.startsWith('advanced ') || unitId % 2 === 1
+  // Mud Sprite 170/171
+  if (
+    unitId === 170 ||
+    unitId === 171 ||
+    name === 'mud sprite' ||
+    name === 'advanced mud sprite'
+  ) {
+    return {
+      shape: 'single',
+      terrainGrowthTerrainTypeId: 9,
+      terrainGrowthAmount: 1,
+    }
+  }
+  // Spark 172/173 — Storm on target 100%
+  if (
+    unitId === 172 ||
+    unitId === 173 ||
+    name === 'spark' ||
+    name === 'advanced spark'
+  ) {
+    return {
+      shape: 'single',
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 7,
+      chancePct: 100,
+      immuneToLightning: true,
+    }
+  }
+  // Tidal Caller 178/179 — line clears Fire
+  if (
+    unitId === 178 ||
+    unitId === 179 ||
+    name === 'tidal caller' ||
+    name === 'advanced tidal caller'
+  ) {
+    return {
+      shape: 'line',
+      dmgIncreasePerHex: 1,
+      clearsGroundEffectId: 6,
+    }
+  }
+  // Thunder Lizard 182/183 — beam Storm per hex intel×4%
+  if (
+    unitId === 182 ||
+    unitId === 183 ||
+    name === 'thunder lizard' ||
+    name === 'advanced thunder lizard'
+  ) {
+    return {
+      shape: 'beam',
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 7,
+      chancePctIntelStat: 4,
+      immuneToLightning: true,
+    }
+  }
+  // Tempest 184/185 — post-move Storm scatter
+  if (
+    unitId === 184 ||
+    unitId === 185 ||
+    name === 'tempest' ||
+    name === 'advanced tempest'
+  ) {
+    return {
+      shape: 'aoe',
+      radius: advanced || unitId === 185 ? 3 : 2,
+      scatterGroundEffectOnMoveStop: true,
+      groundEffectId: 7,
+      chancePctIntelStat: 4,
+      immuneToLightning: true,
+    }
+  }
+  // Pyromaniac 186/187 — SPIRAL Fire
+  if (
+    unitId === 186 ||
+    unitId === 187 ||
+    name === 'pyromaniac' ||
+    name === 'advanced pyromaniac'
+  ) {
+    return {
+      shape: 'spiral',
+      radius: advanced || unitId === 187 ? 3 : 2,
+      spiralChanceDecayPct: advanced || unitId === 187 ? 5 : 10,
+      groundEffectId: 6,
+    }
+  }
+  // Tesla Coil 188/189 — multi Storm 80% per bolt
+  if (
+    unitId === 188 ||
+    unitId === 189 ||
+    name === 'tesla coil' ||
+    name === 'advanced tesla coil'
+  ) {
+    return {
+      shape: 'multi',
+      targets: advanced || unitId === 189 ? 3 : 2,
+      leavesGroundEffectOnAttack: true,
+      groundEffectId: 7,
+      chancePct: 80,
+      immuneToLightning: true,
+    }
+  }
+  // Phoenix 192/193
+  if (
+    unitId === 192 ||
+    unitId === 193 ||
+    name === 'phoenix' ||
+    name === 'advanced phoenix'
+  ) {
+    return {
+      shape: 'single',
+      selfRezOnWipe: true,
+      selfRezChanceStatDiv: 3,
+      selfRezCapPct: 90,
+      selfRezBasedOnKillsThisRound: true,
+    }
+  }
+  // Cloud Panther / Channeler / Lightning Totem / Void immunities when DB empty
+  if (
+    unitId === 174 ||
+    unitId === 175 ||
+    name === 'cloud panther' ||
+    name === 'advanced cloud panther'
+  ) {
+    return { shape: 'single', immuneToLightning: true }
+  }
+  if (
+    unitId === 176 ||
+    unitId === 177 ||
+    name === 'channeler' ||
+    name === 'advanced channeler'
+  ) {
+    return { shape: 'chain', immuneToLightning: true }
+  }
+  if (
+    unitId === 78 ||
+    unitId === 79 ||
+    name === 'void' ||
+    name === 'advanced void'
+  ) {
+    return {
+      immuneToLightning: true,
+      immuneToFire: true,
+    }
+  }
+  if (
+    unitId === 263 ||
+    name === 'fire totem'
+  ) {
+    return {
+      shape: 'single',
+      autoTarget: 'random_enemy',
+      immuneToFire: true,
+    }
+  }
+  if (
+    unitId === 264 ||
+    name === 'lightning totem'
+  ) {
+    return {
+      shape: 'beam',
+      autoTarget: 'random_enemy',
+      immuneToLightning: true,
+    }
+  }
+  return null
+}
+
+/** BR S6-47: Temple unit ability fills when DB abilities JSON is absent. */
+function designedTempleAbilities(
+  unitId: number,
+  unitName: string,
+): Partial<UnitCombatAbilities> | null {
+  const name = unitName.trim().toLowerCase()
+  const advanced = name.startsWith('advanced ')
+  if (
+    unitId === 106 ||
+    unitId === 107 ||
+    name === 'zealot' ||
+    name === 'advanced zealot'
+  ) {
+    // Attack stays single; chain lives on retaliation JSON.
+    return { shape: 'single' }
+  }
+  if (
+    unitId === 114 ||
+    unitId === 115 ||
+    name === 'high priestess' ||
+    name === 'advanced high priestess'
+  ) {
+    return {
+      shape: 'single',
+      healMostInjuredOnKill: true,
+      healFull: true,
+    }
+  }
+  if (
+    unitId === 116 ||
+    unitId === 117 ||
+    name === 'inquisitor grand' ||
+    name === 'advanced inquisitor grand'
+  ) {
+    return {
+      shape: 'single',
+      extraTurnOnKill: true,
+      chancePctFlatStat: 1,
+    }
+  }
+  if (
+    unitId === 118 ||
+    unitId === 119 ||
+    name === 'angelic warrior' ||
+    name === 'advanced angelic warrior'
+  ) {
+    return {
+      shape: 'cleave',
+      dualAttack: true,
+      secondAttackDmgType: 'Physical',
+      secondAttackMinDmg: advanced || unitId === 119 ? 36 : 35,
+      secondAttackMaxDmg: advanced || unitId === 119 ? 46 : 45,
+      retaliateOnceAfterBoth: true,
+    }
+  }
+  if (
+    unitId === 120 ||
+    unitId === 121 ||
+    name === 'divine aura master' ||
+    name === 'advanced divine aura master'
+  ) {
+    return {
+      shape: 'single',
+      auraRadius: advanced || unitId === 121 ? 2 : 1,
+      auraCountsAlliesAsExtraQty: true,
+    }
+  }
+  return null
+}
+
+function designedTempleRetaliation(
+  unitId: number,
+  unitName: string,
+): Partial<UnitRetaliation> | null {
+  const name = unitName.trim().toLowerCase()
+  if (
+    unitId === 106 ||
+    unitId === 107 ||
+    name === 'zealot' ||
+    name === 'advanced zealot'
+  ) {
+    const advanced = unitId === 107 || name === 'advanced zealot'
+    return {
+      shape: 'chain',
+      jumps: advanced ? 3 : 2,
+      falloff: 33,
+      times: 1,
+      dmgPct: 50,
+    }
+  }
+  return null
 }
 
 function asResistStat(value: unknown): 'resistance' | 'defense' | null {
@@ -1482,18 +3669,44 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
   applyResourceCatalog(resource)
   const building = (Array.isArray(payload.building) ? payload.building : []).map(
     (row) => {
-      const growthNum = Number(row.growth)
+      const raw = row as Record<string, unknown>
+      const growthNum = Number(raw.growth)
+      const name = typeof raw.name === 'string' ? raw.name.trim() : ''
       return {
-        ...row,
-        cost: asCost(row.cost),
-        destroy_cost: asCost(row.destroy_cost),
-        growth: Number.isFinite(growthNum) ? growthNum : row.growth,
-        level: catalogLevel(row.level),
-        requires: asRequires(row.requires),
-      }
+        id: asInt(raw.id),
+        name,
+        town_id: asInt(raw.town_id),
+        tier:
+          raw.tier == null || raw.tier === '' ? null : asInt(raw.tier),
+        class_id:
+          raw.class_id == null || raw.class_id === ''
+            ? null
+            : asInt(raw.class_id),
+        cost: asCost(raw.cost as CostMap | null),
+        effect_type:
+          typeof raw.effect_type === 'string' ? raw.effect_type.trim() : '',
+        payload:
+          raw.payload != null &&
+          typeof raw.payload === 'object' &&
+          !Array.isArray(raw.payload)
+            ? (raw.payload as Record<string, unknown>)
+            : null,
+        destroy_cost: asCost(raw.destroy_cost as CostMap | null),
+        slot_num:
+          raw.slot_num == null || raw.slot_num === ''
+            ? null
+            : asInt(raw.slot_num),
+        image_path:
+          typeof raw.image_path === 'string' && raw.image_path.trim()
+            ? raw.image_path.trim()
+            : null,
+        growth: Number.isFinite(growthNum) ? growthNum : null,
+        level: catalogLevel(raw.level),
+        requires: asRequires(raw.requires),
+      } satisfies BuildingRow
     },
-  )
-  const unit = (Array.isArray(payload.unit) ? payload.unit : []).map((row) => {
+  ).filter((row) => row.id > 0 && row.name.length > 0)
+  let unit: UnitRow[] = (Array.isArray(payload.unit) ? payload.unit : []).map((row) => {
     const extra = row as {
       hex_size?: unknown
       speed?: unknown
@@ -1514,11 +3727,13 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       image_path_alt?: unknown
       class_id?: unknown
       tier?: unknown
+      town_id?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const imageAlt =
       typeof extra.image_path_alt === 'string' ? extra.image_path_alt.trim() : ''
     const unitName = typeof row.name === 'string' ? row.name.trim() : ''
+    const unitId = asInt(row.id)
     const rift = unitName.toLowerCase() === 'unstable rift'
     const hexRaw = extra.hex_size
     const hexNum = hexRaw == null || hexRaw === '' ? null : asInt(hexRaw)
@@ -1528,6 +3743,9 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     const dmgType =
       typeof extra.dmg_type === 'string' ? extra.dmg_type.trim() : ''
     const maxRangeRaw = extra.max_range
+    const townRaw = extra.town_id
+    const townId =
+      townRaw == null || townRaw === '' ? null : asInt(townRaw)
     return {
       ...row,
       cost: asCost(row.cost),
@@ -1547,13 +3765,207 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       min_dmg: asInt(extra.min_dmg),
       max_dmg: asInt(extra.max_dmg),
       min_range: asInt(extra.min_range),
-      max_range:
-        maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw),
-      retaliation: asUnitRetaliation(extra.retaliation),
-      abilities: asUnitCombatAbilities(extra.abilities),
+      // Halberdier base (154): DB has max_range 1; designed polearm reach is 1–2
+      // like Adv Halberdier (155) and Horned Hellion (204/205).
+      max_range: (() => {
+        const parsed =
+          maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw)
+        if (unitId === 154 && parsed < 2) return 2
+        return parsed
+      })(),
+      retaliation: (() => {
+        const base = asUnitRetaliation(extra.retaliation)
+        const lower = unitName.toLowerCase()
+        if (
+          unitId === 136 ||
+          unitId === 137 ||
+          lower === 'weeping angel' ||
+          lower === 'advanced weeping angel'
+        ) {
+          return { ...base, times: 0 }
+        }
+        const chrono =
+          unitId === 138 ||
+          unitId === 139 ||
+          lower === 'chronomancer' ||
+          lower === 'advanced chronomancer'
+        if (chrono) {
+          const advanced =
+            unitId === 139 || lower === 'advanced chronomancer'
+          return {
+            ...base,
+            teleportsAttacker: true,
+            teleportChancePct:
+              base.teleportChancePct ?? (advanced ? 75 : 50),
+            resistStat: base.resistStat ?? 'resistance',
+            dmgPct: base.dmgPct === 'default' ? 50 : base.dmgPct,
+          }
+        }
+        // S6-47 Zealot: force chain retaliation when DB JSON is missing/partial.
+        const templeRet = designedTempleRetaliation(unitId, unitName)
+        if (templeRet) {
+          return {
+            ...base,
+            ...templeRet,
+            shape: base.shape ?? templeRet.shape,
+            jumps: base.jumps ?? templeRet.jumps,
+            falloff: base.falloff ?? templeRet.falloff,
+            dmgPct:
+              base.dmgPct !== 'default' ? base.dmgPct : (templeRet.dmgPct ?? base.dmgPct),
+            times: base.times !== 1 || templeRet.times == null ? base.times : templeRet.times,
+          }
+        }
+        return base
+      })(),
+      abilities: (() => {
+        const base = asUnitCombatAbilities(extra.abilities)
+        let next = base
+        if (unitName.toLowerCase() === 'mud golem') {
+          next = {
+            ...next,
+            autoSplitOnTurn: true,
+            skipFirstTurn: true,
+          }
+        }
+        // Factory S6-28/29/35: DB rows may still be null — fill designed stats only
+        // when abilities JSON is absent so a live DB row always wins.
+        if (!abilitiesConfigPresent(extra.abilities)) {
+          const designed =
+            designedTempleAbilities(unitId, unitName) ??
+            designedConfluenceAbilities(unitId, unitName) ??
+            designedFactoryAbilities(unitId, unitName)
+          if (designed) {
+            next = { ...DEFAULT_UNIT_ABILITIES, ...designed }
+          }
+        }
+        // S6-47 Temple: force designed keys when DB abilities omit them.
+        {
+          const temple = designedTempleAbilities(unitId, unitName)
+          if (temple) {
+            next = {
+              ...next,
+              ...(temple.healMostInjuredOnKill
+                ? { healMostInjuredOnKill: true }
+                : {}),
+              ...(temple.healFull ? { healFull: true } : {}),
+              ...(temple.extraTurnOnKill ? { extraTurnOnKill: true } : {}),
+              ...(temple.chancePctFlatStat != null &&
+              next.chancePctFlatStat == null
+                ? { chancePctFlatStat: temple.chancePctFlatStat }
+                : {}),
+              ...(temple.dualAttack
+                ? {
+                    dualAttack: true,
+                    secondAttackDmgType:
+                      next.secondAttackDmgType ?? temple.secondAttackDmgType,
+                    secondAttackMinDmg:
+                      next.secondAttackMinDmg ?? temple.secondAttackMinDmg,
+                    secondAttackMaxDmg:
+                      next.secondAttackMaxDmg ?? temple.secondAttackMaxDmg,
+                    retaliateOnceAfterBoth: true,
+                    shape:
+                      next.shape === 'single'
+                        ? (temple.shape ?? next.shape)
+                        : next.shape,
+                  }
+                : {}),
+              ...(temple.auraCountsAlliesAsExtraQty
+                ? {
+                    auraCountsAlliesAsExtraQty: true,
+                    auraRadius: next.auraRadius ?? temple.auraRadius,
+                  }
+                : {}),
+            }
+          }
+        }
+        // S6-35: listed Fire-immune units always get the flag even if older DB
+        // abilities JSON omitted it.
+        if (unitDesignedImmuneToFire(unitId, unitName)) {
+          next = { ...next, immuneToFire: true }
+        }
+        // S6-42 Arcane unit flags — keep live even if older DB abilities omit them.
+        {
+          const lower = unitName.toLowerCase()
+          if (unitId === 260 || lower === 'arcane illusion') {
+            next = { ...next, aiTreatAsThreat: true }
+          }
+          if (unitId === 262 || lower === 'arcane shield') {
+            next = { ...next, immuneToMagicDmg: true }
+          }
+          if (
+            (unitId === 261 || lower === 'animated weapon') &&
+            next.autoTarget == null
+          ) {
+            next = { ...next, autoTarget: 'random_enemy' }
+          }
+          // S6-46 Shaman totems.
+          if (unitId === 263 || lower === 'fire totem') {
+            next = {
+              ...next,
+              shape: 'single',
+              autoTarget: next.autoTarget ?? 'random_enemy',
+            }
+          }
+          if (unitId === 264 || lower === 'lightning totem') {
+            next = {
+              ...next,
+              shape: 'beam',
+              autoTarget: next.autoTarget ?? 'random_enemy',
+            }
+          }
+          // S6-43 Tower: force blink / Chronomancer keys even if older DB omitted them.
+          if (
+            unitId === 136 ||
+            unitId === 137 ||
+            lower === 'weeping angel' ||
+            lower === 'advanced weeping angel'
+          ) {
+            next = {
+              ...next,
+              blinkMovement: true,
+              requiresLos: true,
+              respectsHexSize: true,
+              shape: next.shape === 'single' ? 'pulse' : next.shape,
+              radius: Math.max(1, next.radius),
+              chancePct: next.chancePct ?? 50,
+              resistStat: next.resistStat ?? 'resistance',
+              inflictsCondition: next.inflictsCondition ?? 5,
+              conditionDuration: Math.max(1, next.conditionDuration),
+              no_enemy_retaliation: true,
+            }
+          }
+          if (
+            unitId === 60 ||
+            unitId === 61 ||
+            lower === 'blink dog' ||
+            lower === 'advanced blink dog'
+          ) {
+            next = {
+              ...next,
+              blinkMovement: true,
+              requiresLos: true,
+              respectsHexSize: true,
+            }
+          }
+          if (
+            unitId === 138 ||
+            unitId === 139 ||
+            lower === 'chronomancer' ||
+            lower === 'advanced chronomancer'
+          ) {
+            next = {
+              ...next,
+              speedSwapIfTargetFaster: true,
+              speedSwapDuration: Math.max(1, next.speedSwapDuration || 1),
+            }
+          }
+        }
+        return next
+      })(),
       tags: asIntIds(extra.tags),
       has_abilities: abilitiesConfigPresent(extra.abilities),
       blocks_los: asBoolFlag(extra.blocks_los),
+      town_id: townId != null && townId > 0 ? townId : null,
       class_id: extra.class_id == null || extra.class_id === '' ? null : asInt(extra.class_id),
       tier: extra.tier == null || extra.tier === '' ? null : asInt(extra.tier),
       upgrade_cost: asCost(
@@ -1562,6 +3974,26 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       ),
     }
   })
+  {
+    const haveIds = new Set(unit.map((row) => row.id))
+    const haveNames = new Set(
+      unit.map((row) => row.name.trim().toLowerCase()),
+    )
+    const towns = Array.isArray(payload.town)
+      ? (payload.town as { id: number; name: string }[])
+      : []
+    const extras = [
+      ...designedArcaneUnits(),
+      ...designedTotemUnits(towns),
+    ].filter(
+      (row) =>
+        !haveIds.has(row.id) &&
+        !haveNames.has(row.name.trim().toLowerCase()),
+    )
+    if (extras.length > 0) {
+      unit = [...unit, ...extras]
+    }
+  }
   const catalog: ReferenceCatalog = {
     building,
     unit,
@@ -1606,12 +4038,18 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     ),
     levels: asLevels((payload as { levels?: unknown }).levels),
     hero_levels: asHeroLevels((payload as { hero_levels?: unknown }).hero_levels),
+    ground_effect: asGroundEffects(
+      (payload as { ground_effect?: unknown }).ground_effect,
+    ),
   }
   catalog.ability = fillDesignedAbilities(
     catalog.ability,
     catalog.ability_target,
     catalog.ability_type,
-  )
+  ).map((row) => ({
+    ...row,
+    stats: normalizeAbilityStatFlags(row.stats),
+  }))
   cachedCatalog = catalog
   emitCatalog()
   return catalog
@@ -1758,11 +4196,7 @@ export function unitHexFootprint(unit: UnitRow | null | undefined): number {
 export function unitRetaliation(
   unit: UnitRow | null | undefined,
   catalog?: ReferenceCatalog | null,
-): {
-  dmgPct: number | 'max'
-  times: number | 'unlimited'
-  preemptive: boolean
-} {
+): Omit<UnitRetaliation, 'dmgPct'> & { dmgPct: number | 'max' } {
   const spec = unit?.retaliation ?? DEFAULT_UNIT_RETALIATION
   const dmgPct =
     spec.dmgPct === 'default'
@@ -1872,6 +4306,15 @@ export function isTavernBuilding(building: BuildingRow): boolean {
 
 export function isMarketplaceBuilding(building: BuildingRow): boolean {
   return building.name.trim().toLowerCase() === 'marketplace'
+}
+
+/** Town / Village Hall (and similar) — name match or gold_income root. */
+export function isHallBuilding(building: BuildingRow): boolean {
+  const name = building.name.trim().toLowerCase()
+  if (name.includes('hall')) {
+    return true
+  }
+  return building.effect_type === 'gold_income'
 }
 
 export function isLibraryBuilding(building: BuildingRow): boolean {
@@ -1988,6 +4431,49 @@ export function isBuildRoot(building: BuildingRow): boolean {
   return building.level === 1
 }
 
+function prerequisiteBuildingName(
+  catalog: ReferenceCatalog,
+  id: number,
+): string {
+  const pre = buildingById(catalog, id)
+  const name = pre?.name?.trim()
+  return name && name.length > 0 ? name : `building #${id}`
+}
+
+/** One line per unmet requires group (all / any), naming live building rows. */
+export function formatUnmetRequires(
+  catalog: ReferenceCatalog,
+  building: BuildingRow,
+  builtIds: ReadonlySet<number>,
+): string {
+  const parts: string[] = []
+  for (const clause of building.requires ?? []) {
+    if (requireClausePasses(clause, builtIds)) {
+      continue
+    }
+    if ('all' in clause) {
+      const missing = clause.all
+        .filter((id) => !builtIds.has(id))
+        .map((id) => prerequisiteBuildingName(catalog, id))
+      if (missing.length === 1) {
+        parts.push(`Requires: ${missing[0]}`)
+      } else if (missing.length > 1) {
+        parts.push(`Requires: ${missing.join(', ')}`)
+      }
+      continue
+    }
+    const names = clause.any.map((id) => prerequisiteBuildingName(catalog, id))
+    if (names.length === 1) {
+      parts.push(`Requires: ${names[0]}`)
+    } else if (names.length > 1) {
+      parts.push(`Requires one of: ${names.join(', ')}`)
+    }
+  }
+  return parts.length > 0
+    ? parts.join(' ')
+    : 'Build the required prerequisite first.'
+}
+
 export function armyBuildOptions(
   catalog: ReferenceCatalog,
   slotId: number,
@@ -1999,49 +4485,26 @@ export function armyBuildOptions(
   )
 }
 
-function unmetRequireNames(
+/** Locked army roots with name + unmet requires (for empty-slot panel / hover). */
+export function lockedArmyPrerequisiteLines(
   catalog: ReferenceCatalog,
-  buildings: BuildingRow[],
+  slotId: number,
+  townTypeId: number,
   builtIds: ReadonlySet<number>,
 ): string[] {
-  const names: string[] = []
-  const seen = new Set<string>()
-  for (const row of buildings) {
-    if (hasPrerequisite(row, builtIds)) {
-      continue
-    }
-    for (const clause of row.requires ?? []) {
-      if (requireClausePasses(clause, builtIds)) {
-        continue
-      }
-      const ids = 'all' in clause ? clause.all : clause.any
-      for (const id of ids) {
-        if (builtIds.has(id)) {
-          continue
-        }
-        const pre = buildingById(catalog, id)
-        if (!pre || seen.has(pre.name)) {
-          continue
-        }
-        seen.add(pre.name)
-        names.push(pre.name)
-      }
-    }
+  const locked = armyOptions(catalog, slotId, townTypeId).filter(
+    (row) => isBuildRoot(row) && !hasPrerequisite(row, builtIds),
+  )
+  if (locked.length === 0) {
+    return ['Build the required prerequisite first.']
   }
-  return names
-}
-
-function formatMissingPrerequisite(names: string[]): string {
-  if (names.length === 0) {
-    return 'Build the required prerequisite first.'
+  const lines: string[] = []
+  for (const row of locked) {
+    const unitName = unitForBuilding(catalog, row.id)?.name?.trim()
+    lines.push(`Build ${row.name}${unitName ? ` (${unitName})` : ''}`)
+    lines.push(formatUnmetRequires(catalog, row, builtIds))
   }
-  if (names.length === 1) {
-    return `Build ${names[0]} first`
-  }
-  if (names.length === 2) {
-    return `Build ${names[0]} or ${names[1]} first`
-  }
-  return `Build ${names.slice(0, -1).join(', ')} or ${names[names.length - 1]} first`
+  return lines
 }
 
 export function missingArmyPrerequisiteLine(
@@ -2050,10 +4513,12 @@ export function missingArmyPrerequisiteLine(
   townTypeId: number,
   builtIds: ReadonlySet<number>,
 ): string {
-  const locked = armyOptions(catalog, slotId, townTypeId).filter(
-    (row) => isBuildRoot(row) && !hasPrerequisite(row, builtIds),
-  )
-  return formatMissingPrerequisite(unmetRequireNames(catalog, locked, builtIds))
+  return lockedArmyPrerequisiteLines(
+    catalog,
+    slotId,
+    townTypeId,
+    builtIds,
+  ).join(' ')
 }
 
 export function missingGenericPrerequisiteLine(
@@ -2061,16 +4526,65 @@ export function missingGenericPrerequisiteLine(
   building: BuildingRow,
   builtIds: ReadonlySet<number>,
 ): string {
-  return formatMissingPrerequisite(
-    unmetRequireNames(catalog, [building], builtIds),
-  )
+  return formatUnmetRequires(catalog, building, builtIds)
 }
 
+/** Hover/preview text for an empty town slot (same info as the Build panel). */
+export function emptySlotPreviewLines(
+  catalog: ReferenceCatalog,
+  slotId: number,
+  townTypeId: number,
+  builtIds: ReadonlySet<number>,
+): string[] {
+  if (isUndesignedSlot(catalog, slotId, townTypeId)) {
+    return ['Not yet designed']
+  }
+  if (isEmptyPlaceholderSlot(catalog, slotId, townTypeId)) {
+    return ['Nothing built here yet.']
+  }
+  if (isArmySlot(slotId)) {
+    const options = armyBuildOptions(catalog, slotId, townTypeId, builtIds)
+    if (options.length === 0) {
+      return lockedArmyPrerequisiteLines(
+        catalog,
+        slotId,
+        townTypeId,
+        builtIds,
+      )
+    }
+    const lines: string[] = []
+    for (const building of options) {
+      const unitName = unitForBuilding(catalog, building.id)?.name?.trim()
+      lines.push(
+        `Build ${building.name}${unitName ? ` (${unitName})` : ''}`,
+      )
+      const effect = effectLine(building)
+      if (effect) {
+        lines.push(effect)
+      }
+      lines.push(`Cost: ${formatCost(constructionCost(catalog, building))}`)
+    }
+    return lines
+  }
+  const root = genericRoot(genericSlotBuildings(catalog, slotId, townTypeId))
+  if (!root) {
+    return ['No building defined for this slot.']
+  }
+  if (!hasPrerequisite(root, builtIds)) {
+    return [missingGenericPrerequisiteLine(catalog, root, builtIds)]
+  }
+  const lines = [`Build ${root.name}`]
+  const effect = effectLine(root)
+  if (effect) {
+    lines.push(effect)
+  }
+  lines.push(`Cost: ${formatCost(constructionCost(catalog, root))}`)
+  return lines
+}
+
+/** Destroy cost from the building row only — no app-config / hardcoded fallback. */
 export function destroyCostOf(building: BuildingRow): CostMap {
-  const listed = asCost(building.destroy_cost)
-  return Object.keys(listed).length > 0
-    ? listed
-    : destroyBuildingGoldCost(getCachedCatalog())
+  return asCost(building.destroy_cost)
 }
 
 export function formatCost(cost: CostMap): string {
@@ -2193,7 +4707,10 @@ export function heroEffectiveStats(
   return stats
 }
 
-/** XP total required to reach `levelId`, or null if that row is missing. */
+/**
+ * Cumulative XP needed to advance out of `levelId` into the next level
+ * (`levels.xp` where id = the level being left). Null if that row is missing.
+ */
 export function xpToReachLevel(
   catalog: ReferenceCatalog,
   levelId: number,
@@ -2213,7 +4730,12 @@ export function formatHeroLevelLine(
 ): string {
   const level = Math.max(1, Math.floor(currentLevel))
   const xp = Math.max(0, Math.floor(currentXp))
-  const nextXp = catalog ? xpToReachLevel(catalog, level + 1) : null
+  const maxLevel = catalog
+    ? catalog.levels.reduce((max, row) => (row.id > max ? row.id : max), 0)
+    : 0
+  // Threshold to leave current level; omit at max (no next level).
+  const nextXp =
+    catalog && level < maxLevel ? xpToReachLevel(catalog, level) : null
   if (nextXp == null) {
     return `${name} - Lvl ${level} - XP ${xp}`
   }
@@ -2356,17 +4878,6 @@ export function libraryGoldCost(
   return Math.max(0, Math.floor(appConfigNumber(catalog, key, fallback)))
 }
 
-export function destroyBuildingGoldCost(
-  catalog: ReferenceCatalog | null | undefined,
-): CostMap {
-  return {
-    [GOLD_RESOURCE_ID]: Math.max(
-      0,
-      Math.floor(appConfigNumber(catalog, 'destroy_bldg_cost', 500)),
-    ),
-  }
-}
-
 export function visionRange(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
@@ -2504,9 +5015,17 @@ export function armyOptions(
   slotId: number,
   townTypeId: number,
 ): BuildingRow[] {
-  return buildingsInSlot(catalog, slotId, townTypeId).filter(
-    (row) => row.class_id != null,
-  )
+  return buildingsInSlot(catalog, slotId, townTypeId).filter((row) => {
+    if (isEmptyPlaceholder(row)) {
+      return false
+    }
+    // Necropolis sets building.class_id; Grove (and similar) leave it null and
+    // link the unit via unit.bldg_id instead.
+    if (row.class_id != null) {
+      return true
+    }
+    return unitForBuilding(catalog, row.id) != null
+  })
 }
 
 export function genericSlotBuildings(
@@ -2527,6 +5046,18 @@ export function genericRoot(buildings: BuildingRow[]): BuildingRow | null {
   return (roots[0] ?? null)
 }
 
+/** Branch key for dwelling upgrades: building.class_id, else unit.class_id. */
+function armyBranchKey(
+  catalog: ReferenceCatalog,
+  building: BuildingRow,
+): number | null {
+  if (building.class_id != null && building.class_id > 0) {
+    return building.class_id
+  }
+  const unit = unitForBuilding(catalog, building.id)
+  return unit?.class_id != null && unit.class_id > 0 ? unit.class_id : null
+}
+
 export function nextInChain(
   current: BuildingRow,
   catalog: ReferenceCatalog,
@@ -2537,9 +5068,27 @@ export function nextInChain(
     ? armyOptions(catalog, slotId, townTypeId)
     : genericSlotBuildings(catalog, slotId, townTypeId)
   const want = current.level + 1
+  const currentKey = armyBranchKey(catalog, current)
+  const byBranch = group.find((row) => {
+    if (row.level !== want) {
+      return false
+    }
+    if (currentKey != null) {
+      return armyBranchKey(catalog, row) === currentKey
+    }
+    return row.class_id === current.class_id
+  })
+  if (byBranch) {
+    return byBranch
+  }
+  // Grove-style: Advanced X lists Basic X in requires.all when class_id is null.
   return (
     group.find(
-      (row) => row.level === want && row.class_id === current.class_id,
+      (row) =>
+        row.level === want &&
+        (row.requires ?? []).some(
+          (clause) => 'all' in clause && clause.all.includes(current.id),
+        ),
     ) ?? null
   )
 }
@@ -2677,6 +5226,13 @@ export function appConfigNumber(
   const raw = catalog?.app_config.find((row) => row.key === key)?.value
   const n = raw == null || raw === '' ? NaN : Number(raw)
   return Number.isFinite(n) ? n : fallback
+}
+
+/** Dev toggle: always show full enemy inspect stats (independent of Expose). */
+export function debugSeeEnemyStats(
+  catalog: ReferenceCatalog | null | undefined,
+): boolean {
+  return appConfigNumber(catalog, 'debug_see_enemy_stats', 0) !== 0
 }
 
 /** Catalog convention: always enterable, dumps remaining MP. Not a literal cost. */

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatAmount } from '../hex/resources'
 import { getSession, updateSession } from '../session/store'
 import {
@@ -105,11 +105,14 @@ export function ArmyTransfer({
   townId,
   catalog,
   rows,
+  leading = null,
 }: {
   session: GameSession
   townId: string
   catalog: ReferenceCatalog | null
   rows: ArmyRowSpec[]
+  /** Optional row(s) above the transferable army rows (e.g. hero roster). */
+  leading?: ReactNode
 }) {
   const [menu, setMenu] = useState<{
     slot: ArmySlotRef
@@ -314,6 +317,7 @@ export function ArmyTransfer({
 
   return (
     <div className="town-army-rows">
+      {leading}
       {rows.map((spec, index) => (
         <ArmyRow
           key={`${spec.row}:${spec.heroId ?? index}`}

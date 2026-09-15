@@ -14,6 +14,7 @@ import {
 import {
   mapMobAdvancedPct,
   mapMobMinTownDist,
+  mapMobsType,
   mapRandomMobs,
   mapRandomMobsTier,
 } from '../ai/weights'
@@ -69,15 +70,30 @@ function occupiedKeys(session: GameSession): Set<string> {
   return keys
 }
 
+function unitTownTypeId(
+  catalog: ReferenceCatalog,
+  unit: UnitRow,
+): number | null {
+  if (unit.town_id != null && unit.town_id > 0) {
+    return unit.town_id
+  }
+  const building = buildingById(catalog, unit.bldg_id)
+  return building != null && building.town_id > 0 ? building.town_id : null
+}
+
 function eligibleBaseUnits(
   catalog: ReferenceCatalog,
   maxTier: number,
+  townTypeId: number,
 ): UnitRow[] {
   return catalog.unit.filter((unit) => {
     if (!unit.has_abilities || isAdvancedUnit(unit) || (unit.speed ?? 0) <= 0) {
       return false
     }
     if (unitEffectiveTier(catalog, unit) > maxTier) {
+      return false
+    }
+    if (townTypeId > 0 && unitTownTypeId(catalog, unit) !== townTypeId) {
       return false
     }
     return buildingGrowth(buildingById(catalog, unit.bldg_id)) > 0
@@ -212,7 +228,14 @@ export function addWorldMobs(session: GameSession): GameSession {
   const maxTier = mapRandomMobsTier(catalog)
   const advancedPct = mapMobAdvancedPct(catalog)
   const minTownDist = mapMobMinTownDist(catalog)
-  const pool = eligibleBaseUnits(catalog, maxTier)
+  const townTypeId = mapMobsType(catalog)
+  let pool = eligibleBaseUnits(catalog, maxTier, townTypeId)
+  // Town filter can empty the pool when that faction's units aren't combat-ready
+  // yet (e.g. Grove missing speed/abilities). Fall back to all towns so the map
+  // still gets mobs.
+  if (pool.length === 0 && townTypeId > 0) {
+    pool = eligibleBaseUnits(catalog, maxTier, 0)
+  }
   if (perTown <= 0 || pool.length === 0) {
     return session
   }
@@ -370,6 +393,25 @@ export function mobLeadStack(
   return [...stacks].sort((a, b) => b.qty - a.qty)[0] ?? null
 }
 
+/** Total living qty of one unit type across all mob slots (matches surrender absorb). */
+export function mobUnitQty(
+  session: GameSession,
+  mob: Mob,
+  unitId: number,
+): number {
+  let total = 0
+  for (const id of mob.slots_1_to_6) {
+    if (!id) {
+      continue
+    }
+    const row = session.units.find((stack) => stack.id === id)
+    if (row && row.qty > 0 && row.unit_id === unitId) {
+      total += row.qty
+    }
+  }
+  return total
+}
+
 export function mobLabel(
   session: GameSession,
   catalog: ReferenceCatalog | null | undefined,
@@ -380,7 +422,8 @@ export function mobLabel(
     return 'Mob'
   }
   const name = unitById(catalog, top.unit_id)?.name ?? 'Mob'
-  return `${top.qty} ${name}`
+  // Weekly growth can leave multiple same-type stacks; show consolidated qty.
+  return `${mobUnitQty(session, mob, top.unit_id)} ${name}`
 }
 
 export function removeWorldMob(session: GameSession, mob: Mob): GameSession {

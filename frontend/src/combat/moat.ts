@@ -4,6 +4,7 @@ import { applyStackDamage } from './attack'
 import { applyBreaksOnDamage } from './condition'
 import type { CombatBattle, CombatTile } from './battle'
 import { noteUnitDeaths, stackMaxHealth } from './battle'
+import { syncTombstonesFromWipes } from './tombstone'
 import { hexKey, moveKindForUnit } from './movement'
 import { isSiegeEngineUnit, isWallSegmentUnit, openBridgeMoatKeys } from './siege'
 
@@ -72,6 +73,7 @@ export function applyMoatEntryDamage(
   if (applied.killed > 0) {
     nextBattle = noteUnitDeaths(nextBattle, stack.unitId, applied.killed)
   }
+  nextBattle = syncTombstonesFromWipes(battle, nextBattle, catalog)
   return {
     battle: nextBattle,
     lines: [`${line}.`, ...broken.lines],

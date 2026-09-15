@@ -7,13 +7,14 @@ import {
   nextUnitStackId,
   withEliminations,
 } from '../session/accessors'
-import { awardScaledKillXp, partsArmyValue, type XpKillPart, type XpValuePart } from '../session/xp'
+import { awardScaledKillXp, levelUpNoticeForAward, partsArmyValue, type LevelUpNotice, type XpKillPart, type XpValuePart } from '../session/xp'
 import { getSession, updateSession } from '../session/store'
 import { ARMY_STACK_SLOTS, type GameSession, type Hero, type Mob, type Town } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
 import { defenderArmyIsGarrison, isHeroStack } from './battle'
+import { applyDemonReinforcement } from './demonReinforcement'
 import { isCreatureArmyUnit } from './siege'
 
 export type OpeningStack = {
@@ -38,6 +39,8 @@ export type CombatSummary = {
   winnerLosses: CombatLossLine[]
   winnerGains: CombatLossLine[]
   xpLines: string[]
+  /** Human winner leveled with bumps — show after summary dismiss. */
+  levelUpNotice?: LevelUpNotice | null
 }
 
 export function snapshotOpening(stacks: CombatStack[]): OpeningStack[] {
@@ -426,6 +429,7 @@ export function applyCombatOutcome(
     winnerLosses: lossesFor(winnerSide, opening, battle, catalog),
     winnerGains: [],
     xpLines: [],
+    levelUpNotice: null,
   }
   let next = session
   if (winner) {
@@ -439,6 +443,9 @@ export function applyCombatOutcome(
     )
     next = persisted.session
     summary.winnerGains = persisted.gains
+    // XP (and any level-ups) before demon tier — INT bumps from this battle
+    // must count toward floor(INT/6). Demons previously ran first, so a hero
+    // who crossed INT 18 on this fight still resolved at the old tier.
     const ownValue = partsArmyValue(
       catalog,
       openingValueParts(opening, catalog, winnerSide),
@@ -458,6 +465,21 @@ export function applyCombatOutcome(
     )
     next = xp.session
     summary.xpLines = xp.lines
+    summary.levelUpNotice = levelUpNoticeForAward(catalog, xp)
+    const winnerLive =
+      next.heroes.find((hero) => hero.id === winner.id) ?? winner
+    const demons = applyDemonReinforcement(
+      next,
+      catalog,
+      winnerLive,
+      battle,
+      opening,
+      loserSide,
+    )
+    next = demons.session
+    if (demons.gains.length > 0) {
+      summary.winnerGains = [...summary.winnerGains, ...demons.gains]
+    }
   }
   if (loser) {
     next = removeDefeatedHero(next, loser)

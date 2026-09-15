@@ -1,5 +1,5 @@
 import type { Axial } from '../hex/hero'
-import { hexDistance } from '../hex/pathfinding'
+import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
 import type { AbilityRow, ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
@@ -8,6 +8,7 @@ import {
   unitById,
   unitHasTag,
   unitHexFootprint,
+  unitTakesTurns,
   unitsWithTag,
 } from '../town/catalog'
 import type { HitFlashColor } from './attack'
@@ -17,23 +18,70 @@ import type {
   CombatStack,
   CombatTile,
 } from './battle'
-import { insertIntoRemainingInitiative, isHeroStack } from './battle'
-import { combatCanLandOn, combatEnterCost, moveKindForUnit } from './movement'
+import { insertIntoRemainingInitiative, isHeroStack, stackMaxHealth } from './battle'
+import {
+  shamanTotemCount,
+  totemSpawnExtras,
+  totemUnitByName,
+} from './heroArmyPassives'
+import { isHeroClass } from './shadow'
+import { combatCanLandOn, combatEnterCost, moveKindForUnit, stackOccupyingHex } from './movement'
 import {
   footprintFits,
   footprintStep,
   occupancyKey,
   occupiedHexes,
 } from './occupancy'
+import { tombstoneOccupancyBodies } from './tombstone'
 
 const PERM_SLOTS = ARMY_STACK_SLOTS
 const ENERGY_RESOURCE_ID = 1
 
 export function isSummonStats(stats: Record<string, unknown>): boolean {
+  // Ice Shards / Earth Spikes: damage (and optional knockback) plus terrain drops —
+  // not a pure summon short-circuit.
+  if (
+    isIceShardStats(stats) ||
+    isRadiusTerrainDropStats(stats) ||
+    stats.targets_hexes === true
+  ) {
+    return false
+  }
   if (stats.summon_unit_id != null) {
     return true
   }
   return stats.kill_pct_stat != null && stats.summon_tag != null
+}
+
+/** Ice Shards: single-target damage plus occupancy-aware adjacent blockers. */
+export function isIceShardStats(
+  stats: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!stats) {
+    return false
+  }
+  return (
+    stats.skip_occupied_adjacent === true ||
+    asFinite(stats.shard_radius) != null ||
+    stats.redistribute_if_single_adjacent === true
+  )
+}
+
+/**
+ * Earth Spikes-style batch drop: place `summon_count` blockers in an aimed radius
+ * after other effects. Not used when `targets_hexes` places one spike per bolt.
+ */
+export function isRadiusTerrainDropStats(
+  stats: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!stats || isIceShardStats(stats) || stats.targets_hexes === true) {
+    return false
+  }
+  return (
+    asFinite(stats.summon_unit_id) != null &&
+    asFinite(stats.summon_count) != null &&
+    asFinite(stats.radius) != null
+  )
 }
 
 /** N separate stacks at random open hexes. target_id is a placeholder. */
@@ -41,6 +89,21 @@ export function isRandomPlacementSummon(
   stats: Record<string, unknown> | null | undefined,
 ): boolean {
   if (!stats) {
+    return false
+  }
+  // Aimed terrain drops still need a hex click despite summon_count.
+  if (isIceShardStats(stats) || isRadiusTerrainDropStats(stats)) {
+    return false
+  }
+  // Arcane Shield / Illusions: geometric placement, not random scatter.
+  const placement = String(stats.placement ?? '')
+    .trim()
+    .toLowerCase()
+  if (
+    placement === 'front_of_target' ||
+    placement === 'map_center_scattered' ||
+    stats.summon_as_separate_stacks === true
+  ) {
     return false
   }
   return (
@@ -62,6 +125,18 @@ function asIntList(value: unknown): number[] | null {
     .filter((n): n is number => n != null)
     .map((n) => Math.floor(n))
   return out.length > 0 ? out : null
+}
+
+/** Avoid "Earth Spikess" when the unit name is already plural. */
+function blockerLabel(name: string, count: number): string {
+  if (count === 1) {
+    return name
+  }
+  const trimmed = name.trim()
+  if (/s$/i.test(trimmed)) {
+    return trimmed
+  }
+  return `${trimmed}s`
 }
 
 function summonLandCost(
@@ -86,7 +161,12 @@ function openHexesForUnit(
   side: CombatSide,
   unit: UnitRow,
 ): Axial[] {
-  const occupied = occupiedHexes(battle.stacks, catalog)
+  const occupied = occupiedHexes(
+    battle.stacks,
+    catalog,
+    undefined,
+    tombstoneOccupancyBodies(battle.tombstones),
+  )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
   const size = unitHexFootprint(unit)
@@ -210,16 +290,33 @@ export function nearestOpenHexToHero(
   if (!hero) {
     return null
   }
-  const occupied = occupiedHexes(battle.stacks, catalog)
+  return nearestOpenHexTo(battle, catalog, tiles, side, unit, hero)
+}
+
+/** Nearest landable hex to `origin` (prefers adjacent, then expanding). */
+export function nearestOpenHexTo(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  side: CombatSide,
+  unit: UnitRow,
+  origin: Axial,
+): Axial | null {
+  const occupied = occupiedHexes(
+    battle.stacks,
+    catalog,
+    undefined,
+    tombstoneOccupancyBodies(battle.tombstones),
+  )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
   const size = unitHexFootprint(unit)
   const step = footprintStep(side)
   const ranked = [...tiles]
-    .filter((tile) => !(tile.q === hero.q && tile.r === hero.r))
+    .filter((tile) => !(tile.q === origin.q && tile.r === origin.r))
     .sort((a, b) => {
-      const da = hexDistance(hero, a)
-      const db = hexDistance(hero, b)
+      const da = hexDistance(origin, a)
+      const db = hexDistance(origin, b)
       if (da !== db) {
         return da - db
       }
@@ -236,10 +333,151 @@ export function nearestOpenHexToHero(
   return null
 }
 
+function mapCenter(tiles: CombatTile[]): Axial {
+  if (tiles.length === 0) {
+    return { q: 0, r: 0 }
+  }
+  let sq = 0
+  let sr = 0
+  for (const tile of tiles) {
+    sq += tile.q
+    sr += tile.r
+  }
+  return {
+    q: Math.round(sq / tiles.length),
+    r: Math.round(sr / tiles.length),
+  }
+}
+
+/**
+ * Hexes on the caster-facing side of `target` (neighbors closest to caster).
+ * Occupied hexes are skipped — same spirit as Ice Shards.
+ */
+function frontOfTargetOpenHexes(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  side: CombatSide,
+  unit: UnitRow,
+  target: Axial,
+  casterOrigin: Axial,
+  want: number,
+): Axial[] {
+  const board = new Set(tiles.map((tile) => occupancyKey(tile.q, tile.r)))
+  const occupied = occupiedHexes(
+    battle.stacks,
+    catalog,
+    undefined,
+    tombstoneOccupancyBodies(battle.tombstones),
+  )
+  const kind = moveKindForUnit(unit, catalog)
+  const enterCost = summonLandCost(tiles, kind)
+  const size = unitHexFootprint(unit)
+  const step = footprintStep(side)
+  const ranked = neighborHexes(target)
+    .filter((hex) => board.has(occupancyKey(hex.q, hex.r)))
+    .sort((a, b) => {
+      const da = hexDistance(a, casterOrigin)
+      const db = hexDistance(b, casterOrigin)
+      if (da !== db) {
+        return da - db
+      }
+      if (a.q !== b.q) {
+        return a.q - b.q
+      }
+      return a.r - b.r
+    })
+  const out: Axial[] = []
+  for (const hex of ranked) {
+    if (out.length >= want) {
+      break
+    }
+    if (!footprintFits(hex, size, step, occupied, enterCost)) {
+      continue
+    }
+    out.push(hex)
+    occupied.add(occupancyKey(hex.q, hex.r))
+  }
+  return out
+}
+
+function pickNearCenterOpenHex(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  side: CombatSide,
+  unit: UnitRow,
+  random: () => number,
+): Axial | null {
+  const center = mapCenter(tiles)
+  const open = openHexesForUnit(battle, catalog, tiles, side, unit)
+  if (open.length === 0) {
+    return null
+  }
+  open.sort((a, b) => {
+    const da = hexDistance(center, a)
+    const db = hexDistance(center, b)
+    if (da !== db) {
+      return da - db
+    }
+    if (a.q !== b.q) {
+      return a.q - b.q
+    }
+    return a.r - b.r
+  })
+  // Bias toward center: pick randomly among the nearest third.
+  const poolSize = Math.max(1, Math.ceil(open.length / 3))
+  const pool = open.slice(0, poolSize)
+  return pickRandom(pool, random)
+}
+
 export type SummonResolve = {
   battle: CombatBattle
   lines: string[]
   flashes: Array<{ keys: string[]; color: HitFlashColor }>
+}
+
+/** Place one indestructible blocker on `hex` if the hex is open. */
+export function placeBlockerAtHex(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  ability: AbilityRow,
+  unitId: number,
+  hex: Axial,
+  casterSide: CombatSide,
+  persists = false,
+): SummonResolve {
+  const unit = unitId > 0 ? unitById(catalog, unitId) : null
+  if (!unit) {
+    return { battle, lines: [], flashes: [] }
+  }
+  const body =
+    stackOccupyingHex(battle.stacks, hex.q, hex.r, catalog) ??
+    battle.stacks.find((row) => row.q === hex.q && row.r === hex.r && row.qty > 0) ??
+    null
+  if (body) {
+    return { battle, lines: [], flashes: [] }
+  }
+  const onBoard = tiles.some((tile) => tile.q === hex.q && tile.r === hex.r)
+  if (!onBoard) {
+    return { battle, lines: [], flashes: [] }
+  }
+  return spawnSummonedStack(
+    battle,
+    catalog,
+    tiles,
+    ability,
+    unit,
+    1,
+    persists,
+    casterSide,
+    hex,
+    {
+      spawnedRound: battle.round,
+      indestructible: true,
+    },
+  )
 }
 
 function spawnSummonedStack(
@@ -279,10 +517,14 @@ function spawnSummonedStack(
     retaliationsLeft: retaliationCharges(chosenUnit),
     persistOnSummon: persists,
     summonSeq: nextSummonSeq(battle.stacks),
+    // Creation round — Mud Golem skipFirstTurn / similar gates key off this.
+    spawnedRound: battle.round,
+    startHex: { q: at.q, r: at.r },
     ...extras,
   }
   let order = battle.order
-  if (chosenUnit.speed != null && !order.includes(id)) {
+  // Null-speed units (Wall, Arcane Shield, …) never enter initiative.
+  if (unitTakesTurns(chosenUnit) && !order.includes(id)) {
     order = [...order, id]
   }
   let next: CombatBattle = {
@@ -290,7 +532,7 @@ function spawnSummonedStack(
     stacks: [...battle.stacks, summoned],
     order,
   }
-  if (insertIntoRemaining && chosenUnit.speed != null) {
+  if (insertIntoRemaining && unitTakesTurns(chosenUnit)) {
     next = insertIntoRemainingInitiative(next, catalog, id)
   }
   return {
@@ -353,7 +595,11 @@ function spawnRandomStacks(
   return { battle: next, lines, flashes }
 }
 
-/** Always a fresh battlefield stack next to the Hero. Never merges mid-combat. */
+/**
+ * Tag-based summons (e.g. Recruit the Dead) reinforce a living stack with
+ * that tag when one exists; otherwise spawn a new stack near the Hero.
+ * Unit-id summons always spawn fresh.
+ */
 export function applySummonFromStats(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
@@ -363,8 +609,10 @@ export function applySummonFromStats(
   caster: Hero,
   casterSide: CombatSide,
   random: () => number,
+  aim?: { targetId: string | null; hex: Axial },
 ): SummonResolve {
   const persists = stats.persists_on_summon === true
+  const insertQueue = stats.insert_into_current_round_queue === true
   const heroStats = heroEffectiveStats(
     catalog,
     caster.class_id,
@@ -385,6 +633,139 @@ export function applySummonFromStats(
         flashes: [],
       }
     }
+    const placement = String(stats.placement ?? '')
+      .trim()
+      .toLowerCase()
+
+    // Arcane Shield: 4 destructible LOS blockers on the caster-facing side of target.
+    if (placement === 'front_of_target') {
+      const want = Math.max(1, Math.floor(asFinite(stats.summon_count) ?? 4))
+      const targetStack =
+        (aim?.targetId
+          ? battle.stacks.find((row) => row.id === aim.targetId)
+          : null) ??
+        battle.stacks.find(
+          (row) =>
+            row.qty > 0 &&
+            row.side !== casterSide &&
+            row.q === aim?.hex.q &&
+            row.r === aim?.hex.r,
+        ) ??
+        null
+      if (!targetStack || targetStack.qty <= 0) {
+        return {
+          battle,
+          lines: [`${ability.name} needs an enemy target.`],
+          flashes: [],
+        }
+      }
+      const casterOrigin =
+        battle.stacks.find((row) => row.side === casterSide && isHeroStack(row)) ??
+        ({ q: targetStack.q - 1, r: targetStack.r } as Axial)
+      const spots = frontOfTargetOpenHexes(
+        battle,
+        catalog,
+        tiles,
+        casterSide,
+        unit,
+        { q: targetStack.q, r: targetStack.r },
+        { q: casterOrigin.q, r: casterOrigin.r },
+        want,
+      )
+      let next = battle
+      const lines: string[] = []
+      const flashes: SummonResolve['flashes'] = []
+      let placed = 0
+      for (const hex of spots) {
+        const spawned = spawnSummonedStack(
+          next,
+          catalog,
+          tiles,
+          ability,
+          unit,
+          1,
+          persists,
+          casterSide,
+          hex,
+          { spawnedRound: next.round },
+          insertQueue,
+        )
+        next = spawned.battle
+        flashes.push(...spawned.flashes)
+        placed += 1
+      }
+      if (placed === 0) {
+        return {
+          battle,
+          lines: [`${ability.name} found no open hexes in front of the target.`],
+          flashes: [],
+        }
+      }
+      lines.push(
+        `${ability.name}: placed ${placed} ${blockerLabel(unit.name, placed)}.`,
+      )
+      return { battle: next, lines, flashes }
+    }
+
+    // Illusions: N separate 1-unit stacks scattered toward map center.
+    if (
+      placement === 'map_center_scattered' ||
+      stats.summon_as_separate_stacks === true
+    ) {
+      const qtyDiv = asFinite(stats.summon_qty_stat_div)
+      const count =
+        qtyDiv != null && qtyDiv > 0
+          ? Math.max(0, Math.floor(scaleStat / qtyDiv))
+          : Math.max(0, Math.floor(asFinite(stats.summon_count) ?? 0))
+      if (count <= 0) {
+        return {
+          battle,
+          lines: [`${ability.name} raised 0.`],
+          flashes: [],
+        }
+      }
+      let next = battle
+      const flashes: SummonResolve['flashes'] = []
+      let placed = 0
+      for (let i = 0; i < count; i += 1) {
+        const hex =
+          placement === 'map_center_scattered'
+            ? pickNearCenterOpenHex(next, catalog, tiles, casterSide, unit, random)
+            : pickRandomOpenHex(next, catalog, tiles, casterSide, unit, random)
+        if (!hex) {
+          break
+        }
+        const spawned = spawnSummonedStack(
+          next,
+          catalog,
+          tiles,
+          ability,
+          unit,
+          1,
+          persists,
+          casterSide,
+          hex,
+          { spawnedRound: next.round },
+          insertQueue,
+        )
+        next = spawned.battle
+        flashes.push(...spawned.flashes)
+        placed += 1
+      }
+      if (placed === 0) {
+        return {
+          battle,
+          lines: [`${ability.name} found no space on the field.`],
+          flashes: [],
+        }
+      }
+      return {
+        battle: next,
+        lines: [`${ability.name}: ${placed} ${unit.name} appear.`],
+        flashes,
+      }
+    }
+
     if (isRandomPlacementSummon(stats)) {
       const count = Math.max(1, Math.floor(asFinite(stats.summon_count) ?? 1))
       const schedule = asIntList(stats.silence_schedule)
@@ -429,7 +810,7 @@ export function applySummonFromStats(
       casterSide,
       null,
       {},
-      stats.insert_into_current_round_queue === true,
+      insertQueue,
     )
   }
 
@@ -443,6 +824,31 @@ export function applySummonFromStats(
       battle,
       lines: [`${ability.name} raised 0.`],
       flashes: [],
+    }
+  }
+
+  // Reinforce any living stack with summon_tag (first by army slot, then id).
+  const tagged = livingTaggedStacks(battle, catalog, casterSide, summonTag)
+  if (tagged.length > 0) {
+    const target = tagged[0]!
+    const name = unitById(catalog, target.unitId)?.name ?? 'stack'
+    return {
+      battle: {
+        ...battle,
+        stacks: battle.stacks.map((row) =>
+          row.id === target.id
+            ? {
+                ...row,
+                qty: row.qty + qty,
+                startingQty: row.startingQty + qty,
+              }
+            : row,
+        ),
+      },
+      lines: [`${ability.name}: ${qty} reinforce ${name}.`],
+      flashes: [
+        { keys: [occupancyKey(target.q, target.r)], color: 'green' },
+      ],
     }
   }
 
@@ -468,4 +874,340 @@ export function applySummonFromStats(
     persists,
     casterSide,
   )
+}
+
+/** Mirror Image: duplicate a friendly stack with INT-capped HP. */
+export function applyMirrorImage(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  ability: AbilityRow,
+  stats: Record<string, unknown>,
+  caster: Hero,
+  casterSide: CombatSide,
+  target: CombatStack,
+): SummonResolve {
+  if (
+    target.qty <= 0 ||
+    target.side !== casterSide ||
+    isHeroStack(target)
+  ) {
+    return {
+      battle,
+      lines: [`${ability.name} needs a friendly stack.`],
+      flashes: [],
+    }
+  }
+  const unit = unitById(catalog, target.unitId)
+  if (!unit) {
+    return {
+      battle,
+      lines: [`${ability.name} raised 0.`],
+      flashes: [],
+    }
+  }
+  const hex = nearestOpenHexTo(
+    battle,
+    catalog,
+    tiles,
+    casterSide,
+    unit,
+    { q: target.q, r: target.r },
+  )
+  if (!hex) {
+    return {
+      battle,
+      lines: [`${ability.name} found no space on the field.`],
+      flashes: [],
+    }
+  }
+  const heroStats = heroEffectiveStats(
+    catalog,
+    caster.class_id,
+    caster.current_level,
+  )
+  const capMult = Math.max(0, asFinite(stats.duplicate_hp_cap_stat) ?? 1)
+  const intelCap = Math.max(1, Math.floor(heroStats.intel * capMult))
+  const maxHp = stackMaxHealth(target, catalog)
+  const topHealth = Math.max(1, Math.min(intelCap, maxHp))
+  const persists = stats.persists_on_summon === true
+  const insertQueue = stats.insert_into_current_round_queue === true
+  const spawned = spawnSummonedStack(
+    battle,
+    catalog,
+    tiles,
+    ability,
+    unit,
+    target.qty,
+    persists,
+    casterSide,
+    hex,
+    {
+      spawnedRound: battle.round,
+      topHealth,
+      // Fresh duplicate — unit abilities come from catalog; no inherited buffs.
+    },
+    insertQueue,
+  )
+  return {
+    battle: spawned.battle,
+    lines: [
+      `${ability.name}: mirrored ${target.qty} ${unit.name} (${topHealth}/${maxHp} HP).`,
+    ],
+    flashes: spawned.flashes,
+  }
+}
+
+/**
+ * Place Ice Shard blockers in the 6 hexes around `around`. Occupied neighbors
+ * are skipped. With one occupied neighbor, the leftover empty ring hexes still
+ * receive up to `summon_count` shards (redistribution). With two+ occupied,
+ * place at most one per remaining empty hex (fewer than summon_count).
+ */
+export function applyIceShardPlacement(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  ability: AbilityRow,
+  stats: Record<string, unknown>,
+  around: Axial,
+  casterSide: CombatSide,
+  random: () => number = Math.random,
+): SummonResolve {
+  const unitId = Math.floor(asFinite(stats.summon_unit_id) ?? 0)
+  const want = Math.max(0, Math.floor(asFinite(stats.summon_count) ?? 0))
+  const unit = unitId > 0 ? unitById(catalog, unitId) : null
+  if (!unit || want <= 0) {
+    return { battle, lines: [], flashes: [] }
+  }
+  const persists = stats.persists_on_summon === true
+  const neighbors = neighborHexes(around)
+  const board = new Set(tiles.map((tile) => occupancyKey(tile.q, tile.r)))
+  const empty: Axial[] = []
+  let occupiedCount = 0
+  for (const hex of neighbors) {
+    const key = occupancyKey(hex.q, hex.r)
+    if (!board.has(key)) {
+      occupiedCount += 1
+      continue
+    }
+    const body =
+      stackOccupyingHex(battle.stacks, hex.q, hex.r, catalog) ??
+      battle.stacks.find((row) => row.q === hex.q && row.r === hex.r) ??
+      null
+    if (body) {
+      occupiedCount += 1
+      continue
+    }
+    empty.push(hex)
+  }
+  // One occupied → redistribute into remaining empties (up to want).
+  // Two+ occupied → no extra redistribution beyond empty slots (same formula).
+  let placeCount = Math.min(want, empty.length)
+  // Never seal the target: keep ≥1 adjacent hex open after shards land.
+  if (empty.length > 0 && placeCount >= empty.length) {
+    placeCount = empty.length - 1
+  }
+  let next = battle
+  const lines: string[] = []
+  const flashes: SummonResolve['flashes'] = []
+  const remaining = [...empty]
+  for (let i = 0; i < placeCount; i += 1) {
+    if (remaining.length === 0) {
+      break
+    }
+    const idx = Math.min(
+      remaining.length - 1,
+      Math.floor(random() * remaining.length),
+    )
+    const pick = remaining.splice(idx, 1)[0]
+    if (!pick) {
+      break
+    }
+    const spawned = spawnSummonedStack(
+      next,
+      catalog,
+      tiles,
+      ability,
+      unit,
+      1,
+      persists,
+      casterSide,
+      pick,
+      {
+        spawnedRound: next.round,
+        indestructible: true,
+      },
+    )
+    next = spawned.battle
+    flashes.push(...spawned.flashes)
+  }
+  if (placeCount > 0) {
+    lines.push(
+      `${ability.name}: placed ${placeCount} ${blockerLabel(unit.name, placeCount)}.`,
+    )
+  }
+  return { battle: next, lines, flashes }
+}
+
+/**
+ * Place up to `summon_count` blockers on open hexes inside `radius` of `center`
+ * (Earth Spikes). Skips occupied hexes; no redistribution beyond empty slots.
+ */
+export function applyRadiusBlockerPlacement(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  ability: AbilityRow,
+  stats: Record<string, unknown>,
+  center: Axial,
+  casterSide: CombatSide,
+  random: () => number = Math.random,
+): SummonResolve {
+  const unitId = Math.floor(asFinite(stats.summon_unit_id) ?? 0)
+  const want = Math.max(0, Math.floor(asFinite(stats.summon_count) ?? 0))
+  const radius = Math.max(0, Math.floor(asFinite(stats.radius) ?? 0))
+  const unit = unitId > 0 ? unitById(catalog, unitId) : null
+  if (!unit || want <= 0 || radius < 0) {
+    return { battle, lines: [], flashes: [] }
+  }
+  const persists = stats.persists_on_summon === true
+  const occupied = occupiedHexes(
+    battle.stacks,
+    catalog,
+    undefined,
+    tombstoneOccupancyBodies(battle.tombstones),
+  )
+  const open: Axial[] = []
+  for (const tile of tiles) {
+    if (hexDistance(center, { q: tile.q, r: tile.r }) > radius) {
+      continue
+    }
+    const key = occupancyKey(tile.q, tile.r)
+    if (occupied.has(key)) {
+      continue
+    }
+    open.push({ q: tile.q, r: tile.r })
+  }
+  const placeCount = Math.min(want, open.length)
+  let next = battle
+  const lines: string[] = []
+  const flashes: SummonResolve['flashes'] = []
+  const remaining = [...open]
+  for (let i = 0; i < placeCount; i += 1) {
+    if (remaining.length === 0) {
+      break
+    }
+    const idx = Math.min(
+      remaining.length - 1,
+      Math.floor(random() * remaining.length),
+    )
+    const pick = remaining.splice(idx, 1)[0]
+    if (!pick) {
+      break
+    }
+    const spawned = spawnSummonedStack(
+      next,
+      catalog,
+      tiles,
+      ability,
+      unit,
+      1,
+      persists,
+      casterSide,
+      pick,
+      {
+        spawnedRound: next.round,
+        indestructible: true,
+      },
+    )
+    next = spawned.battle
+    flashes.push(...spawned.flashes)
+  }
+  if (placeCount > 0) {
+    lines.push(
+      `${ability.name}: raised ${placeCount} ${blockerLabel(unit.name, placeCount)}.`,
+    )
+  }
+  return { battle: next, lines, flashes }
+}
+
+/**
+ * Shaman: once at battle start, summon INT/8 totems near map center.
+ * Each totem is randomly Fire or Lightning; HP = hero INT.
+ */
+export function applyShamanBattleStartTotems(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes: { atk?: Hero; def?: Hero },
+  random: () => number = Math.random,
+): { battle: CombatBattle; lines: string[] } {
+  const sides: CombatSide[] = ['atk', 'def']
+  let next = battle
+  const lines: string[] = []
+  const fire = totemUnitByName(catalog, 'Fire Totem')
+  const lightning = totemUnitByName(catalog, 'Lightning Totem')
+  if (!fire && !lightning) {
+    return { battle, lines }
+  }
+  const stubAbility = {
+    id: 0,
+    name: 'Shaman Totems',
+  } as AbilityRow
+
+  for (const side of sides) {
+    const hero = heroes[side]
+    if (!hero || !isHeroClass(catalog, hero, 'Shaman')) {
+      continue
+    }
+    const count = shamanTotemCount(catalog, hero)
+    if (count <= 0) {
+      continue
+    }
+    const intel = heroEffectiveStats(
+      catalog,
+      hero.class_id,
+      hero.current_level ?? 1,
+    ).intel
+    let placed = 0
+    for (let i = 0; i < count; i += 1) {
+      const pickFire = random() < 0.5
+      const unit =
+        (pickFire ? fire : lightning) ?? fire ?? lightning
+      if (!unit) {
+        break
+      }
+      const hex = pickNearCenterOpenHex(
+        next,
+        catalog,
+        tiles,
+        side,
+        unit,
+        random,
+      )
+      if (!hex) {
+        break
+      }
+      const spawned = spawnSummonedStack(
+        next,
+        catalog,
+        tiles,
+        stubAbility,
+        unit,
+        1,
+        false,
+        side,
+        hex,
+        totemSpawnExtras(unit, intel),
+        true,
+      )
+      next = spawned.battle
+      placed += 1
+    }
+    if (placed > 0) {
+      lines.push(`Shaman: ${placed} totem${placed === 1 ? '' : 's'} rise.`)
+    }
+  }
+  return { battle: next, lines }
 }

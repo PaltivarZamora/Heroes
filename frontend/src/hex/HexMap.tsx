@@ -6,12 +6,19 @@ import {
   CLICK_PAN_THRESHOLD_PX,
   MOVE_STEP_MS,
   findPassableStart,
+  formatMp,
   movementSteps,
+  resolveWorldWaypointLeg,
   spendHeroInteract,
   spendMovement,
   type Axial,
 } from './hero'
 import { approachHex, hexDistance } from './pathfinding'
+import {
+  createWaypointPlan,
+  tryAppendWaypoint,
+  type WaypointPlan,
+} from './waypoints'
 import { type HeroHudState } from './debug'
 import {
   formatAmount,
@@ -26,11 +33,21 @@ import {
   pickTerrainVariantIndex,
 } from './terrainTextures'
 import { buildWorld, fetchTestGrid, getTile, getExploredHexes, isExplored, markExplored, restoreExplored, terrainFillColor } from './world'
+import { worldHoverTooltipText } from './worldTooltip'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 import { getSession, subscribe, updateSession } from '../session/store'
-import { hydrateMapObjects, ensureStartingHeroes } from '../session/create'
-import { findMobAt, mobLabel, mobLeadStack, seedWorldMobs } from '../session/mobs'
+import {
+  ensureStartingHeroes,
+  hydrateMapObjects,
+} from '../session/create'
+import {
+  findMobAt,
+  mobLabel,
+  mobLeadStack,
+  mobUnitQty,
+  seedWorldMobs,
+} from '../session/mobs'
 import { HERO_ID } from '../session/types'
 import { fetchCatalog, getCachedCatalog, heroMovementPoints, ownerTint, pickupAmount, subscribeCatalog, unitById, visionRange } from '../town/catalog'
 import { unitPortraitUrl } from '../town/slotArt'
@@ -328,9 +345,14 @@ export function HexMap({
     const { signal } = abort
     let moveGen = 0
     let moving = false
+    let waypointPlan: WaypointPlan | null = null
 
     void (async () => {
-      const colorsReady = fetchCatalog().catch(() => {})
+      await fetchCatalog().catch(() => {})
+      // Do not call createSessionFromConfig(defaultGameConfig) here: Start Game
+      // leaves heroes/towns empty until ensureStartingHeroes below, and rewriting
+      // the session would clobber the form config (manual overrides and all).
+      // F5 / empty bootstrap is handled in App when the catalog loads.
       const needsGrid = !cachedGrid || !gridHasResourceIds(cachedGrid)
       if (needsGrid) {
         const savedSeed = getSession().game.seed
@@ -347,9 +369,10 @@ export function HexMap({
 
       const { grid, layout, width, height } = buildWorld(tiles, hexSize)
       onMapInfo({ width, height, seed })
-      if (needsGrid) {
-        restoreExplored(activePlayer(getSession())?.explored)
-      }
+      // Always rehydrate FoW from the active player — not only on fresh grid
+      // fetch. A cancelled Strict Mode mount can leave cachedGrid set after
+      // fetchTestGrid cleared the live Set; skipping restore then leaves fog empty.
+      restoreExplored(activePlayer(getSession())?.explored)
 
       if (!heroRef.current) {
         const actor = activePlayer(getSession())
@@ -448,11 +471,6 @@ export function HexMap({
         return
       }
 
-      await colorsReady
-      if (cancelled) {
-        instance.destroy()
-        return
-      }
       updateSession((current) => seedWorldMobs(current))
 
       const texturesByTerrain = await loadAllTerrainTextures(
@@ -898,7 +916,9 @@ export function HexMap({
             const scale = Math.min(token / texture.width, token / texture.height)
             entry.sprite.texture = texture
             entry.sprite.scale.set(scale)
-            entry.qty.text = formatAmount(lead?.qty ?? 0)
+            entry.qty.text = formatAmount(
+              lead ? mobUnitQty(session, mob, lead.unit_id) : 0,
+            )
             entry.qty.position.set(token / 2, token / 2)
           } else {
             entry.badge.clear()
@@ -960,6 +980,8 @@ export function HexMap({
         selectedMapHeroId = row.id
         moveGen += 1
         moving = false
+        waypointPlan = null
+        preview.clear()
         heroRef.current = {
           id: row.id,
           q: row.position.q,
@@ -1049,6 +1071,9 @@ export function HexMap({
       emitResources()
 
       const canvas = instance.canvas
+      const tipEl = document.createElement('div')
+      tipEl.className = 'world-hover-tip'
+      tipEl.hidden = true
       let lastHoverKey = ''
 
       const hexFromPointer = (event: PointerEvent) => {
@@ -1065,13 +1090,22 @@ export function HexMap({
       const clearPreview = () => {
         preview.clear()
         lastHoverKey = ''
+        tipEl.hidden = true
       }
 
-      const drawPreview = (steps: Hex[]) => {
+      const clearWaypoints = () => {
+        waypointPlan = null
+      }
+
+      const drawPreview = (steps: Array<Hex | Axial>) => {
         preview.clear()
         for (const hex of steps) {
+          const live = 'corners' in hex ? hex : grid.getHex(hex) ?? grid.createHex(hex)
+          if (!live) {
+            continue
+          }
           preview.poly(
-            hex.corners.map((corner) => ({
+            live.corners.map((corner) => ({
               x: corner.x + offsetX,
               y: corner.y + offsetY,
             })),
@@ -1089,6 +1123,7 @@ export function HexMap({
         const hex = hexFromPointer(event)
         if (!hex || !getTile(hex.q, hex.r)) {
           clearPreview()
+          tipEl.hidden = true
           return
         }
         const occupant = otherHeroAt(hex.q, hex.r, hero.id)
@@ -1096,9 +1131,30 @@ export function HexMap({
         const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
         const mob = visibleMobAt(hex.q, hex.r)
         const node = liveNodeAt(hex.q, hex.r)
+        const tipText = worldHoverTooltipText(getSession(), getCachedCatalog(), {
+          town: town ?? enemyTown,
+          hero: occupant,
+          mob,
+          node,
+        })
+        const wpTip =
+          waypointPlan && waypointPlan.waypoints.length > 0
+            ? `WP ${waypointPlan.waypoints.length} · ${formatMp(waypointPlan.remaining)} left`
+            : null
+        if (tipText || wpTip) {
+          tipEl.hidden = false
+          tipEl.textContent = [wpTip, tipText].filter(Boolean).join('\n')
+          const hostBox = host.getBoundingClientRect()
+          tipEl.style.left = `${event.clientX - hostBox.left + 14}px`
+          tipEl.style.top = `${event.clientY - hostBox.top + 14}px`
+        } else {
+          tipEl.hidden = true
+        }
         const walkOnto = !occupant && !enemyTown && !mob && (town || node) ? hex : null
         const hoverBlocked = obstacleHexes(hero, walkOnto)
-        const hoverKey = `${hero.q},${hero.r},${hero.remaining}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|${[...hoverBlocked].sort().join(';')}`
+        const from = waypointPlan?.end ?? hero
+        const budget = waypointPlan?.remaining ?? hero.remaining
+        const hoverKey = `${from.q},${from.r},${budget}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|wp:${waypointPlan?.waypoints.length ?? 0}|${[...hoverBlocked].sort().join(';')}`
         if (hoverKey === lastHoverKey) {
           return
         }
@@ -1106,27 +1162,32 @@ export function HexMap({
         const dest =
           occupant || enemyTown || mob
             ? approachHex(
-                hero,
+                from,
                 occupant?.position ?? enemyTown?.position ?? mob!.position,
                 hoverBlocked,
               )
             : hex
-        if (!dest || (dest.q === hero.q && dest.r === hero.r)) {
+        if (!dest || (dest.q === from.q && dest.r === from.r)) {
+          if (waypointPlan && waypointPlan.steps.length > 0) {
+            drawPreview(waypointPlan.steps)
+          } else {
+            preview.clear()
+          }
+          return
+        }
+        const steps = movementSteps(grid, from, dest, budget, hoverBlocked)
+        if (steps.length === 0 && !(waypointPlan && waypointPlan.steps.length > 0)) {
           preview.clear()
           return
         }
-        const steps = movementSteps(grid, hero, dest, hero.remaining, hoverBlocked)
-        if (steps.length === 0) {
-          preview.clear()
-          return
-        }
-        drawPreview(steps)
+        drawPreview([...(waypointPlan?.steps ?? []), ...steps])
       }
 
       const tryMoveTo = (
         to: Axial,
         after?: () => void,
         walkOnto?: Axial | null,
+        precomputed?: Axial[] | null,
       ): Promise<boolean> => {
         const hero = heroRef.current
         if (!hero || moving) {
@@ -1140,18 +1201,22 @@ export function HexMap({
         if (hero.remaining <= 1e-9) {
           return Promise.resolve(false)
         }
-        const steps = movementSteps(
-          grid,
-          hero,
-          to,
-          hero.remaining,
-          obstacleHexes(hero, walkOnto),
-        )
+        const steps =
+          precomputed && precomputed.length > 0
+            ? precomputed
+            : movementSteps(
+                grid,
+                hero,
+                to,
+                hero.remaining,
+                obstacleHexes(hero, walkOnto),
+              ).map((hex) => ({ q: hex.q, r: hex.r }))
         if (steps.length === 0) {
           return Promise.resolve(false)
         }
         const gen = ++moveGen
         moving = true
+        clearWaypoints()
         clearPreview()
         return new Promise((resolve) => {
           void (async () => {
@@ -1268,6 +1333,70 @@ export function HexMap({
         if (!hero) {
           return
         }
+        const commitViaWaypoints = (
+          dest: Axial,
+          after?: () => void,
+          walkOnto?: Axial | null,
+        ) => {
+          if (!waypointPlan || waypointPlan.waypoints.length === 0) {
+            clearWaypoints()
+            void tryMoveTo(dest, after, walkOnto)
+            return
+          }
+          const blocked = obstacleHexes(hero, walkOnto)
+          const leg = resolveWorldWaypointLeg(
+            grid,
+            waypointPlan.end,
+            dest,
+            waypointPlan.remaining,
+            blocked,
+          )
+          if (!leg) {
+            clearWaypoints()
+            void tryMoveTo(dest, after, walkOnto)
+            return
+          }
+          void tryMoveTo(dest, after, walkOnto, [
+            ...waypointPlan.steps,
+            ...leg.steps,
+          ])
+        }
+        // Shift-click: stage a waypoint on empty / walk-onto hexes only.
+        if (event.shiftKey) {
+          const occupantBlock = otherHeroAt(hex.q, hex.r, hero.id)
+          const enemyTownBlock = enemyOwnedTownAt(hex.q, hex.r, hero.id)
+          const mobBlock = visibleMobAt(hex.q, hex.r)
+          if (occupantBlock || enemyTownBlock || mobBlock) {
+            return
+          }
+          const townHere = findTownAt(getSession(), hex.q, hex.r)
+          const nodeHere = liveNodeAt(hex.q, hex.r)
+          const walkOnto = townHere || nodeHere ? hex : null
+          const blocked = obstacleHexes(hero, walkOnto)
+          const base =
+            waypointPlan &&
+            waypointPlan.origin.q === hero.q &&
+            waypointPlan.origin.r === hero.r
+              ? waypointPlan
+              : createWaypointPlan(
+                  { q: hero.q, r: hero.r },
+                  hero.remaining,
+                )
+          const next = tryAppendWaypoint(base, hex, (from, to, budget) =>
+            resolveWorldWaypointLeg(grid, from, to, budget, blocked),
+          )
+          if (!next) {
+            return
+          }
+          waypointPlan = next
+          drawPreview(next.steps)
+          tipEl.hidden = false
+          tipEl.textContent = `WP ${next.waypoints.length} · ${formatMp(next.remaining)} left`
+          const hostBox = host.getBoundingClientRect()
+          tipEl.style.left = `${event.clientX - hostBox.left + 14}px`
+          tipEl.style.top = `${event.clientY - hostBox.top + 14}px`
+          return
+        }
         const occupant = otherHeroAt(hex.q, hex.r, hero.id)
         if (occupant) {
           const meet = () => {
@@ -1308,7 +1437,7 @@ export function HexMap({
           if (!dest) {
             return
           }
-          tryMoveTo(dest, meet)
+          commitViaWaypoints(dest, meet)
           return
         }
         const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
@@ -1355,7 +1484,7 @@ export function HexMap({
           if (!dest) {
             return
           }
-          tryMoveTo(dest, siege)
+          commitViaWaypoints(dest, siege)
           return
         }
         const mob = visibleMobAt(hex.q, hex.r)
@@ -1394,7 +1523,7 @@ export function HexMap({
           if (!dest) {
             return
           }
-          tryMoveTo(dest, fight)
+          commitViaWaypoints(dest, fight)
           return
         }
         const town = findTownAt(getSession(), hex.q, hex.r)
@@ -1403,15 +1532,15 @@ export function HexMap({
             resolveHex(town.position.q, town.position.r)
             return
           }
-          tryMoveTo(hex, undefined, hex)
+          commitViaWaypoints(hex, undefined, hex)
           return
         }
         const node = liveNodeAt(hex.q, hex.r)
         if (node) {
-          tryMoveTo(hex, undefined, hex)
+          commitViaWaypoints(hex, undefined, hex)
           return
         }
-        tryMoveTo(hex)
+        commitViaWaypoints(hex)
       }
       canvas.addEventListener('pointerup', stopPointer, { signal })
       canvas.addEventListener('pointerleave', clearPreview, { signal })
@@ -1433,6 +1562,13 @@ export function HexMap({
       window.addEventListener(
         'keydown',
         (event) => {
+          if (event.key === 'Escape' && waypointPlan) {
+            event.preventDefault()
+            clearWaypoints()
+            clearPreview()
+            tipEl.hidden = true
+            return
+          }
           if (!isArrow(event.key) || moving || mapInputLocked) {
             return
           }
@@ -1485,7 +1621,7 @@ export function HexMap({
         resizeObserver.disconnect()
       })
 
-      host.replaceChildren(canvas)
+      host.replaceChildren(canvas, tipEl)
       app = instance
     })()
 

@@ -1,8 +1,18 @@
 import type { Axial } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import type { ReferenceCatalog, UnitCombatAbilities } from '../town/catalog'
-import { unitById, unitAttackShape } from '../town/catalog'
-import { moveStack, type CombatBattle, type CombatStack, type CombatTile } from './battle'
+import {
+  unitAttackShape,
+  unitById,
+} from '../town/catalog'
+import {
+  moveStack,
+  stackMaxRange,
+  stackMinDmg,
+  type CombatBattle,
+  type CombatStack,
+  type CombatTile,
+} from './battle'
 import { occupancyKey, stackOccupyingHex } from './occupancy'
 import { isUntargetableStack, liveWallLosKeys } from './siege'
 
@@ -10,6 +20,8 @@ export type ShapeHit = {
   hex: Axial
   stack: CombatStack | null
   dmgPct: number
+  /** Line / charge_line: fixed per-creature damage (min_dmg + distance × step). */
+  flatPerCreature?: number
 }
 
 function keyOf(hex: Axial): string {
@@ -65,6 +77,57 @@ export function hexLine(from: Axial, to: Axial): Axial[] {
     const t = i / n
     const c = cubeLerp(a, b, t)
     out.push(cubeRound(c.x, c.y, c.z))
+  }
+  return out
+}
+
+/** Hex `distance` steps from `from` toward `toward` (cube direction). */
+export function hexAlongDirection(
+  from: Axial,
+  toward: Axial,
+  distance: number,
+): Axial {
+  const n = hexDistance(from, toward)
+  const steps = Math.max(0, Math.floor(distance))
+  if (n === 0 || steps === 0) {
+    return { q: from.q, r: from.r }
+  }
+  const a = { x: from.q, y: -from.q - from.r, z: from.r }
+  const b = { x: toward.q, y: -toward.q - toward.r, z: toward.r }
+  const dx = (b.x - a.x) / n
+  const dy = (b.y - a.y) / n
+  const dz = (b.z - a.z) / n
+  return cubeRound(a.x + dx * steps, a.y + dy * steps, a.z + dz * steps)
+}
+
+/**
+ * Straight line from `from` through `aim` out to `maxRange` hexes
+ * (exclusive of origin). Continues past the aim hex.
+ */
+export function lineHexesToRange(
+  from: Axial,
+  aim: Axial,
+  maxRange: number,
+  board: ReadonlySet<string>,
+): Axial[] {
+  const range = Math.max(0, Math.floor(maxRange))
+  if (range <= 0 || hexDistance(from, aim) <= 0) {
+    return []
+  }
+  const end = hexAlongDirection(from, aim, range)
+  const line = hexLine(from, end)
+  const out: Axial[] = []
+  for (const hex of line) {
+    if (hex.q === from.q && hex.r === from.r) {
+      continue
+    }
+    if (!onBoard(hex, board)) {
+      break
+    }
+    if (hexDistance(from, hex) > range) {
+      break
+    }
+    out.push(hex)
   }
   return out
 }
@@ -239,12 +302,13 @@ function hexHits(
   catalog: ReferenceCatalog,
   side: CombatStack['side'],
   dmgPct: number,
+  allowFriendly = false,
 ): ShapeHit[] {
   const hits: ShapeHit[] = []
   const seen = new Set<string>()
   for (const hex of hexes) {
     const stack = occupant(battle, hex, catalog)
-    if (isFriendly(stack, side)) {
+    if (isFriendly(stack, side) && !allowFriendly) {
       continue
     }
     if (stack && isUntargetableStack(stack, catalog)) {
@@ -275,6 +339,35 @@ function losEnemies(
   )
 }
 
+/**
+ * Charge corridor: straight hexes from origin through aim, exclusive of origin,
+ * inclusive of aim (does not continue past the target).
+ */
+export function chargeLineHexes(
+  from: Axial,
+  aim: Axial,
+  board: ReadonlySet<string>,
+): Axial[] {
+  if (hexDistance(from, aim) <= 0) {
+    return []
+  }
+  const line = hexLine(from, aim)
+  const out: Axial[] = []
+  for (const hex of line) {
+    if (hex.q === from.q && hex.r === from.r) {
+      continue
+    }
+    if (!onBoard(hex, board)) {
+      break
+    }
+    out.push(hex)
+    if (hex.q === aim.q && hex.r === aim.r) {
+      break
+    }
+  }
+  return out
+}
+
 export function geometricHexes(
   spec: UnitCombatAbilities,
   from: Axial,
@@ -294,6 +387,11 @@ export function geometricHexes(
       return uniqueHexes(hexDisk(from, spec.radius), board)
     case 'beam':
       return uniqueHexes(hexLine(from, aim), board)
+    case 'charge_line':
+      return uniqueHexes(chargeLineHexes(from, aim, board), board)
+    case 'line':
+      // Full length clipped in resolveShapeHits / preview via stackMaxRange.
+      return uniqueHexes(lineHexesToRange(from, aim, 99, board), board)
     case 'breath':
       return uniqueHexes(breathHexes(from, aim, spec.rows), board)
     case 'rain':
@@ -305,6 +403,7 @@ export function geometricHexes(
         board,
       )
     case 'single':
+    case 'spiral':
     case 'chain':
       return uniqueHexes([aim], board)
     default:
@@ -319,6 +418,8 @@ export function previewImpactKeys(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
+  /** charge_line: corridor from pre-move origin (defaults to attacker hex). */
+  chargePathOrigin?: Axial | null,
 ): string[] {
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   if (spec.shape === 'multi') {
@@ -327,16 +428,26 @@ export function previewImpactKeys(
   const acting = actorAt(attacker, battle)
   const board = boardKeys(tiles)
   const from = { q: acting.attacker.q, r: acting.attacker.r }
-  const hexes = geometricHexes(
-    spec,
-    from,
-    aim,
-    acting.battle,
-    board,
-    acting.attacker.side,
-    tiles,
-    catalog,
-  )
+  const hexes =
+    spec.shape === 'line'
+      ? lineHexesToRange(
+          from,
+          aim,
+          stackMaxRange(acting.attacker, catalog),
+          board,
+        )
+      : spec.shape === 'charge_line'
+        ? chargeLineHexes(chargePathOrigin ?? from, aim, board)
+        : geometricHexes(
+            spec,
+            from,
+            aim,
+            acting.battle,
+            board,
+            acting.attacker.side,
+            tiles,
+            catalog,
+          )
   const keys: string[] = []
   for (const hex of hexes) {
     const stack = occupant(acting.battle, hex, catalog)
@@ -359,19 +470,36 @@ export function resolveShapeHits(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   random: () => number,
+  /** Retaliation / ability override — same geometry keys as unit abilities. */
+  shapeOverride?: Partial<
+    Pick<
+      UnitCombatAbilities,
+      'shape' | 'radius' | 'jumps' | 'falloff' | 'targets' | 'rows'
+    >
+  > | null,
+  allowFriendly = false,
+  options?: {
+    allowRepeatTarget?: boolean
+    /** charge_line: pre-move origin for the pierce corridor. */
+    chargePathOrigin?: Axial | null
+  },
 ): ShapeHit[] {
-  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  const base = unitAttackShape(unitById(catalog, attacker.unitId))
+  const spec: UnitCombatAbilities = shapeOverride
+    ? { ...base, ...shapeOverride }
+    : base
   const acting = actorAt(attacker, battle)
   const board = boardKeys(tiles)
   const from = { q: acting.attacker.q, r: acting.attacker.r }
   const side = acting.attacker.side
   const field = acting.battle
+  const allowRepeat = options?.allowRepeatTarget === true
 
   if (spec.shape === 'chain') {
     const first = target
     if (
       !first ||
-      first.side === side ||
+      (first.side === side && !allowFriendly) ||
       isUntargetableStack(first, catalog)
     ) {
       return []
@@ -382,9 +510,10 @@ export function resolveShapeHits(
     let prevId = first.id
     const total = Math.max(1, spec.jumps)
     for (let i = 1; i < total; i += 1) {
-      const pool = losEnemies(field, side, from, tiles, catalog).filter(
-        (row) => row.id !== prevId,
-      )
+      const enemies = losEnemies(field, side, from, tiles, catalog)
+      const pool = allowRepeat
+        ? enemies
+        : enemies.filter((row) => row.id !== prevId)
       const next = pickOne(pool, random)
       if (!next) {
         break
@@ -410,11 +539,56 @@ export function resolveShapeHits(
     return hits
   }
 
+  if (spec.shape === 'line' || spec.shape === 'charge_line') {
+    const origin =
+      spec.shape === 'charge_line'
+        ? (options?.chargePathOrigin ?? from)
+        : from
+    const perHex = Math.max(1, spec.dmgIncreasePerHex ?? 1)
+    const minDmg = Math.max(0, stackMinDmg(acting.attacker, catalog))
+    const hexes =
+      spec.shape === 'line'
+        ? lineHexesToRange(
+            origin,
+            aim,
+            stackMaxRange(acting.attacker, catalog),
+            board,
+          )
+        : chargeLineHexes(origin, aim, board)
+    const hits: ShapeHit[] = []
+    const seen = new Set<string>()
+    for (const hex of hexes) {
+      const stack = occupant(field, hex, catalog)
+      if (isFriendly(stack, side) && !allowFriendly) {
+        continue
+      }
+      if (stack && isUntargetableStack(stack, catalog)) {
+        continue
+      }
+      if (!stack) {
+        continue
+      }
+      if (seen.has(stack.id)) {
+        continue
+      }
+      seen.add(stack.id)
+      const dist = hexDistance(origin, hex)
+      hits.push({
+        hex,
+        stack,
+        dmgPct: 100,
+        flatPerCreature: minDmg + dist * perHex,
+      })
+    }
+    return hits
+  }
+
   return hexHits(
     geometricHexes(spec, from, aim, field, board, side, tiles, catalog),
     field,
     catalog,
     side,
     100,
+    allowFriendly,
   )
 }

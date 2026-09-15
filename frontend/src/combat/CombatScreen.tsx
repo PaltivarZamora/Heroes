@@ -16,7 +16,6 @@ import {
   hexFloorAnchor,
   neighborhoodTerrains,
   pickCombatTerrain,
-  applyCombatBarriers,
   siegeMoatColForRow,
   siegeTileTerrain,
 } from './battlefield'
@@ -29,7 +28,8 @@ import {
 import { terrainFillColor } from '../hex/world'
 import { DebugCopyPanel } from '../hex/DebugCopyPanel'
 import type { DebugSections } from '../hex/debug'
-import { MOVE_STEP_MS } from '../hex/hero'
+import { formatMp, MOVE_STEP_MS } from '../hex/hero'
+import { axialNeighborDirs } from '../hex/pathfinding'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
 import { getSession, subscribe, updateSession } from '../session/store'
 import {
@@ -45,16 +45,25 @@ import {
   unitAutoTarget,
   type AbilityRow,
 } from '../town/catalog'
-import { heroPortraitUrl, unitPortraitUrl } from '../town/slotArt'
+import { heroPortraitUrl, terrainArtUrl, unitPortraitUrl } from '../town/slotArt'
+import {
+  TOMBSTONE_ART,
+  tombstoneAt,
+  tombstoneName,
+  tombstoneOccupancyBodies,
+} from './tombstone'
 import { formatAmount } from '../hex/resources'
 import type { UnitStackView } from '../town/unitStack'
 import {
   activeStack,
   advanceTurn,
   applyOwnSilenceAfterTurn,
+  clearFervorStreak,
   createBattle,
   endStackTurn,
+  grantFervorExtraTurn,
   moveStack,
+  tryFervorChain,
   type BattleLog,
   type CombatBattle,
   type CombatSide,
@@ -63,45 +72,82 @@ import {
   type SiegeSetup,
   isHeroStack,
   stackCombatSpeed,
+  stackMoveSpeed,
 } from './battle'
 import {
   canCombatStep,
+  combatMovementReachable,
   combatStackCells,
+  footprintSpecFor,
   hexKey,
+  landingOccupiedForMover,
+  moveKindForUnit,
   movementLogLine,
+  occupiedForMover,
+  resolveCombatWaypointLeg,
   stackOccupyingHex,
+  stopOnlyForMover,
 } from './movement'
-import { resolveAttack, pickAutoAttackTarget, type HitFlashColor } from './attack'
+import { deathKnightShadowMoveAdjust } from './shadow'
+import { tryLeaveTerrainOnMove } from './factory'
+import { auraRadiusHexKeys } from './templePassive'
+import { chanceRollLog } from './combatLog'
+import {
+  tryLeaveGroundEffectOnMoveOrigin,
+  tryLeaveGroundEffectOnMoveStep,
+  tryTriggerGroundEffectsOnEnter,
+  fireHazardSummaryLine,
+} from './groundEffect'
+import { resolveAttack, pickAutoAttackTarget, heroForSide, type HitFlashColor } from './attack'
 import { combatOwnerPlayer, decideCombatAction } from '../ai/combat'
 import { decideHeroAbility } from '../ai/heroAbility'
 import {
   applyConsumedCondition,
+  confuseConditionId,
   fearConditionId,
+  isConfused,
   isFeared,
+  isMagicAttackSilenced,
   isPolymorphed,
+  isStunned,
   pickFleeSteps,
+  pickRetreatSteps,
   polymorphConditionName,
   POLYMORPH_ART_FILENAME,
+  stunConditionId,
 } from './condition'
 import {
   resolveAbility,
   abilityAimImpactKeys,
   abilityNeedsHexTarget,
+  abilityUsesLinePlacementPreview,
+  abilityUsesLocalizedEmptyHexAim,
   abilityValidHexKeys,
   parseTarget,
 } from './ability'
-import { applyMoatEntryDamage } from './moat'
+import { applyStandingHazards, type HazardTick } from './hazards'
+import { tryTempestStormScatter } from './confluence'
+import { visibleGroundEffects } from './groundEvasion'
+import { tryAutoSplitOnTurn } from './mudSplit'
 import {
   actingStand,
   canStrikeThisTurn,
   combatHover,
+  confusedAttackIntent,
   pointerHexZone,
   type CombatHover,
   type HexZone,
 } from './target'
+import {
+  createWaypointPlan,
+  tryAppendWaypoint,
+  waypointStepKeys,
+  type WaypointPlan,
+} from '../hex/waypoints'
 import { CombatTargetIcon } from './CombatIcons'
 import { HeroAbilityPopup } from './HeroAbilityPopup'
 import { StackInspectPopup } from './StackInspectPopup'
+import { inspectHoverRows } from './inspect'
 import {
   abilityCooldownReady,
   canAffordAbility,
@@ -111,8 +157,7 @@ import {
   recordAbilityCast,
   type HeroCast,
 } from './heroCast'
-import { combatDisplayLearnedIds } from '../town/libraryRules'
-import { abilityMeetsCastGate } from './summon'
+import { abilityMeetsCastGate, applyShamanBattleStartTotems } from './summon'
 import {
   commitCombatOutcome,
   defeatedSide,
@@ -120,11 +165,13 @@ import {
   type CombatSummary,
   type OpeningStack,
 } from './resolve'
+import type { LevelUpNotice } from '../session/xp'
 import {
   DRAWBRIDGE_ROW_INDEX,
   isDrawbridgeOpen,
   isSiegeEngineUnit,
   isWallSegmentUnit,
+  openBridgeMoatKeys,
   siegeCatapultHex,
   siegeDrawbridgeDownArt,
   siegeEngineArt,
@@ -139,8 +186,55 @@ function sleep(ms: number): Promise<void> {
   })
 }
 
+type WalkHazardAcc = {
+  lines: string[]
+  fireHits: number
+  fireDmg: number
+  fireKilled: number
+  fireLabel: string
+  hitKeys: string[]
+}
+
+function emptyWalkHazardAcc(): WalkHazardAcc {
+  return {
+    lines: [],
+    fireHits: 0,
+    fireDmg: 0,
+    fireKilled: 0,
+    fireLabel: 'Fire',
+    hitKeys: [],
+  }
+}
+
+function absorbWalkHazard(acc: WalkHazardAcc, tick: HazardTick): void {
+  acc.lines.push(...tick.moatLines)
+  acc.fireHits += tick.fireHits
+  acc.fireDmg += tick.fireDamage
+  acc.fireKilled += tick.fireKilled
+  if (tick.fireLabel) {
+    acc.fireLabel = tick.fireLabel
+  }
+  acc.hitKeys.push(...tick.hitKeys)
+}
+
+function walkHazardLogLines(
+  acc: WalkHazardAcc,
+  unitName: string,
+): string[] {
+  const fire = fireHazardSummaryLine(
+    acc.fireHits,
+    acc.fireDmg,
+    acc.fireKilled,
+    unitName,
+    acc.fireLabel,
+  )
+  return fire ? [...acc.lines, fire] : [...acc.lines]
+}
+
 const AUTO_ACT_MS = 1500
 const HIT_FLASH_MS = 450
+/** Earth Spikes / paced multi-hit knockback spacing. */
+const ABILITY_BEAT_MS = 500
 /** Informational turn log — auto-dismiss so watching fights isn't click-to-continue. */
 const LOG_AUTO_MS = 1500
 
@@ -150,8 +244,7 @@ type CombatScreenProps = {
   siegeTownId?: string | null
   defenderMobId?: string | null
   debugSections: DebugSections
-  onCopyDebug: () => void
-  onExit: () => void
+  onExit: (levelUp?: LevelUpNotice | null) => void
 }
 
 type StackMarker = {
@@ -239,6 +332,44 @@ function CombatStackArt({ view }: { view: UnitStackView }) {
   )
 }
 
+function TombstoneArt() {
+  const [missing, setMissing] = useState(false)
+  if (missing) {
+    return <span className="town-building-slot-filename">{TOMBSTONE_ART}</span>
+  }
+  return (
+    <img
+      src={unitPortraitUrl(TOMBSTONE_ART)}
+      alt=""
+      onError={() => setMissing(true)}
+    />
+  )
+}
+
+function GroundEffectArt({
+  filename,
+  label,
+}: {
+  filename: string | null
+  label: string
+}) {
+  const [missing, setMissing] = useState(false)
+  useEffect(() => {
+    setMissing(false)
+  }, [filename])
+  if (filename && !missing) {
+    return (
+      <img
+        className="combat-ground-effect-img"
+        src={terrainArtUrl(filename)}
+        alt=""
+        onError={() => setMissing(true)}
+      />
+    )
+  }
+  return <span className="combat-ground-effect-fallback">{label}</span>
+}
+
 function hexByOffset(
   grid: { forEach: (fn: (hex: Hex) => void) => void },
 ): Map<string, Hex> {
@@ -249,16 +380,6 @@ function hexByOffset(
   return byOffset
 }
 
-function columnRows(byOffset: Map<string, Hex>, col: number): number[] {
-  const rows = new Set<number>()
-  for (const hex of byOffset.values()) {
-    if (hex.col === col) {
-      rows.add(hex.row)
-    }
-  }
-  return [...rows].sort((a, b) => a - b)
-}
-
 function markersForColumn(
   byOffset: Map<string, Hex>,
   col: number,
@@ -266,13 +387,11 @@ function markersForColumn(
   offsetY: number,
   side: CombatSide,
 ): StackMarker[] {
-  const rows = columnRows(byOffset, col)
   const markers: StackMarker[] = []
   for (let slot = 0; slot < ARMY_STACK_SLOTS; slot += 1) {
-    const row = rows[armySlotRow(slot)]
-    if (row == null) {
-      continue
-    }
+    // Army slot N → fixed offset row (every other row). Do not pack toward
+    // the top when earlier army slots are empty.
+    const row = armySlotRow(slot)
     const hex = byOffset.get(`${col},${row}`)
     if (!hex) {
       continue
@@ -363,7 +482,6 @@ export function CombatScreen({
   siegeTownId,
   defenderMobId,
   debugSections,
-  onCopyDebug,
   onExit,
 }: CombatScreenProps) {
   const session = useSyncExternalStore(subscribe, getSession)
@@ -384,15 +502,16 @@ export function CombatScreen({
   const reachApiRef = useRef<{
     draw: (gold: string[], red?: string[]) => void
   } | null>(null)
+  const auraApiRef = useRef<{ setKeys: (keys: string[]) => void } | null>(null)
   const bridgeArtApiRef = useRef<{ setOpen: (open: boolean) => void } | null>(
     null,
   )
   const activeApiRef = useRef<{ setKey: (key: string | null) => void } | null>(
     null,
   )
-  const onHexClickRef = useRef<(q: number, r: number, zone: HexZone) => void>(
-    () => {},
-  )
+  const onHexClickRef = useRef<
+    (q: number, r: number, zone: HexZone, shiftKey?: boolean) => void
+  >(() => {})
   const onHoverRef = useRef<(hover: CombatHover | null) => void>(() => {})
   const battleRef = useRef<CombatBattle | null>(null)
   const catalogRef = useRef(catalog)
@@ -401,10 +520,13 @@ export function CombatScreen({
   const movingRef = useRef(false)
   const walkGenRef = useRef(0)
   const fieldRef = useRef<FieldView | null>(null)
+  const aiTurnLockedRef = useRef(false)
+  const waypointPlanRef = useRef<WaypointPlan | null>(null)
   const presentAttackRef = useRef<
     (
       resolved: NonNullable<ReturnType<typeof resolveAttack>>,
       extraLines: string[],
+      skipStandingHazards?: boolean,
     ) => void
   >(() => {})
   const presentTurnEndRef = useRef<
@@ -415,6 +537,7 @@ export function CombatScreen({
       alreadyActed?: boolean,
       advanceIfSilent?: boolean,
       wasteExtraTurn?: boolean,
+      skipStandingHazards?: boolean,
     ) => void
   >(() => {})
   const finishHeroCastRef = useRef<
@@ -423,7 +546,11 @@ export function CombatScreen({
       caster: Hero,
       casterSide: CombatSide,
       heroStackId: string,
-      aim: { targetId: string | null; hex: { q: number; r: number } },
+      aim: {
+        targetId: string | null
+        hex: { q: number; r: number }
+        lineDir?: { q: number; r: number } | null
+      },
       holdUnitTurn?: boolean,
     ) => void
   >(() => {})
@@ -433,6 +560,7 @@ export function CombatScreen({
   const tryAiHeroAbilityRef = useRef<() => boolean>(() => false)
   const dismissLogRef = useRef<() => void>(() => {})
   const moatStartKeyRef = useRef<string | null>(null)
+  const splitStartKeyRef = useRef<string | null>(null)
   const [field, setField] = useState<FieldView | null>(null)
   const [battle, setBattle] = useState<CombatBattle | null>(null)
   const [log, setLog] = useState<BattleLog | null>(null)
@@ -444,8 +572,13 @@ export function CombatScreen({
     groups: Array<{ keys: string[]; color: HitFlashColor }>
   } | null>(null)
   const heroCastRef = useRef<HeroCast | null>(null)
+  const combatHeroesRef = useRef(combatHeroes)
   const [heroCast, setHeroCast] = useState<HeroCast | null>(null)
   const [inspectStackId, setInspectStackId] = useState<string | null>(null)
+  /** Living non-hero stack under the pointer (Expose / scout mouseover). */
+  const [hoverInspectId, setHoverInspectId] = useState<string | null>(null)
+  const onHoverInspectRef = useRef<(id: string | null) => void>(() => {})
+  const [waypointPlan, setWaypointPlan] = useState<WaypointPlan | null>(null)
   const [opening, setOpening] = useState<OpeningStack[]>([])
   const [summary, setSummary] = useState<CombatSummary | null>(null)
   const pendingSummaryRef = useRef<CombatSummary | null>(null)
@@ -458,12 +591,30 @@ export function CombatScreen({
   openingRef.current = opening
   movingRef.current = moving
   heroCastRef.current = heroCast
+  combatHeroesRef.current = combatHeroes
+  waypointPlanRef.current = waypointPlan
+  {
+    const acting = battle && !log && !moving && !summary ? activeStack(battle) : null
+    const actingOwner = acting
+      ? combatOwnerPlayer(
+          acting,
+          session,
+          attacker,
+          defender,
+          siegeTown,
+          defenderMobId,
+        )
+      : null
+    aiTurnLockedRef.current = Boolean(actingOwner?.is_ai)
+  }
 
   performCombatIntentRef.current = (intent, stack, current) => {
     if (!catalog || !field) {
       return false
     }
     const fire = intent.fire || intent.afterMove === 'pulse'
+    const allowFriendly = intent.allowFriendly === true
+    const prefix = intent.logPrefix ?? []
     const stand = actingStand({ q: stack.q, r: stack.r }, intent.steps)
     const aim = {
       targetId: intent.attackTargetId,
@@ -481,17 +632,21 @@ export function CombatScreen({
         aim,
         field.tiles,
         combatHeroes,
+        Math.random,
+        undefined,
+        allowFriendly,
       )
       if (!resolved) {
         return false
       }
       setHoverTarget(null)
-      presentAttackRef.current(resolved, [])
+      presentAttackRef.current(resolved, prefix)
       return true
     }
     if (intent.steps.length === 0) {
       setHoverTarget(null)
       presentTurnEndRef.current(current, stack.id, [
+        ...prefix,
         movementLogLine(stack, catalog, 0),
       ])
       return true
@@ -502,18 +657,174 @@ export function CombatScreen({
     reachApiRef.current?.draw([])
     void (async () => {
       let latest = current
+      const trapLines: string[] = []
+      const hazardAcc = emptyWalkHazardAcc()
+      const unitName = unitById(catalog, stack.unitId)?.name ?? 'Unknown'
+      let stepsDone = 0
+      {
+        const walker = latest.stacks.find((row) => row.id === stack.id)
+        if (walker) {
+          // Void (no full_path): leave GE on vacated origin once per move.
+          const left = tryLeaveGroundEffectOnMoveOrigin(
+            latest,
+            stack.id,
+            catalog,
+            { q: walker.q, r: walker.r },
+            field.tiles,
+          )
+          latest = left.battle
+          if (left.tiles && left.tiles !== field.tiles) {
+            setField((prev) =>
+              prev ? { ...prev, tiles: left.tiles! } : prev,
+            )
+            field.tiles.splice(0, field.tiles.length, ...left.tiles)
+          }
+        }
+      }
       for (const step of intent.steps) {
         if (walkGenRef.current !== gen) {
           return
         }
+        // Legacy terrain_type leave-behind (vacated hex before stepping away).
+        {
+          const walker = latest.stacks.find((row) => row.id === stack.id)
+          if (walker) {
+            const left = tryLeaveTerrainOnMove(
+              latest,
+              stack.id,
+              catalog,
+              field.tiles,
+              { q: walker.q, r: walker.r },
+            )
+            latest = left.battle
+            if (left.tiles !== field.tiles) {
+              setField((prev) =>
+                prev ? { ...prev, tiles: left.tiles } : prev,
+              )
+              field.tiles.splice(0, field.tiles.length, ...left.tiles)
+            }
+            trapLines.push(...left.lines)
+          }
+        }
         latest = moveStack(latest, stack.id, step.q, step.r)
+        {
+          // Worms/Riders (full_path): leave GE on each entered hex.
+          const left = tryLeaveGroundEffectOnMoveStep(
+            latest,
+            stack.id,
+            catalog,
+            step,
+            field.tiles,
+          )
+          latest = left.battle
+          if (left.tiles && left.tiles !== field.tiles) {
+            setField((prev) =>
+              prev ? { ...prev, tiles: left.tiles! } : prev,
+            )
+            field.tiles.splice(0, field.tiles.length, ...left.tiles)
+          }
+        }
+        stepsDone += 1
+        const boom = tryTriggerGroundEffectsOnEnter(
+          latest,
+          stack.id,
+          catalog,
+          field.tiles,
+          combatHeroesRef.current,
+        )
+        latest = boom.battle
+        trapLines.push(...boom.lines)
+        const hazard = applyStandingHazards(
+          latest,
+          stack.id,
+          catalog,
+          field.tiles,
+          combatHeroesRef.current,
+        )
+        latest = hazard.battle
+        absorbWalkHazard(hazardAcc, hazard)
+        const flashKeys = [...boom.hitKeys, ...hazard.hitKeys]
+        if (flashKeys.length > 0) {
+          setHitFlash({
+            n: Date.now(),
+            groups: [{ keys: flashKeys, color: 'red' }],
+          })
+        }
         setBattle(latest)
         await sleep(MOVE_STEP_MS)
+        // Mid-walk Stun (e.g. Explosive Trap): abort remaining move/attack.
+        // This interrupted turn is the stun skip (consume like start-of-turn).
+        const walker = latest.stacks.find((row) => row.id === stack.id)
+        if (!walker || walker.qty <= 0) {
+          if (walkGenRef.current !== gen) {
+            return
+          }
+          setMoving(false)
+          presentTurnEndRef.current(
+            latest,
+            stack.id,
+            [
+              ...prefix,
+              ...trapLines,
+              ...walkHazardLogLines(hazardAcc, unitName),
+              movementLogLine(stack, catalog, stepsDone),
+            ],
+            false,
+            false,
+            false,
+            true,
+          )
+          return
+        }
+        if (isStunned(walker, catalog)) {
+          if (walkGenRef.current !== gen) {
+            return
+          }
+          setMoving(false)
+          const stunId = stunConditionId(catalog)
+          const name = unitById(catalog, walker.unitId)?.name ?? 'Unknown'
+          presentTurnEndRef.current(
+            applyConsumedCondition(latest, stack.id, stunId),
+            stack.id,
+            [
+              ...prefix,
+              ...trapLines,
+              ...walkHazardLogLines(hazardAcc, unitName),
+              movementLogLine(stack, catalog, stepsDone),
+              `${walker.qty} ${name} are stunned and can act no further.`,
+            ],
+            false,
+            false,
+            false,
+            true,
+          )
+          return
+        }
       }
       if (walkGenRef.current !== gen) {
         return
       }
       setMoving(false)
+      const hazardLines = walkHazardLogLines(hazardAcc, unitName)
+      // Tempest: Storm scatter only after an actual move (not in-place attacks).
+      if (stepsDone > 0) {
+        const scatter = tryTempestStormScatter(
+          latest,
+          stack.id,
+          catalog,
+          field.tiles,
+          combatHeroes,
+          Math.random,
+        )
+        latest = scatter.battle
+        if (scatter.tiles && scatter.tiles !== field.tiles) {
+          setField((prev) =>
+            prev ? { ...prev, tiles: scatter.tiles! } : prev,
+          )
+          field.tiles.splice(0, field.tiles.length, ...scatter.tiles)
+        }
+        trapLines.push(...scatter.lines)
+      }
       if (fire) {
         const resolved = resolveAttack(
           latest,
@@ -522,27 +833,61 @@ export function CombatScreen({
           aim,
           field.tiles,
           combatHeroes,
+          Math.random,
+          {
+            chargeHexes: stepsDone,
+            chargePathOrigin: { q: stack.q, r: stack.r },
+          },
+          allowFriendly,
         )
         if (resolved) {
           presentAttackRef.current(
             resolved,
-            [movementLogLine(stack, catalog, intent.steps.length)],
+            [
+              ...prefix,
+              ...trapLines,
+              ...hazardLines,
+              movementLogLine(stack, catalog, stepsDone),
+            ],
+            true,
           )
         } else {
-          presentTurnEndRef.current(latest, stack.id, [
-            movementLogLine(stack, catalog, intent.steps.length),
-          ])
+          presentTurnEndRef.current(
+            latest,
+            stack.id,
+            [
+              ...prefix,
+              ...trapLines,
+              ...hazardLines,
+              movementLogLine(stack, catalog, stepsDone),
+            ],
+            false,
+            false,
+            false,
+            true,
+          )
         }
       } else {
-        presentTurnEndRef.current(latest, stack.id, [
-          movementLogLine(stack, catalog, intent.steps.length),
-        ])
+        presentTurnEndRef.current(
+          latest,
+          stack.id,
+          [
+            ...prefix,
+            ...trapLines,
+            ...hazardLines,
+            movementLogLine(stack, catalog, stepsDone),
+          ],
+          false,
+          false,
+          false,
+          true,
+        )
       }
     })()
     return true
   }
 
-  onHexClickRef.current = (q, r, zone) => {
+  onHexClickRef.current = (q, r, zone, shiftKey = false) => {
     if (log || moving || summary || !battle || !catalog || !field) {
       return
     }
@@ -556,8 +901,17 @@ export function CombatScreen({
         setHeroCast(null)
         return
       }
+      const stats = ability.stats
+      const selfTeleport = stats?.self_teleport === true
       const valid = new Set(
-        abilityValidHexKeys(catalog, ability, heroStack.side, battle, field.tiles),
+        abilityValidHexKeys(
+          catalog,
+          ability,
+          heroStack.side,
+          battle,
+          field.tiles,
+          heroCast.teleportUnitId,
+        ),
       )
       if (!valid.has(hexKey(q, r))) {
         return
@@ -566,9 +920,34 @@ export function CombatScreen({
         stackOccupyingHex(battle.stacks, q, r, catalog) ??
         battle.stacks.find((row) => row.q === q && row.r === r) ??
         null
+      // Shadow Step phase 1: pick friendly unit to teleport.
+      if (selfTeleport && !heroCast.teleportUnitId) {
+        if (
+          !occupant ||
+          isHeroStack(occupant) ||
+          occupant.side !== heroStack.side ||
+          occupant.qty <= 0
+        ) {
+          return
+        }
+        setHoverTarget(null)
+        setHeroCast({
+          ...heroCast,
+          teleportUnitId: occupant.id,
+        })
+        return
+      }
       finishHeroCastRef.current(ability, caster, heroStack.side, heroStack.id, {
-        targetId: occupant && !isHeroStack(occupant) ? occupant.id : null,
+        targetId: selfTeleport
+          ? (heroCast.teleportUnitId ?? null)
+          : occupant && !isHeroStack(occupant)
+            ? occupant.id
+            : null,
         hex: { q, r },
+        lineDir:
+          heroCast.lineDirIndex != null
+            ? axialNeighborDirs()[heroCast.lineDirIndex % 6] ?? null
+            : null,
       })
       return
     }
@@ -596,6 +975,7 @@ export function CombatScreen({
     ) {
       setHoverTarget(null)
       reachApiRef.current?.draw([])
+      setWaypointPlan(null)
       setHeroCast({ stackId: occupant.id, abilityId: null })
       return
     }
@@ -603,9 +983,129 @@ export function CombatScreen({
     if (
       stack &&
       !stack.hasActedThisRound &&
+      !stack.forcedRetreatPending &&
       !isFeared(stack, catalog) &&
+      !isStunned(stack, catalog) &&
+      !isConfused(stack, catalog) &&
       !isPolymorphed(stack, catalog)
     ) {
+      const resolveLeg = (from: { q: number; r: number }, to: { q: number; r: number }, budget: number) => {
+        const unit = unitById(catalog, stack.unitId)
+        const kind = moveKindForUnit(unit, catalog)
+        const tombs = tombstoneOccupancyBodies(battle.tombstones)
+        // Blink: single teleport hop — only from the unit's current hex.
+        if (unitAttackShape(unit).blinkMovement === true) {
+          if (from.q !== stack.q || from.r !== stack.r) {
+            return null
+          }
+          const reach = combatMovementReachable(
+            stack,
+            battle,
+            field.tiles,
+            catalog,
+            deathKnightShadowMoveAdjust(
+              battle,
+              catalog,
+              combatHeroes,
+              stack.side,
+              kind,
+            ),
+          )
+          const steps = reach.get(hexKey(to.q, to.r))
+          if (!steps || steps.length === 0) {
+            return null
+          }
+          return { steps, remaining: 0 }
+        }
+        return resolveCombatWaypointLeg(
+          from,
+          to,
+          budget,
+          field.tiles,
+          kind,
+          occupiedForMover(battle.stacks, catalog, stack.id, kind),
+          footprintSpecFor(stack, catalog),
+          openBridgeMoatKeys(battle, catalog, field.tiles),
+          stopOnlyForMover(battle, catalog, field.tiles, kind),
+          landingOccupiedForMover(battle.stacks, catalog, stack.id, tombs),
+          deathKnightShadowMoveAdjust(
+            battle,
+            catalog,
+            combatHeroes,
+            stack.side,
+            kind,
+          ),
+        )
+      }
+      // Shift-click: stage a waypoint (no commit yet).
+      if (shiftKey) {
+        if (occupant && !isHeroStack(occupant)) {
+          return
+        }
+        const fullBudget = unitIsStationary(unitById(catalog, stack.unitId))
+          ? 0
+          : (stackMoveSpeed(stack, catalog) ?? 0)
+        const base =
+          waypointPlan &&
+          waypointPlan.origin.q === stack.q &&
+          waypointPlan.origin.r === stack.r
+            ? waypointPlan
+            : createWaypointPlan({ q: stack.q, r: stack.r }, fullBudget)
+        const next = tryAppendWaypoint(base, { q, r }, resolveLeg)
+        if (!next) {
+          return
+        }
+        setWaypointPlan(next)
+        setHoverTarget({
+          icon: 'move',
+          q,
+          r,
+          steps: next.steps,
+          attackTargetId: null,
+          fire: false,
+          afterMove: null,
+          impactKeys: [],
+          label: `WP ${next.waypoints.length} · ${formatMp(next.remaining)} left`,
+        })
+        reachApiRef.current?.draw(waypointStepKeys(next))
+        return
+      }
+      // Normal click with staged waypoints: path through them, then to aim.
+      if (waypointPlan && waypointPlan.waypoints.length > 0) {
+        const virtual: CombatStack = {
+          ...stack,
+          q: waypointPlan.end.q,
+          r: waypointPlan.end.r,
+        }
+        const intent = combatHover(
+          virtual,
+          { q, r },
+          battle,
+          field.tiles,
+          catalog,
+          zone,
+          combatHeroes,
+        )
+        const act =
+          intent != null &&
+          (intent.fire ||
+            intent.afterMove === 'pulse' ||
+            intent.steps.length > 0 ||
+            waypointPlan.steps.length > 0)
+        if (act && intent) {
+          setWaypointPlan(null)
+          performCombatIntentRef.current(
+            {
+              ...intent,
+              steps: [...waypointPlan.steps, ...intent.steps],
+            },
+            stack,
+            battle,
+          )
+          return
+        }
+        setWaypointPlan(null)
+      }
       const intent = combatHover(
         stack,
         { q, r },
@@ -613,6 +1113,7 @@ export function CombatScreen({
         field.tiles,
         catalog,
         zone,
+        combatHeroes,
       )
       const act =
         intent != null &&
@@ -620,6 +1121,7 @@ export function CombatScreen({
           intent.afterMove === 'pulse' ||
           intent.steps.length > 0)
       if (act && intent) {
+        setWaypointPlan(null)
         performCombatIntentRef.current(intent, stack, battle)
         return
       }
@@ -660,6 +1162,32 @@ export function CombatScreen({
     return true
   }
 
+  const presentRoundAdvance = (advanced: CombatBattle) => {
+    const groups = [
+      {
+        keys: advanced.roundHitKeys ?? [],
+        color: 'red' as HitFlashColor,
+      },
+      {
+        keys: advanced.roundHealKeys ?? [],
+        color: 'green' as HitFlashColor,
+      },
+    ].filter((group) => group.keys.length > 0)
+    if (groups.length > 0) {
+      setHitFlash({ n: Date.now(), groups })
+    }
+    setBattle(advanced)
+    if (advanced.roundLog && advanced.roundLog.length > 0) {
+      setLog({ lines: advanced.roundLog, holdTurn: true })
+      setBattle({
+        ...advanced,
+        roundLog: [],
+        roundHitKeys: undefined,
+        roundHealKeys: undefined,
+      })
+    }
+  }
+
   const dismissLog = () => {
     const current = battleRef.current
     const currentLog = logRef.current
@@ -677,12 +1205,11 @@ export function CombatScreen({
     const hold = currentLog.holdTurn === true
     setLog(null)
     if (!hold) {
-      const advanced = advanceTurn(current, cat)
-      setBattle(advanced)
-      if (advanced.roundLog && advanced.roundLog.length > 0) {
-        setLog({ lines: advanced.roundLog, holdTurn: true })
-        setBattle({ ...advanced, roundLog: [] })
-      }
+      const advanced = advanceTurn(current, cat, Math.random, {
+        tiles: fieldRef.current?.tiles,
+        heroes: combatHeroesRef.current,
+      })
+      presentRoundAdvance(advanced)
     }
   }
   dismissLogRef.current = dismissLog
@@ -712,7 +1239,11 @@ export function CombatScreen({
     caster: Hero,
     casterSide: CombatSide,
     heroStackId: string,
-    aim: { targetId: string | null; hex: { q: number; r: number } },
+    aim: {
+      targetId: string | null
+      hex: { q: number; r: number }
+      lineDir?: { q: number; r: number } | null
+    },
     holdUnitTurn = false,
   ) => {
     if (!battle || !catalog || !field) {
@@ -756,6 +1287,14 @@ export function CombatScreen({
       })
       return
     }
+    if (resolved.noOp === true) {
+      // Utility no-ops should not spend resources/cooldowns nor count as a
+      // successful cast for turn progression.
+      setLog(null)
+      setBattle(resolved.battle)
+      applyOutcomeIfOver(resolved.battle)
+      return
+    }
     updateSession((current) => {
       const withArmy = resolved.applySession
         ? resolved.applySession(current)
@@ -769,8 +1308,79 @@ export function CombatScreen({
         ),
       }
     })
-    const next = markHeroActed(resolved.battle, heroStackId)
+    if (
+      resolved.moveDelayMs != null &&
+      resolved.moveDelayMs > 0 &&
+      resolved.preMoveBattle
+    ) {
+      const gen = (walkGenRef.current += 1)
+      setMoving(true)
+      const moverId = aim.targetId
+      // Pop out: remove from board, wait, then land at destination.
+      const hidden = {
+        ...resolved.preMoveBattle,
+        stacks: resolved.preMoveBattle.stacks.filter((row) => row.id !== moverId),
+      }
+      setBattle(hidden)
+      if (resolved.flashes.length > 0) {
+        setHitFlash({ n: Date.now(), groups: resolved.flashes })
+      }
+      void (async () => {
+        await sleep(resolved.moveDelayMs ?? 500)
+        if (walkGenRef.current !== gen) {
+          return
+        }
+        setMoving(false)
+        const next = resolved.endsRound
+          ? resolved.battle
+          : markHeroActed(resolved.battle, heroStackId)
+        setBattle(next)
+        applyOutcomeIfOver(next)
+        setLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+      })()
+      return
+    }
+    const beats = resolved.beats
+    if (beats && beats.length > 0) {
+      const gen = (walkGenRef.current += 1)
+      setMoving(true)
+      void (async () => {
+        for (const beat of beats) {
+          if (walkGenRef.current !== gen) {
+            return
+          }
+          setBattle(beat.battle)
+          if (beat.flashes.length > 0) {
+            setHitFlash({ n: Date.now(), groups: beat.flashes })
+          }
+          if (beat.lines.length > 0) {
+            setLog({ lines: beat.lines, holdTurn: true })
+          }
+          await sleep(ABILITY_BEAT_MS)
+        }
+        if (walkGenRef.current !== gen) {
+          return
+        }
+        setMoving(false)
+        const next = resolved.endsRound
+          ? resolved.battle
+          : markHeroActed(resolved.battle, heroStackId)
+        setBattle(next)
+        applyOutcomeIfOver(next)
+        setLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+      })()
+      return
+    }
+    const next = resolved.endsRound
+      ? resolved.battle
+      : markHeroActed(resolved.battle, heroStackId)
     setBattle(next)
+    if (resolved.tiles) {
+      setField((prev) =>
+        prev ? { ...prev, tiles: resolved.tiles! } : prev,
+      )
+      field.tiles.splice(0, field.tiles.length, ...resolved.tiles)
+    }
     applyOutcomeIfOver(next)
     if (resolved.flashes.length > 0) {
       setHitFlash({ n: Date.now(), groups: resolved.flashes })
@@ -843,18 +1453,46 @@ export function CombatScreen({
     alreadyActed = false,
     advanceIfSilent = false,
     wasteExtraTurn = false,
+    skipStandingHazards = false,
   ) => {
     const cat = catalogRef.current
     const tiles = field?.tiles ?? []
     if (!cat) {
       return
     }
-    const tick = applyMoatEntryDamage(current, stackId, cat, tiles)
+    const tick = skipStandingHazards
+      ? {
+          battle: current,
+          lines: [] as string[],
+          hitKeys: [] as string[],
+        }
+      : applyStandingHazards(current, stackId, cat, tiles, combatHeroesRef.current)
     const ended = alreadyActed
       ? tick.battle
       : endStackTurn(tick.battle, stackId, wasteExtraTurn)
     const silenced = applyOwnSilenceAfterTurn(ended, stackId, cat)
-    const next = silenced.battle
+    let next = silenced.battle
+    const actor = next.stacks.find((row) => row.id === stackId) ?? null
+    const fervorLines: string[] = []
+    if (!wasteExtraTurn && actor && actor.qty > 0) {
+      const fervor = tryFervorChain(actor)
+      if (fervor.chancePct > 0) {
+        fervorLines.push(
+          chanceRollLog('Fervor', fervor.chancePct, fervor.triggered, {
+            action: 'to act again',
+          }),
+        )
+        if (fervor.triggered) {
+          next = grantFervorExtraTurn(next, stackId)
+        } else if (actor.fervor) {
+          next = clearFervorStreak(next, stackId)
+        }
+      } else if (actor.fervor) {
+        next = clearFervorStreak(next, stackId)
+      }
+    } else if (actor?.fervor) {
+      next = clearFervorStreak(next, stackId)
+    }
     if (tick.hitKeys.length > 0) {
       setHitFlash({
         n: Date.now(),
@@ -865,31 +1503,56 @@ export function CombatScreen({
       ...extraLines,
       ...tick.lines,
       ...(silenced.line ? [silenced.line] : []),
+      ...fervorLines,
     ]
     setBattle(next)
     applyOutcomeIfOver(next)
     if (lines.length > 0) {
-      setLog({ lines })
+      setLog({
+        lines,
+        holdTurn: fervorLines.length > 0,
+      })
       return
     }
     if (advanceIfSilent) {
-      const advanced = advanceTurn(next, cat)
-      setBattle(advanced)
+      const advanced = advanceTurn(next, cat, Math.random, {
+        tiles: fieldRef.current?.tiles,
+        heroes: combatHeroesRef.current,
+      })
       applyOutcomeIfOver(advanced)
-      if (advanced.roundLog && advanced.roundLog.length > 0) {
-        setLog({ lines: advanced.roundLog, holdTurn: true })
-        setBattle({ ...advanced, roundLog: [] })
-      }
+      presentRoundAdvance(advanced)
     }
   }
 
-  presentAttackRef.current = (resolved, extraLines) => {
+  presentAttackRef.current = (resolved, extraLines, skipStandingHazards = false) => {
     const cat = catalogRef.current
     const tiles = field?.tiles ?? []
+    if (resolved.heroes) {
+      const nextAtk = resolved.heroes.atk
+      const nextDef = resolved.heroes.def
+      updateSession((current) => ({
+        ...current,
+        heroes: current.heroes.map((hero) => {
+          if (nextAtk && hero.id === nextAtk.id) {
+            return nextAtk
+          }
+          if (nextDef && hero.id === nextDef.id) {
+            return nextDef
+          }
+          return hero
+        }),
+      }))
+    }
     const actor = activeStack(resolved.battle)
     const tick =
-      cat && actor
-        ? applyMoatEntryDamage(resolved.battle, actor.id, cat, tiles)
+      cat && actor && !skipStandingHazards
+        ? applyStandingHazards(
+            resolved.battle,
+            actor.id,
+            cat,
+            tiles,
+            combatHeroesRef.current,
+          )
         : { battle: resolved.battle, lines: [] as string[], hitKeys: [] as string[] }
     const ended = actor
       ? endStackTurn(tick.battle, actor.id)
@@ -898,6 +1561,33 @@ export function CombatScreen({
       cat && actor
         ? applyOwnSilenceAfterTurn(ended, actor.id, cat)
         : { battle: ended, line: null as string | null }
+    let next = silenced.battle
+    const liveActor = actor
+      ? next.stacks.find((row) => row.id === actor.id) ?? null
+      : null
+    const fervorLines: string[] = []
+    if (resolved.grantExtraTurn && liveActor && liveActor.qty > 0) {
+      next = grantFervorExtraTurn(next, liveActor.id)
+      // Log line already added in resolveAttack (Inquisitor Grand).
+    } else if (cat && liveActor && liveActor.qty > 0) {
+      const fervor = tryFervorChain(liveActor)
+      if (fervor.chancePct > 0) {
+        fervorLines.push(
+          chanceRollLog('Fervor', fervor.chancePct, fervor.triggered, {
+            action: 'to act again',
+          }),
+        )
+        if (fervor.triggered) {
+          next = grantFervorExtraTurn(next, liveActor.id)
+        } else if (liveActor.fervor) {
+          next = clearFervorStreak(next, liveActor.id)
+        }
+      } else if (liveActor.fervor) {
+        next = clearFervorStreak(next, liveActor.id)
+      }
+    } else if (liveActor?.fervor) {
+      next = clearFervorStreak(next, liveActor.id)
+    }
     const groups = [
       { keys: resolved.hitKeys, color: resolved.hitColor },
       { keys: resolved.healKeys, color: 'green' as HitFlashColor },
@@ -911,20 +1601,23 @@ export function CombatScreen({
       ...resolved.log.lines,
       ...tick.lines,
       ...(silenced.line ? [silenced.line] : []),
+      ...fervorLines,
     ]
-    setBattle(silenced.battle)
-    applyOutcomeIfOver(silenced.battle)
+    setBattle(next)
+    applyOutcomeIfOver(next)
     if (lines.length > 0) {
-      setLog({ lines })
+      setLog({
+        lines,
+        holdTurn: fervorLines.length > 0 || resolved.grantExtraTurn === true,
+      })
       return
     }
     if (cat) {
-      const advanced = advanceTurn(silenced.battle, cat)
-      setBattle(advanced)
-      if (advanced.roundLog && advanced.roundLog.length > 0) {
-        setLog({ lines: advanced.roundLog, holdTurn: true })
-        setBattle({ ...advanced, roundLog: [] })
-      }
+      const advanced = advanceTurn(next, cat, Math.random, {
+        tiles: fieldRef.current?.tiles,
+        heroes: combatHeroesRef.current,
+      })
+      presentRoundAdvance(advanced)
     }
   }
 
@@ -936,6 +1629,9 @@ export function CombatScreen({
 
   onHoverRef.current = (hover) => {
     setHoverTarget(hover)
+  }
+  onHoverInspectRef.current = (id) => {
+    setHoverInspectId(id)
   }
 
   useEffect(() => {
@@ -949,6 +1645,15 @@ export function CombatScreen({
       reachApiRef.current?.draw([])
     }
   }, [log, summary, heroCast])
+
+  useEffect(() => {
+    if (!aiTurnLockedRef.current) {
+      return
+    }
+    setHoverTarget(null)
+    setHoverInspectId(null)
+    reachApiRef.current?.draw([])
+  }, [battle, log, moving, summary])
 
   useEffect(() => {
     if (!log || summary) {
@@ -984,6 +1689,32 @@ export function CombatScreen({
     )
   }, [battle, log, moving])
 
+  // Divine Aura Master: light-blue radius disk while the unit is acting.
+  useEffect(() => {
+    if (!battle || !catalog || !field || log || moving || summary) {
+      auraApiRef.current?.setKeys([])
+      return
+    }
+    const stack = activeStack(battle)
+    if (!stack || stack.hasActedThisRound || isHeroStack(stack)) {
+      auraApiRef.current?.setKeys([])
+      return
+    }
+    const abilities = unitAttackShape(unitById(catalog, stack.unitId))
+    const radius = abilities.auraRadius
+    if (
+      !abilities.auraCountsAlliesAsExtraQty ||
+      radius == null ||
+      radius < 1
+    ) {
+      auraApiRef.current?.setKeys([])
+      return
+    }
+    auraApiRef.current?.setKeys(
+      auraRadiusHexKeys({ q: stack.q, r: stack.r }, radius, field.tiles),
+    )
+  }, [battle, catalog, field, log, moving, summary])
+
   useEffect(() => {
     return () => {
       walkGenRef.current += 1
@@ -994,12 +1725,24 @@ export function CombatScreen({
     if (!field || !catalog || !catalogReady) {
       return
     }
-    if (fieldRef.current === field) {
+    const prev = fieldRef.current
+    // Mid-combat tile patches (Barricade stamps, Void leave-behind, clears)
+    // replace `field` with a new object but keep the same markers/siege/starts.
+    // Remounting createBattle here looked like Forced Retreat: everyone snaps
+    // back to opening hexes and the just-placed ground effect is discarded.
+    if (
+      prev &&
+      prev.markers === field.markers &&
+      prev.siege === field.siege &&
+      prev.heroStarts === field.heroStarts
+    ) {
+      fieldRef.current = field
       return
     }
     fieldRef.current = field
-    const created = createBattle(
-      getSession(),
+    const session = getSession()
+    let created = createBattle(
+      session,
       catalog,
       attackerHeroId,
       defenderHeroId,
@@ -1009,6 +1752,18 @@ export function CombatScreen({
       field.heroStarts,
       defenderMobId,
     )
+    const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
+    const defender = defenderHeroId
+      ? session.heroes.find((hero) => hero.id === defenderHeroId)
+      : undefined
+    const totems = applyShamanBattleStartTotems(
+      created,
+      catalog,
+      field.tiles,
+      { atk: attacker, def: defender },
+      Math.random,
+    )
+    created = totems.battle
     const snap = snapshotOpening(created.stacks)
     updateSession((current) => ({
       ...current,
@@ -1020,11 +1775,12 @@ export function CombatScreen({
     setBattle(created)
     setOpening(snap)
     openingRef.current = snap
-    setLog(null)
+    setLog(totems.lines.length > 0 ? { lines: totems.lines } : null)
     setSummary(null)
     appliedRef.current = false
     pendingSummaryRef.current = null
     moatStartKeyRef.current = null
+    splitStartKeyRef.current = null
   }, [field, catalog, catalogReady, attackerHeroId, defenderHeroId, siegeTownId, defenderMobId])
 
   useEffect(() => {
@@ -1036,10 +1792,139 @@ export function CombatScreen({
   }, [hitFlash])
 
   useEffect(() => {
+    if (!battle) {
+      setWaypointPlan(null)
+      return
+    }
+    const acting = activeStack(battle)
+    const plan = waypointPlanRef.current
+    if (
+      !acting ||
+      (plan &&
+        (plan.origin.q !== acting.q ||
+          plan.origin.r !== acting.r ||
+          acting.hasActedThisRound))
+    ) {
+      setWaypointPlan(null)
+    }
+  }, [battle])
+
+  useEffect(() => {
+    if (!waypointPlan) {
+      return
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      setWaypointPlan(null)
+      setHoverTarget(null)
+      reachApiRef.current?.draw([])
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [waypointPlan])
+
+  // Space: Pass the active unit's turn (same as clicking its own hex).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== ' ' && event.code !== 'Space') {
+        return
+      }
+      if (event.repeat) {
+        return
+      }
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      if (
+        !battle ||
+        !catalog ||
+        log ||
+        moving ||
+        summary ||
+        heroCast ||
+        inspectStackId
+      ) {
+        return
+      }
+      if (aiTurnLockedRef.current) {
+        return
+      }
+      const stack = activeStack(battle)
+      if (!stack || stack.hasActedThisRound || isHeroStack(stack)) {
+        return
+      }
+      if (
+        stack.forcedRetreatPending ||
+        isFeared(stack, catalog) ||
+        isStunned(stack, catalog) ||
+        isConfused(stack, catalog) ||
+        isPolymorphed(stack, catalog)
+      ) {
+        return
+      }
+      const owner = combatOwnerPlayer(
+        stack,
+        getSession(),
+        attacker,
+        defender,
+        siegeTown,
+        defenderMobId,
+      )
+      if (!owner || owner.is_ai) {
+        return
+      }
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      setWaypointPlan(null)
+      setHoverTarget(null)
+      reachApiRef.current?.draw([])
+      presentTurnEndRef.current(battle, stack.id, [
+        movementLogLine(stack, catalog, 0),
+      ])
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [
+    battle,
+    catalog,
+    log,
+    moving,
+    summary,
+    heroCast,
+    inspectStackId,
+    attacker,
+    defender,
+    siegeTown,
+    defenderMobId,
+  ])
+
+  useEffect(() => {
     if (!heroCast && !inspectStackId) {
       return
     }
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'r' || event.key === 'R') {
+        if (heroCast?.abilityId != null && heroCast.lineDirIndex != null) {
+          event.preventDefault()
+          event.stopPropagation()
+          event.stopImmediatePropagation()
+          setHeroCast({
+            ...heroCast,
+            lineDirIndex: (heroCast.lineDirIndex + 1) % 6,
+          })
+          return
+        }
+      }
       if (event.key !== 'Escape') {
         return
       }
@@ -1058,9 +1943,68 @@ export function CombatScreen({
       }
       setInspectStackId(null)
     }
+    const onWheel = (event: WheelEvent) => {
+      if (heroCast?.abilityId == null || heroCast.lineDirIndex == null) {
+        return
+      }
+      event.preventDefault()
+      const delta = event.deltaY === 0 ? event.deltaX : event.deltaY
+      if (delta === 0) {
+        return
+      }
+      const step = delta > 0 ? 1 : 5
+      setHeroCast({
+        ...heroCast,
+        lineDirIndex: (heroCast.lineDirIndex + step) % 6,
+      })
+    }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('wheel', onWheel, true)
+    }
   }, [heroCast, inspectStackId])
+
+  // Refresh Barricade preview when orientation changes without moving the mouse.
+  useEffect(() => {
+    if (
+      !battle ||
+      !catalog ||
+      !field ||
+      !heroCast ||
+      heroCast.abilityId == null ||
+      heroCast.lineDirIndex == null ||
+      !hoverTarget
+    ) {
+      return
+    }
+    const ability = catalog.ability.find((row) => row.id === heroCast.abilityId)
+    const heroStack = battle.stacks.find((row) => row.id === heroCast.stackId)
+    if (!ability || !heroStack || !abilityUsesLinePlacementPreview(ability)) {
+      return
+    }
+    const caster = heroForSide(heroStack.side, combatHeroes)
+    const lineDir = axialNeighborDirs()[heroCast.lineDirIndex % 6] ?? null
+    const impact = abilityAimImpactKeys(
+      catalog,
+      ability,
+      heroStack.side,
+      battle,
+      field.tiles,
+      { q: hoverTarget.q, r: hoverTarget.r },
+      caster,
+      lineDir,
+    )
+    reachApiRef.current?.draw([], impact)
+  }, [
+    battle,
+    catalog,
+    field,
+    heroCast,
+    hoverTarget,
+    combatHeroes,
+  ])
 
   useEffect(() => {
     if (!inspectStackId || !battle) {
@@ -1081,11 +2025,27 @@ export function CombatScreen({
     if (!ability || !heroStack) {
       return
     }
+    // AOE / trap: every (valid) hex is clickable, but painting that set red
+    // flashes the whole field until hover supplies the real radius.
+    if (
+      parseTarget(catalog, ability).spread === 'aoe' ||
+      abilityUsesLocalizedEmptyHexAim(ability)
+    ) {
+      reachApiRef.current?.draw([])
+      return
+    }
     reachApiRef.current?.draw(
       [],
-      abilityValidHexKeys(catalog, ability, heroStack.side, battle, field?.tiles),
+      abilityValidHexKeys(
+        catalog,
+        ability,
+        heroStack.side,
+        battle,
+        field?.tiles,
+        heroCast.teleportUnitId,
+      ),
     )
-  }, [battle, catalog, heroCast])
+  }, [battle, catalog, field?.tiles, heroCast])
 
   useEffect(() => {
     if (!battle || !catalog || !field || log || moving || summary) {
@@ -1106,7 +2066,13 @@ export function CombatScreen({
       return
     }
     moatStartKeyRef.current = key
-    const tick = applyMoatEntryDamage(battle, stack.id, catalog, field.tiles)
+    const tick = applyStandingHazards(
+      battle,
+      stack.id,
+      catalog,
+      field.tiles,
+      combatHeroesRef.current,
+    )
     if (tick.lines.length === 0) {
       return
     }
@@ -1127,6 +2093,32 @@ export function CombatScreen({
   }, [battle, catalog, field, log, moving, summary])
 
   useEffect(() => {
+    if (!battle || !catalog || !field || log || moving || summary) {
+      return
+    }
+    if (defeatedSide(battle, catalog)) {
+      return
+    }
+    const stack = activeStack(battle)
+    if (!stack || stack.hasActedThisRound) {
+      return
+    }
+    const key = `${battle.round}:${stack.id}`
+    if (splitStartKeyRef.current === key) {
+      return
+    }
+    splitStartKeyRef.current = key
+    const split = tryAutoSplitOnTurn(battle, catalog, field.tiles, stack.id)
+    if (!split) {
+      return
+    }
+    setBattle(split.battle)
+    if (split.lines.length > 0) {
+      setLog({ lines: split.lines, holdTurn: true })
+    }
+  }, [battle, catalog, field, log, moving, summary])
+
+  useEffect(() => {
     if (!battle || !catalog || !field || log || moving || summary || heroCast || inspectStackId) {
       return
     }
@@ -1142,18 +2134,217 @@ export function CombatScreen({
     const canMove =
       !unitIsStationary(unit) &&
       speed > 0 &&
-      canCombatStep(stack, battle, field.tiles, catalog)
+      canCombatStep(
+        stack,
+        battle,
+        field.tiles,
+        catalog,
+        deathKnightShadowMoveAdjust(
+          battle,
+          catalog,
+          combatHeroes,
+          stack.side,
+          moveKindForUnit(unitById(catalog, stack.unitId), catalog),
+        ),
+      )
     const playerActs =
       unitTakesTurns(unit) &&
       !unitAutoTarget(unit) &&
+      !stack.forcedRetreatPending &&
       !isFeared(stack, catalog) &&
+      !isStunned(stack, catalog) &&
+      !isConfused(stack, catalog) &&
       !isPolymorphed(stack, catalog) &&
-      (canMove || canStrikeThisTurn(stack, battle, field.tiles, catalog))
+      (canMove || canStrikeThisTurn(stack, battle, field.tiles, catalog, combatHeroes))
     if (playerActs) {
       return
     }
     const timer = window.setTimeout(() => {
       if (tryAiHeroAbilityRef.current()) {
+        return
+      }
+      if (stack.forcedRetreatPending) {
+        const name = unit?.name ?? 'Unknown'
+        const cleared: CombatBattle = {
+          ...battle,
+          stacks: battle.stacks.map((row) =>
+            row.id === stack.id
+              ? { ...row, forcedRetreatPending: undefined }
+              : row,
+          ),
+        }
+        const steps = pickRetreatSteps(stack, cleared, catalog, field.tiles)
+        if (steps.length === 0) {
+          presentTurnEndRef.current(
+            cleared,
+            stack.id,
+            [`${stack.qty} ${name} cannot retreat farther.`],
+            false,
+            true,
+            true,
+          )
+          return
+        }
+        const gen = (walkGenRef.current += 1)
+        setMoving(true)
+        void (async () => {
+          let latest = cleared
+          const trapLines: string[] = []
+          const hazardAcc = emptyWalkHazardAcc()
+          let stepsDone = 0
+          {
+            const walker = latest.stacks.find((row) => row.id === stack.id)
+            if (walker) {
+              const left = tryLeaveGroundEffectOnMoveOrigin(
+                latest,
+                stack.id,
+                catalog,
+                { q: walker.q, r: walker.r },
+                field.tiles,
+              )
+              latest = left.battle
+              if (left.tiles && left.tiles !== field.tiles) {
+                setField((prev) =>
+                  prev ? { ...prev, tiles: left.tiles! } : prev,
+                )
+                field.tiles.splice(0, field.tiles.length, ...left.tiles)
+              }
+            }
+          }
+          for (const step of steps) {
+            if (walkGenRef.current !== gen) {
+              return
+            }
+            {
+              const walker = latest.stacks.find((row) => row.id === stack.id)
+              if (walker) {
+                const left = tryLeaveTerrainOnMove(
+                  latest,
+                  stack.id,
+                  catalog,
+                  field.tiles,
+                  { q: walker.q, r: walker.r },
+                )
+                latest = left.battle
+                if (left.tiles !== field.tiles) {
+                  setField((prev) =>
+                    prev ? { ...prev, tiles: left.tiles } : prev,
+                  )
+                  field.tiles.splice(0, field.tiles.length, ...left.tiles)
+                }
+                trapLines.push(...left.lines)
+              }
+            }
+            latest = moveStack(latest, stack.id, step.q, step.r)
+            {
+              const left = tryLeaveGroundEffectOnMoveStep(
+                latest,
+                stack.id,
+                catalog,
+                step,
+                field.tiles,
+              )
+              latest = left.battle
+              if (left.tiles && left.tiles !== field.tiles) {
+                setField((prev) =>
+                  prev ? { ...prev, tiles: left.tiles! } : prev,
+                )
+                field.tiles.splice(0, field.tiles.length, ...left.tiles)
+              }
+            }
+            stepsDone += 1
+            const boom = tryTriggerGroundEffectsOnEnter(
+              latest,
+              stack.id,
+              catalog,
+              field.tiles,
+              combatHeroesRef.current,
+            )
+            latest = boom.battle
+            trapLines.push(...boom.lines)
+            const hazard = applyStandingHazards(
+              latest,
+              stack.id,
+              catalog,
+              field.tiles,
+              combatHeroesRef.current,
+            )
+            latest = hazard.battle
+            absorbWalkHazard(hazardAcc, hazard)
+            const flashKeys = [...boom.hitKeys, ...hazard.hitKeys]
+            if (flashKeys.length > 0) {
+              setHitFlash({
+                n: Date.now(),
+                groups: [{ keys: flashKeys, color: 'red' }],
+              })
+            }
+            setBattle(latest)
+            await sleep(MOVE_STEP_MS)
+            const walker = latest.stacks.find((row) => row.id === stack.id)
+            if (!walker || walker.qty <= 0) {
+              if (walkGenRef.current !== gen) {
+                return
+              }
+              setMoving(false)
+              presentTurnEndRef.current(
+                latest,
+                stack.id,
+                [
+                  `${stack.qty} ${name} are forced to retreat.`,
+                  ...trapLines,
+                  ...walkHazardLogLines(hazardAcc, name),
+                  movementLogLine(stack, catalog, stepsDone),
+                ],
+                false,
+                false,
+                true,
+                true,
+              )
+              return
+            }
+            if (isStunned(walker, catalog)) {
+              if (walkGenRef.current !== gen) {
+                return
+              }
+              setMoving(false)
+              const stunId = stunConditionId(catalog)
+              presentTurnEndRef.current(
+                applyConsumedCondition(latest, stack.id, stunId),
+                stack.id,
+                [
+                  `${stack.qty} ${name} are forced to retreat.`,
+                  ...trapLines,
+                  ...walkHazardLogLines(hazardAcc, name),
+                  movementLogLine(stack, catalog, stepsDone),
+                  `${walker.qty} ${name} are stunned and can act no further.`,
+                ],
+                false,
+                false,
+                true,
+                true,
+              )
+              return
+            }
+          }
+          if (walkGenRef.current !== gen) {
+            return
+          }
+          setMoving(false)
+          presentTurnEndRef.current(
+            latest,
+            stack.id,
+            [
+              `${stack.qty} ${name} are forced to retreat.`,
+              ...trapLines,
+              ...walkHazardLogLines(hazardAcc, name),
+              movementLogLine(stack, catalog, stepsDone),
+            ],
+            false,
+            false,
+            true,
+            true,
+          )
+        })()
         return
       }
       if (isPolymorphed(stack, catalog)) {
@@ -1167,6 +2358,77 @@ export function CombatScreen({
           false,
           true,
         )
+        return
+      }
+      if (isStunned(stack, catalog)) {
+        const name = unit?.name ?? 'Unknown'
+        const stunId = stunConditionId(catalog)
+        presentTurnEndRef.current(
+          applyConsumedCondition(battle, stack.id, stunId),
+          stack.id,
+          [`${stack.qty} ${name} are stunned and skip this turn.`],
+          false,
+          false,
+          true,
+        )
+        return
+      }
+      if (isConfused(stack, catalog)) {
+        const name = unit?.name ?? 'Unknown'
+        const confuseId = confuseConditionId(catalog)
+        const cleared = applyConsumedCondition(battle, stack.id, confuseId)
+        if (isMagicAttackSilenced(stack, catalog)) {
+          presentTurnEndRef.current(
+            cleared,
+            stack.id,
+            [
+              `${stack.qty} ${name} are silenced and cannot use Magic attacks.`,
+            ],
+            false,
+            true,
+            true,
+          )
+          return
+        }
+        const intent = confusedAttackIntent(stack, cleared, catalog, field.tiles)
+        if (!intent) {
+          presentTurnEndRef.current(
+            cleared,
+            stack.id,
+            [`${stack.qty} ${name} are confused but cannot attack.`],
+            false,
+            true,
+            true,
+          )
+          return
+        }
+        const victim =
+          (intent.attackTargetId
+            ? cleared.stacks.find((row) => row.id === intent.attackTargetId)
+            : null) ?? null
+        const victimLabel = victim
+          ? `${victim.qty} ${unitById(catalog, victim.unitId)?.name ?? 'Unknown'}`
+          : 'a nearby unit'
+        const started = performCombatIntentRef.current(
+          {
+            ...intent,
+            logPrefix: [
+              `${stack.qty} ${name} attack ${victimLabel} in confusion!`,
+            ],
+          },
+          stack,
+          cleared,
+        )
+        if (!started) {
+          presentTurnEndRef.current(
+            cleared,
+            stack.id,
+            [`${stack.qty} ${name} are confused but cannot attack.`],
+            false,
+            true,
+            true,
+          )
+        }
         return
       }
       if (isFeared(stack, catalog)) {
@@ -1193,13 +2455,146 @@ export function CombatScreen({
         setMoving(true)
         void (async () => {
           let latest = battle
+          const trapLines: string[] = []
+          const hazardAcc = emptyWalkHazardAcc()
+          let stepsDone = 0
+          {
+            const walker = latest.stacks.find((row) => row.id === stack.id)
+            if (walker) {
+              const left = tryLeaveGroundEffectOnMoveOrigin(
+                latest,
+                stack.id,
+                catalog,
+                { q: walker.q, r: walker.r },
+                field.tiles,
+              )
+              latest = left.battle
+              if (left.tiles && left.tiles !== field.tiles) {
+                setField((prev) =>
+                  prev ? { ...prev, tiles: left.tiles! } : prev,
+                )
+                field.tiles.splice(0, field.tiles.length, ...left.tiles)
+              }
+            }
+          }
           for (const step of steps) {
             if (walkGenRef.current !== gen) {
               return
             }
+            {
+              const walker = latest.stacks.find((row) => row.id === stack.id)
+              if (walker) {
+                const left = tryLeaveTerrainOnMove(
+                  latest,
+                  stack.id,
+                  catalog,
+                  field.tiles,
+                  { q: walker.q, r: walker.r },
+                )
+                latest = left.battle
+                if (left.tiles !== field.tiles) {
+                  setField((prev) =>
+                    prev ? { ...prev, tiles: left.tiles } : prev,
+                  )
+                  field.tiles.splice(0, field.tiles.length, ...left.tiles)
+                }
+                trapLines.push(...left.lines)
+              }
+            }
             latest = moveStack(latest, stack.id, step.q, step.r)
+            {
+              const left = tryLeaveGroundEffectOnMoveStep(
+                latest,
+                stack.id,
+                catalog,
+                step,
+                field.tiles,
+              )
+              latest = left.battle
+              if (left.tiles && left.tiles !== field.tiles) {
+                setField((prev) =>
+                  prev ? { ...prev, tiles: left.tiles! } : prev,
+                )
+                field.tiles.splice(0, field.tiles.length, ...left.tiles)
+              }
+            }
+            stepsDone += 1
+            const boom = tryTriggerGroundEffectsOnEnter(
+              latest,
+              stack.id,
+              catalog,
+              field.tiles,
+              combatHeroesRef.current,
+            )
+            latest = boom.battle
+            trapLines.push(...boom.lines)
+            const hazard = applyStandingHazards(
+              latest,
+              stack.id,
+              catalog,
+              field.tiles,
+              combatHeroesRef.current,
+            )
+            latest = hazard.battle
+            absorbWalkHazard(hazardAcc, hazard)
+            const flashKeys = [...boom.hitKeys, ...hazard.hitKeys]
+            if (flashKeys.length > 0) {
+              setHitFlash({
+                n: Date.now(),
+                groups: [{ keys: flashKeys, color: 'red' }],
+              })
+            }
             setBattle(latest)
             await sleep(MOVE_STEP_MS)
+            const walker = latest.stacks.find((row) => row.id === stack.id)
+            if (!walker || walker.qty <= 0) {
+              if (walkGenRef.current !== gen) {
+                return
+              }
+              setMoving(false)
+              presentTurnEndRef.current(
+                applyConsumedCondition(latest, stack.id, fearId),
+                stack.id,
+                [
+                  `${stack.qty} ${name} flee in terror.`,
+                  ...trapLines,
+                  ...walkHazardLogLines(hazardAcc, name),
+                  movementLogLine(stack, catalog, stepsDone),
+                ],
+                false,
+                false,
+                true,
+                true,
+              )
+              return
+            }
+            if (isStunned(walker, catalog)) {
+              if (walkGenRef.current !== gen) {
+                return
+              }
+              setMoving(false)
+              const stunId = stunConditionId(catalog)
+              presentTurnEndRef.current(
+                applyConsumedCondition(
+                  applyConsumedCondition(latest, stack.id, fearId),
+                  stack.id,
+                  stunId,
+                ),
+                stack.id,
+                [
+                  `${stack.qty} ${name} flee in terror.`,
+                  ...trapLines,
+                  ...walkHazardLogLines(hazardAcc, name),
+                  movementLogLine(stack, catalog, stepsDone),
+                  `${walker.qty} ${name} are stunned and can act no further.`,
+                ],
+                false,
+                false,
+                true,
+                true,
+              )
+              return
+            }
           }
           if (walkGenRef.current !== gen) {
             return
@@ -1210,17 +2605,16 @@ export function CombatScreen({
             stack.id,
             [
               `${stack.qty} ${name} flee in terror.`,
-              movementLogLine(stack, catalog, steps.length),
+              ...trapLines,
+              ...walkHazardLogLines(hazardAcc, name),
+              movementLogLine(stack, catalog, stepsDone),
             ],
             false,
             false,
             true,
+            true,
           )
         })()
-        return
-      }
-      if (stack.silenced) {
-        presentTurnEndRef.current(battle, stack.id, [], false, true)
         return
       }
       if (!unitTakesTurns(unit)) {
@@ -1228,6 +2622,18 @@ export function CombatScreen({
         return
       }
       if (unitAutoTarget(unit)) {
+        if (isMagicAttackSilenced(stack, catalog)) {
+          presentTurnEndRef.current(
+            battle,
+            stack.id,
+            [
+              `${stack.qty} ${unit?.name ?? 'Unknown'} are silenced and cannot use Magic attacks.`,
+            ],
+            false,
+            true,
+          )
+          return
+        }
         const target = pickAutoAttackTarget(
           stack,
           battle,
@@ -1308,13 +2714,28 @@ export function CombatScreen({
     const canMove =
       !unitIsStationary(unit) &&
       speed > 0 &&
-      canCombatStep(stack, battle, field.tiles, catalog)
+      canCombatStep(
+        stack,
+        battle,
+        field.tiles,
+        catalog,
+        deathKnightShadowMoveAdjust(
+          battle,
+          catalog,
+          combatHeroes,
+          stack.side,
+          moveKindForUnit(unitById(catalog, stack.unitId), catalog),
+        ),
+      )
     const playerActs =
       unitTakesTurns(unit) &&
       !unitAutoTarget(unit) &&
+      !stack.forcedRetreatPending &&
       !isFeared(stack, catalog) &&
+      !isStunned(stack, catalog) &&
+      !isConfused(stack, catalog) &&
       !isPolymorphed(stack, catalog) &&
-      (canMove || canStrikeThisTurn(stack, battle, field.tiles, catalog))
+      (canMove || canStrikeThisTurn(stack, battle, field.tiles, catalog, combatHeroes))
     if (!playerActs) {
       return
     }
@@ -1463,6 +2884,7 @@ export function CombatScreen({
       const fills = new Graphics()
       const strokes = new Graphics()
       const reach = new Graphics()
+      const auraMark = new Graphics()
       const activeMark = new Graphics()
       const terrainLayer = new Container()
       const moatClosedLayer = new Container()
@@ -1472,7 +2894,6 @@ export function CombatScreen({
       const rolled: CombatTile[] = []
       const anchors: HexAnchor[] = []
       const hexByKey = new Map<string, Hex>()
-      const colByKey = new Map<string, number>()
       grid.forEach((hex) => {
         const sampled = pickCombatTerrain(pool, seed, hex.q, hex.r, catalog)
         const terrain = siegeLayout
@@ -1492,17 +2913,8 @@ export function CombatScreen({
         const floor = hexFloorAnchor(hex, offsetX, offsetY)
         anchors.push({ q: hex.q, r: hex.r, x: floor.x, y: floor.y })
         hexByKey.set(hexKey(hex.q, hex.r), hex)
-        colByKey.set(hexKey(hex.q, hex.r), hex.col)
       })
-      const tiles = siegeLayout
-        ? rolled
-        : applyCombatBarriers(
-            rolled,
-            colByKey,
-            [attackerCol, defenderCol],
-            seed,
-            catalog,
-          )
+      const tiles = rolled
       for (const tile of tiles) {
         const hex = hexByKey.get(hexKey(tile.q, tile.r))
         if (!hex) {
@@ -1579,6 +2991,7 @@ export function CombatScreen({
         moatClosedLayer,
         moatOpenLayer,
         strokes,
+        auraMark,
         reach,
         activeMark,
       )
@@ -1617,6 +3030,32 @@ export function CombatScreen({
       }
       reachApiRef.current = { draw: drawReach }
 
+      let auraHexKeys: string[] = []
+      const drawAura = () => {
+        auraMark.clear()
+        for (const key of auraHexKeys) {
+          const hex = hexByKey.get(key)
+          if (!hex) {
+            continue
+          }
+          auraMark.poly(
+            hex.corners.map((corner) => ({
+              x: corner.x + offsetX,
+              y: corner.y + offsetY,
+            })),
+          )
+          // Light-blue radius preview (same pattern as gold/red reach fills).
+          auraMark.fill({ color: 0x81d4fa, alpha: 0.32 })
+          auraMark.stroke({ width: 2, color: 0x4fc3f7 })
+        }
+      }
+      auraApiRef.current = {
+        setKeys(keys) {
+          auraHexKeys = keys
+          drawAura()
+        },
+      }
+
       let activeHexKey: string | null = null
       activeApiRef.current = {
         setKey(next) {
@@ -1632,15 +3071,20 @@ export function CombatScreen({
         if (!hex) {
           return
         }
-        const pulse = (Math.sin(performance.now() / 180) + 1) / 2
+        const pulse = (Math.sin(performance.now() / 140) + 1) / 2
         activeMark.poly(
           hex.corners.map((corner) => ({
             x: corner.x + offsetX,
             y: corner.y + offsetY,
           })),
         )
-        activeMark.fill({ color: 0x4dd0e1, alpha: 0.12 + 0.16 * pulse })
-        activeMark.stroke({ width: 3, color: 0x4dd0e1, alpha: 0.55 + 0.4 * pulse })
+        // Darker blue + thicker stroke so the active unit is easy to spot.
+        activeMark.fill({ color: 0x1565c0, alpha: 0.1 + 0.22 * pulse })
+        activeMark.stroke({
+          width: 5,
+          color: 0x0d47a1,
+          alpha: 0.7 + 0.3 * pulse,
+        })
       }
       instance.ticker.add(pulseActive)
 
@@ -1673,27 +3117,48 @@ export function CombatScreen({
         )
       }
       let lastHoverKey = ''
+      const clearHover = () => {
+        drawReach([])
+        lastHoverKey = ''
+        onHoverRef.current(null)
+        onHoverInspectRef.current(null)
+      }
+      const setInspectHoverAt = (
+        currentBattle: CombatBattle,
+        currentCatalog: NonNullable<typeof catalogRef.current>,
+        hex: { q: number; r: number },
+      ) => {
+        const occupant = stackOccupyingHex(
+          currentBattle.stacks,
+          hex.q,
+          hex.r,
+          currentCatalog,
+        )
+        if (occupant && !isHeroStack(occupant) && occupant.qty > 0) {
+          onHoverInspectRef.current(occupant.id)
+        } else {
+          onHoverInspectRef.current(null)
+        }
+      }
       const onPointerMove = (event: PointerEvent) => {
         if (logRef.current || movingRef.current || summaryRef.current) {
-          drawReach([])
-          lastHoverKey = ''
-          onHoverRef.current(null)
+          clearHover()
+          return
+        }
+        if (aiTurnLockedRef.current) {
+          clearHover()
           return
         }
         const currentBattle = battleRef.current
         const currentCatalog = catalogRef.current
         const hex = hexFromPointer(event)
         if (!currentBattle || !currentCatalog || !hex) {
-          drawReach([])
-          lastHoverKey = ''
-          onHoverRef.current(null)
+          clearHover()
           return
         }
         const cast = heroCastRef.current
         if (cast && cast.abilityId == null) {
-          drawReach([])
-          lastHoverKey = ''
-          onHoverRef.current(null)
+          clearHover()
           return
         }
         if (cast?.abilityId != null) {
@@ -1703,11 +3168,12 @@ export function CombatScreen({
           const heroStack = currentBattle.stacks.find(
             (row) => row.id === cast.stackId,
           )
-          const hoverKey = `aim:${cast.abilityId}:${hex.q},${hex.r}`
+          const hoverKey = `aim:${cast.abilityId}:${cast.teleportUnitId ?? ''}:${cast.lineDirIndex ?? ''}:${hex.q},${hex.r}`
           if (hoverKey === lastHoverKey) {
             return
           }
           lastHoverKey = hoverKey
+          setInspectHoverAt(currentBattle, currentCatalog, hex)
           if (!ability || !heroStack) {
             drawReach([])
             onHoverRef.current(null)
@@ -1719,7 +3185,13 @@ export function CombatScreen({
             heroStack.side,
             currentBattle,
             tiles,
+            cast.teleportUnitId,
           )
+          const caster = heroForSide(heroStack.side, combatHeroesRef.current)
+          const lineDir =
+            cast.lineDirIndex != null
+              ? axialNeighborDirs()[cast.lineDirIndex % 6] ?? null
+              : null
           const impact = abilityAimImpactKeys(
             currentCatalog,
             ability,
@@ -1727,17 +3199,24 @@ export function CombatScreen({
             currentBattle,
             tiles,
             { q: hex.q, r: hex.r },
+            caster,
+            lineDir,
           )
-          drawReach([], impact.length > 0 ? impact : valid)
+          const aoeAim =
+            parseTarget(currentCatalog, ability).spread === 'aoe' ||
+            abilityUsesLocalizedEmptyHexAim(ability) ||
+            abilityUsesLinePlacementPreview(ability)
+          // Never fall back to all-valid-tiles red for AOE / trap aim (that
+          // flashes the field). Preview is the localized radius disk only.
+          drawReach([], aoeAim ? impact : impact.length > 0 ? impact : valid)
           const onValid = valid.includes(hexKey(hex.q, hex.r))
           if (!onValid) {
             onHoverRef.current(null)
             return
           }
+          const tomb = tombstoneAt(currentBattle, hex.q, hex.r)
           onHoverRef.current({
-            icon: parseTarget(currentCatalog, ability).spread === 'aoe'
-              ? 'aoe'
-              : 'magic',
+            icon: aoeAim ? 'aoe' : 'magic',
             q: hex.q,
             r: hex.r,
             steps: [],
@@ -1745,6 +3224,7 @@ export function CombatScreen({
             fire: true,
             afterMove: null,
             impactKeys: impact,
+            label: tomb ? tombstoneName(currentCatalog, tomb) : undefined,
           })
           return
         }
@@ -1752,12 +3232,37 @@ export function CombatScreen({
         if (
           !stack ||
           stack.hasActedThisRound ||
+          stack.forcedRetreatPending ||
           isFeared(stack, currentCatalog) ||
+          isStunned(stack, currentCatalog) ||
+          isConfused(stack, currentCatalog) ||
           isPolymorphed(stack, currentCatalog)
         ) {
           drawReach([])
-          lastHoverKey = ''
-          onHoverRef.current(null)
+          setInspectHoverAt(currentBattle, currentCatalog, hex)
+          const tomb = tombstoneAt(currentBattle, hex.q, hex.r)
+          const tombKey = tomb
+            ? `tomb:${tomb.id}:${hex.q},${hex.r}`
+            : `idle:${hex.q},${hex.r}`
+          if (tombKey === lastHoverKey) {
+            return
+          }
+          lastHoverKey = tombKey
+          onHoverRef.current(
+            tomb
+              ? {
+                  icon: 'invalid',
+                  q: hex.q,
+                  r: hex.r,
+                  steps: [],
+                  attackTargetId: null,
+                  fire: false,
+                  afterMove: null,
+                  impactKeys: [],
+                  label: tombstoneName(currentCatalog, tomb),
+                }
+              : null,
+          )
           return
         }
         const zone = zoneAt(event, hex)
@@ -1766,6 +3271,7 @@ export function CombatScreen({
           return
         }
         lastHoverKey = hoverKey
+        setInspectHoverAt(currentBattle, currentCatalog, hex)
         const heroStack = ownHeroAtHex(
           currentBattle,
           currentCatalog,
@@ -1794,16 +3300,89 @@ export function CombatScreen({
           tiles,
           currentCatalog,
           zone,
+          combatHeroesRef.current,
         )
-        drawReach(
-          intent ? intent.steps.map((step) => hexKey(step.q, step.r)) : [],
-          intent?.impactKeys ?? [],
-        )
-        onHoverRef.current(intent)
+        const plan = waypointPlanRef.current
+        const planKeys = waypointStepKeys(plan)
+        const hoverSteps = intent?.steps ?? []
+        // Preview from last waypoint when a plan is staged.
+        const previewFromPlan =
+          plan && plan.waypoints.length > 0
+            ? (() => {
+                const virtual = {
+                  ...stack,
+                  q: plan.end.q,
+                  r: plan.end.r,
+                }
+                return combatHover(
+                  virtual,
+                  { q: hex.q, r: hex.r },
+                  currentBattle,
+                  tiles,
+                  currentCatalog,
+                  zone,
+                  combatHeroesRef.current,
+                )
+              })()
+            : null
+        const preview = previewFromPlan ?? intent
+        const gold = [
+          ...planKeys,
+          ...(preview?.steps ?? hoverSteps).map((step) =>
+            hexKey(step.q, step.r),
+          ),
+        ]
+        drawReach(gold, preview?.impactKeys ?? [])
+        if (preview || plan) {
+          onHoverRef.current(
+            preview
+              ? {
+                  ...preview,
+                  steps: [...(plan?.steps ?? []), ...preview.steps],
+                  label:
+                    plan && plan.waypoints.length > 0
+                      ? `WP ${plan.waypoints.length} · ${formatMp(plan.remaining)} left${
+                          preview.label ? ` · ${preview.label}` : ''
+                        }`
+                      : preview.label,
+                }
+              : {
+                  icon: 'move',
+                  q: hex.q,
+                  r: hex.r,
+                  steps: plan?.steps ?? [],
+                  attackTargetId: null,
+                  fire: false,
+                  afterMove: null,
+                  impactKeys: [],
+                  label: plan
+                    ? `WP ${plan.waypoints.length} · ${formatMp(plan.remaining)} left`
+                    : undefined,
+                },
+          )
+          return
+        }
+        const tomb = tombstoneAt(currentBattle, hex.q, hex.r)
+        if (tomb) {
+          onHoverRef.current({
+            icon: 'invalid',
+            q: hex.q,
+            r: hex.r,
+            steps: [],
+            attackTargetId: null,
+            fire: false,
+            afterMove: null,
+            impactKeys: [],
+            label: tombstoneName(currentCatalog, tomb),
+          })
+          return
+        }
+        onHoverRef.current(null)
       }
       const onPointerLeave = () => {
         lastHoverKey = ''
         onHoverRef.current(null)
+        onHoverInspectRef.current(null)
         const cast = heroCastRef.current
         const currentBattle = battleRef.current
         const currentCatalog = catalogRef.current
@@ -1815,6 +3394,13 @@ export function CombatScreen({
             (row) => row.id === cast.stackId,
           )
           if (ability && heroStack) {
+            if (
+              parseTarget(currentCatalog, ability).spread === 'aoe' ||
+              abilityUsesLocalizedEmptyHexAim(ability)
+            ) {
+              drawReach([])
+              return
+            }
             drawReach(
               [],
               abilityValidHexKeys(
@@ -1835,7 +3421,7 @@ export function CombatScreen({
         if (!hex) {
           return
         }
-        onHexClickRef.current(hex.q, hex.r, zoneAt(event, hex))
+        onHexClickRef.current(hex.q, hex.r, zoneAt(event, hex), event.shiftKey)
       }
       canvas.addEventListener('pointermove', onPointerMove)
       canvas.addEventListener('pointerleave', onPointerLeave)
@@ -1858,6 +3444,7 @@ export function CombatScreen({
         canvas.removeEventListener('pointerdown', onPointerDown)
         instance.ticker.remove(pulseActive)
         reachApiRef.current = null
+        auraApiRef.current = null
         bridgeArtApiRef.current = null
         activeApiRef.current = null
         instance.destroy()
@@ -1868,6 +3455,7 @@ export function CombatScreen({
       cancelled = true
       walkGenRef.current += 1
       reachApiRef.current = null
+      auraApiRef.current = null
       bridgeArtApiRef.current = null
       activeApiRef.current = null
       fieldRef.current = null
@@ -1886,18 +3474,18 @@ export function CombatScreen({
       <header className="town-management-bar">
         <h1 id="combat-screen-title">Combat</h1>
         <div className="combat-debug-end">
-          <DebugCopyPanel onCopy={onCopyDebug} sections={debugSections} />
+          <DebugCopyPanel sections={debugSections} />
           <button
             type="button"
             onClick={() => {
               if (summary) {
-                onExit()
+                onExit(summary.levelUpNotice ?? null)
                 return
               }
               if (battle && finishCombat(battleRef.current ?? battle)) {
                 return
               }
-              onExit()
+              onExit(null)
             }}
           >
             Exit
@@ -1905,7 +3493,11 @@ export function CombatScreen({
         </div>
       </header>
       {heroCast?.abilityId != null ? (
-        <p className="combat-hero-aim-hint">Select a target. Esc returns to abilities.</p>
+        <p className="combat-hero-aim-hint">
+          {heroCast.lineDirIndex != null
+            ? 'Click to place. R or scroll to rotate orientation. Esc returns to abilities.'
+            : 'Select a target. Esc returns to abilities.'}
+        </p>
       ) : null}
       <div className="combat-body">
         <div
@@ -1923,7 +3515,113 @@ export function CombatScreen({
           >
             <div ref={canvasHostRef} className="combat-field-canvas" />
             {field && battle
-              ? stacksBottomUp(battle.stacks, field.anchors).map((stack) => {
+              ? (() => {
+                  const atkSample =
+                    battle.stacks.find((row) => row.side === 'atk') ?? null
+                  const defSample =
+                    battle.stacks.find((row) => row.side === 'def') ?? null
+                  const atkPlayer = atkSample
+                    ? combatOwnerPlayer(
+                        atkSample,
+                        session,
+                        attacker,
+                        defender,
+                        siegeTown,
+                        defenderMobId,
+                      )
+                    : null
+                  const defPlayer = defSample
+                    ? combatOwnerPlayer(
+                        defSample,
+                        session,
+                        attacker,
+                        defender,
+                        siegeTown,
+                        defenderMobId,
+                      )
+                    : null
+                  let viewerSide: CombatSide = 'atk'
+                  if (atkPlayer && !atkPlayer.is_ai && defPlayer && !defPlayer.is_ai) {
+                    viewerSide = activeStack(battle)?.side ?? 'atk'
+                  } else if (
+                    defPlayer &&
+                    !defPlayer.is_ai &&
+                    (!atkPlayer || atkPlayer.is_ai)
+                  ) {
+                    viewerSide = 'def'
+                  }
+                  const zones = visibleGroundEffects(battle, viewerSide)
+                  const renderZones = (layer: 'below_units' | 'above_units') =>
+                    zones
+                      .filter((zone) => (zone.layer ?? 'below_units') === layer)
+                      .flatMap((zone) =>
+                        zone.hexKeys.map((key) => {
+                          const [qs, rs] = key.split(',')
+                          const pos = anchorAt(
+                            field.anchors,
+                            Number(qs),
+                            Number(rs),
+                          )
+                          if (!pos) {
+                            return null
+                          }
+                          const layerClass =
+                            layer === 'above_units'
+                              ? ' combat-ground-effect-above'
+                              : ' combat-ground-effect-below'
+                          const hiddenClass = zone.hidden
+                            ? ' combat-ground-effect-hidden'
+                            : ''
+                          return (
+                            <div
+                              key={`ge:${layer}:${zone.id}:${key}`}
+                              className={`combat-ground-effect${layerClass}${hiddenClass}`}
+                              data-ground-effect={zone.templateId}
+                              title={zone.name}
+                              style={{
+                                width: field.hexPx,
+                                height: field.hexPx,
+                                left: pos.x - field.hexPx / 2,
+                                top: pos.y - field.hexPx,
+                              }}
+                            >
+                              <GroundEffectArt
+                                filename={zone.imagePath}
+                                label={zone.name}
+                              />
+                            </div>
+                          )
+                        }),
+                      )
+                  return (
+                    <>
+                      {renderZones('below_units')}
+                      {(battle.terrainPatches ?? []).map((patch) => {
+                        const pos = anchorAt(field.anchors, patch.q, patch.r)
+                        if (!pos) {
+                          return null
+                        }
+                        return (
+                          <div
+                            key={`tp:${patch.q},${patch.r},${patch.terrainTypeId}`}
+                            className="combat-ground-effect combat-ground-effect-below"
+                            data-terrain-patch={patch.terrainTypeId}
+                            title={patch.name}
+                            style={{
+                              width: field.hexPx,
+                              height: field.hexPx,
+                              left: pos.x - field.hexPx / 2,
+                              top: pos.y - field.hexPx,
+                            }}
+                          >
+                            <GroundEffectArt
+                              filename={patch.imagePath}
+                              label={patch.name}
+                            />
+                          </div>
+                        )
+                      })}
+                      {stacksBottomUp(battle.stacks, field.anchors).map((stack) => {
                   const pos = anchorAt(field.anchors, stack.q, stack.r)
                   if (!pos) {
                     return null
@@ -1985,7 +3683,33 @@ export function CombatScreen({
                       )}
                     </div>
                   )
-                })
+                      })}
+                      {(battle.tombstones ?? []).map((tomb) => {
+                  const pos = anchorAt(field.anchors, tomb.q, tomb.r)
+                  if (!pos) {
+                    return null
+                  }
+                  const box = stackArtBox(pos, field.hexPx, 1, tomb.side)
+                  return (
+                    <div
+                      key={`tomb:${tomb.id}`}
+                      className="combat-stack combat-stack-on-hex combat-tombstone"
+                      data-tombstone={tomb.id}
+                      style={{
+                        width: box.width,
+                        height: box.height,
+                        left: box.left,
+                        top: box.top,
+                      }}
+                    >
+                      <TombstoneArt />
+                    </div>
+                  )
+                      })}
+                      {renderZones('above_units')}
+                    </>
+                  )
+                })()
               : null}
             {field && hitFlash
               ? hitFlash.groups.flatMap((group) =>
@@ -2049,6 +3773,107 @@ export function CombatScreen({
                         kind={hoverTarget.icon}
                         arrowDeg={hoverTarget.arrowDeg}
                       />
+                      {hoverTarget.label ? (
+                        <span className="combat-target-label">
+                          {hoverTarget.label}
+                        </span>
+                      ) : null}
+                    </div>
+                  )
+                })()
+              : null}
+            {catalog &&
+            battle &&
+            field &&
+            hoverInspectId &&
+            !inspectStackId &&
+            !log &&
+            !summary
+              ? (() => {
+                  const stack = battle.stacks.find(
+                    (row) => row.id === hoverInspectId,
+                  )
+                  if (!stack || stack.qty <= 0 || isHeroStack(stack)) {
+                    return null
+                  }
+                  const pos = anchorAt(field.anchors, stack.q, stack.r)
+                  if (!pos) {
+                    return null
+                  }
+                  const atkSample =
+                    battle.stacks.find((row) => row.side === 'atk') ?? null
+                  const defSample =
+                    battle.stacks.find((row) => row.side === 'def') ?? null
+                  const atkPlayer = atkSample
+                    ? combatOwnerPlayer(
+                        atkSample,
+                        session,
+                        attacker,
+                        defender,
+                        siegeTown,
+                        defenderMobId,
+                      )
+                    : null
+                  const defPlayer = defSample
+                    ? combatOwnerPlayer(
+                        defSample,
+                        session,
+                        attacker,
+                        defender,
+                        siegeTown,
+                        defenderMobId,
+                      )
+                    : null
+                  const acting = activeStack(battle)
+                  let viewerSide: CombatSide = 'atk'
+                  if (atkPlayer && !atkPlayer.is_ai && defPlayer && !defPlayer.is_ai) {
+                    viewerSide = acting?.side ?? 'atk'
+                  } else if (
+                    defPlayer &&
+                    !defPlayer.is_ai &&
+                    (!atkPlayer || atkPlayer.is_ai)
+                  ) {
+                    viewerSide = 'def'
+                  }
+                  const rows = inspectHoverRows(
+                    stack,
+                    catalog,
+                    viewerSide,
+                    battle,
+                    combatHeroes,
+                  )
+                  const box = stackArtBox(
+                    pos,
+                    field.hexPx,
+                    combatStackCells(stack, catalog),
+                    stack.side,
+                  )
+                  const tipEstimatePx = 10 + rows.length * 17
+                  const placeBelow = box.top - 4 - tipEstimatePx < 0
+                  return (
+                    <div
+                      className={
+                        placeBelow
+                          ? 'combat-stack-hover-tip is-below'
+                          : 'combat-stack-hover-tip'
+                      }
+                      style={{
+                        left: box.left + box.width / 2,
+                        top: placeBelow
+                          ? box.top + box.height + 4
+                          : box.top - 4,
+                      }}
+                      aria-hidden="true"
+                    >
+                      {rows.map((row) => (
+                        <div
+                          key={`${row.label}:${row.value}`}
+                          className="combat-stack-hover-row"
+                        >
+                          <span>{row.label}</span>
+                          {row.value ? <span>{row.value}</span> : null}
+                        </div>
+                      ))}
                     </div>
                   )
                 })()
@@ -2075,7 +3900,7 @@ export function CombatScreen({
           className="date-notice"
           role="dialog"
           aria-label="Combat summary"
-          onClick={onExit}
+          onClick={() => onExit(summary.levelUpNotice ?? null)}
         >
           <div className="date-notice-card combat-summary-card">
             <div className="combat-summary-side">
@@ -2122,7 +3947,7 @@ export function CombatScreen({
               <HeroAbilityPopup
                 catalog={catalog}
                 hero={hero}
-                learned={combatDisplayLearnedIds(catalog, hero)}
+                learned={hero.learned_abilities ?? []}
                 canCast={!stack.hasActedThisRound}
                 battle={battle}
                 casterSide={stack.side}
@@ -2148,7 +3973,13 @@ export function CombatScreen({
                     return
                   }
                   setHoverTarget(null)
-                  setHeroCast({ stackId: stack.id, abilityId: ability.id })
+                  setHeroCast({
+                    stackId: stack.id,
+                    abilityId: ability.id,
+                    ...(abilityUsesLinePlacementPreview(ability)
+                      ? { lineDirIndex: 0 }
+                      : {}),
+                  })
                 }}
               />
             )
@@ -2160,10 +3991,48 @@ export function CombatScreen({
             if (!stack || stack.qty <= 0) {
               return null
             }
+            const atkSample =
+              battle.stacks.find((row) => row.side === 'atk') ?? null
+            const defSample =
+              battle.stacks.find((row) => row.side === 'def') ?? null
+            const atkPlayer = atkSample
+              ? combatOwnerPlayer(
+                  atkSample,
+                  session,
+                  attacker,
+                  defender,
+                  siegeTown,
+                  defenderMobId,
+                )
+              : null
+            const defPlayer = defSample
+              ? combatOwnerPlayer(
+                  defSample,
+                  session,
+                  attacker,
+                  defender,
+                  siegeTown,
+                  defenderMobId,
+                )
+              : null
+            const acting = activeStack(battle)
+            let viewerSide: CombatSide = 'atk'
+            if (atkPlayer && !atkPlayer.is_ai && defPlayer && !defPlayer.is_ai) {
+              viewerSide = acting?.side ?? 'atk'
+            } else if (
+              defPlayer &&
+              !defPlayer.is_ai &&
+              (!atkPlayer || atkPlayer.is_ai)
+            ) {
+              viewerSide = 'def'
+            }
             return (
               <StackInspectPopup
                 catalog={catalog}
                 stack={stack}
+                viewerSide={viewerSide}
+                battle={battle}
+                heroes={combatHeroes}
                 onClose={() => setInspectStackId(null)}
               />
             )

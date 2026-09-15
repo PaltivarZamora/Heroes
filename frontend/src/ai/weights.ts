@@ -6,6 +6,7 @@ import {
 import type { Hero, Player } from '../session/types'
 import {
   DEFAULT_AI_ARCH_ID,
+  MOB_FLEE_RESPONSE_DECISION,
   type ScoredOption,
   type WeightedPickResult,
 } from './types'
@@ -30,6 +31,7 @@ const FALLBACK_WEIGHTS: Record<number, Record<string, Record<string, number>>> =
       hero_value: 7,
     },
     army_alloc: { hero_share_pct: 55 },
+    mob_flee_response: { fight_anyway_pct: 40 },
     combat_action: {
       kill_potential: 6,
       target_weakness: 5,
@@ -63,6 +65,7 @@ const FALLBACK_WEIGHTS: Record<number, Record<string, Record<string, number>>> =
       hero_value: 7,
     },
     army_alloc: { hero_share_pct: 50 },
+    mob_flee_response: { fight_anyway_pct: 40 },
     combat_action: {
       kill_potential: 5,
       target_weakness: 5,
@@ -96,6 +99,7 @@ const FALLBACK_WEIGHTS: Record<number, Record<string, Record<string, number>>> =
       hero_value: 7,
     },
     army_alloc: { hero_share_pct: 80 },
+    mob_flee_response: { fight_anyway_pct: 85 },
     combat_action: {
       kill_potential: 9,
       target_weakness: 6,
@@ -129,6 +133,7 @@ const FALLBACK_WEIGHTS: Record<number, Record<string, Record<string, number>>> =
       hero_value: 7,
     },
     army_alloc: { hero_share_pct: 35 },
+    mob_flee_response: { fight_anyway_pct: 20 },
     combat_action: {
       kill_potential: 5,
       target_weakness: 4,
@@ -218,6 +223,16 @@ export function mapMobMinTownDist(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
   return Math.max(1, Math.floor(appConfigNumber(catalog, 'map_mob_min_town_dist', 2)))
+}
+
+/** `town.id` for world mob pool. 0 = any town (random across all). */
+export function mapMobsType(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(
+    0,
+    Math.floor(appConfigNumber(catalog, 'map_random_map_mobs_type', 0)),
+  )
 }
 
 export function mobSurrenderRatio(
@@ -318,6 +333,31 @@ export function finalFactorWeight(
   const hi = 1 + jitter
   const roll = lo + Math.random() * (hi - lo)
   return effective * roll
+}
+
+/** Direct % chance the acting player forces a fight when a mob flees (0–100). */
+export function mobFleeFightAnywayPct(
+  player: Player,
+  hero: Hero | null | undefined,
+  catalog: ReferenceCatalog | null | undefined = getCachedCatalog(),
+): number {
+  const raw = blendedArchWeight(
+    player,
+    hero,
+    MOB_FLEE_RESPONSE_DECISION,
+    'fight_anyway_pct',
+    catalog,
+  )
+  if (!Number.isFinite(raw)) {
+    return 0
+  }
+  if (raw < 0) {
+    return 0
+  }
+  if (raw > 100) {
+    return 100
+  }
+  return raw
 }
 
 /** Player/hero blend with no jitter — for direct targets like army_alloc share. */

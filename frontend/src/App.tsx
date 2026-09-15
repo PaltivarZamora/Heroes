@@ -27,29 +27,50 @@ import { FriendlyTrade } from './town/FriendlyTrade'
 import { CombatScreen } from './combat/CombatScreen'
 import { getCachedCatalog, heroMovementPoints, refreshCatalogFromDb } from './town/catalog'
 import { OptionsMenu } from './options/OptionsMenu'
-import type { GameConfig } from './options/gameConfig'
+import {
+  defaultGameConfig,
+  type GameConfig,
+} from './options/gameConfig'
 import { getExploredHexes } from './hex/world'
 import { getSession, setSession, subscribe, updateSession } from './session/store'
+import {
+  type LevelUpNotice,
+} from './session/xp'
 import { createSessionFromConfig } from './session/create'
-import { resolveMobPreBattle } from './session/mobEncounter'
+import {
+  acceptMobSurrender,
+  declineMobSurrender,
+  fleeOfferPrompt,
+  letMobFlee,
+  resolveMobPreBattle,
+  surrenderOfferPrompt,
+} from './session/mobEncounter'
+import { prepareFixedFight, type FixedFightKind } from './session/fixedFight'
 import {
   assignHeroesFromPool,
   activePlayer,
   endTurn,
   findTownAt,
   findTownById,
+  grantHeroStartingArmy,
   hasTownBuiltToday,
+  heroArmyStackCount,
   humanPlayer,
   markTownBuiltToday,
+  matchVictoryResult,
   persistActiveExplored,
   visitingHeroId,
   walletFromSession,
 } from './session/accessors'
-import { clearAiTraces, getAiTraceBlocks, subscribeAiTraces } from './ai/trace'
+import { addWorldMobs } from './session/mobs'
+import { appendAiTrace, clearAiTraces, getAiTraceBlocks, subscribeAiTraces } from './ai/trace'
 import { decideAndApplyHeroTrade } from './ai/armyAlloc'
 import { runAiTurn } from './ai/turn'
 import type { WorldAttackTarget } from './ai/worldMove'
 import './App.css'
+
+/** Once Start Game runs, catalog bootstrap must not rewrite the chosen config. */
+let allowCatalogBootDefaults = true
 
 function isEditableKeyTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -140,7 +161,21 @@ function App() {
     date: string
     lines?: string[]
   } | null>(null)
+  const [levelUpNotice, setLevelUpNotice] = useState<LevelUpNotice | null>(null)
+  const [optionsHudNotice, setOptionsHudNotice] = useState<string | null>(null)
+  const [surrenderPrompt, setSurrenderPrompt] = useState<{
+    mobId: string
+    heroId: string
+    question: string
+    parts: Array<{ unitId: number; qty: number }>
+  } | null>(null)
+  const [fleePrompt, setFleePrompt] = useState<{
+    mobId: string
+    heroId: string
+  } | null>(null)
   const combatWaitRef = useRef<(() => void) | null>(null)
+  const matchEndShownRef = useRef(false)
+  const pendingLevelUpRef = useRef<LevelUpNotice | null>(null)
   const lastTownRef = useRef<{ id: string; name: string } | null>(null)
   const [mapEpoch, setMapEpoch] = useState(0)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
@@ -154,6 +189,24 @@ function App() {
     const next = { id: townId, name: townName }
     lastTownRef.current = next
     setWelcomeTown(next)
+  }, [])
+  const showDateThenLevelUp = useCallback(
+    (
+      notice: { title: string; date: string; lines?: string[] },
+      levelUp?: LevelUpNotice | null,
+    ) => {
+      pendingLevelUpRef.current = levelUp ?? null
+      setDateNotice(notice)
+    },
+    [],
+  )
+  const dismissDateNotice = useCallback(() => {
+    setDateNotice(null)
+    const pending = pendingLevelUpRef.current
+    pendingLevelUpRef.current = null
+    if (pending) {
+      setLevelUpNotice(pending)
+    }
   }, [])
   const onHeroMeet = useCallback((targetHeroId: string) => {
     const current = getSession()
@@ -231,18 +284,45 @@ function App() {
     setHeroScreen(false)
     const catalog = getCachedCatalog()
     if (catalog) {
-      const result = resolveMobPreBattle(current, catalog, self, mob)
+      const owner = current.players.find((row) => row.id === self.player_id)
+      const result = resolveMobPreBattle(current, catalog, self, mob, {
+        autoAcceptSurrender: owner?.is_ai === true,
+        autoResolveFlee: owner?.is_ai === true,
+      })
+      if (result.kind === 'surrender_offer') {
+        setCombat(null)
+        setFleePrompt(null)
+        setSurrenderPrompt({
+          mobId: mob.id,
+          heroId: self.id,
+          question: surrenderOfferPrompt(catalog, result.offerParts ?? []),
+          parts: result.offerParts ?? [],
+        })
+        return false
+      }
+      if (result.kind === 'flee_offer') {
+        setCombat(null)
+        setSurrenderPrompt(null)
+        setFleePrompt({
+          mobId: mob.id,
+          heroId: self.id,
+        })
+        return false
+      }
       if (result.kind !== 'fight') {
         updateSession(() => result.session)
         setCombat(null)
-        setDateNotice({
-          title: result.kind === 'surrender' ? 'Surrender' : 'Fled',
-          date:
-            result.kind === 'surrender'
-              ? 'The creatures join your army.'
-              : 'The creatures flee.',
-          lines: result.kind === 'flee' ? result.xpLines : undefined,
-        })
+        showDateThenLevelUp(
+          {
+            title: result.kind === 'surrender' ? 'Surrender' : 'Fled',
+            date:
+              result.kind === 'surrender'
+                ? 'The creatures join your army.'
+                : 'The creatures flee.',
+            lines: result.kind === 'flee' ? result.xpLines : undefined,
+          },
+          result.levelUpNotice,
+        )
         return false
       }
     }
@@ -252,16 +332,156 @@ function App() {
       defenderMobId: mob.id,
     })
     return true
-  }, [])
+  }, [showDateThenLevelUp])
+  const onSurrenderYes = useCallback(() => {
+    const prompt = surrenderPrompt
+    if (!prompt) {
+      return
+    }
+    const current = getSession()
+    const hero = current.heroes.find((row) => row.id === prompt.heroId)
+    const mob = current.mobs.find((row) => row.id === prompt.mobId)
+    setSurrenderPrompt(null)
+    if (!hero || !mob) {
+      return
+    }
+    const result = acceptMobSurrender(current, hero, mob, prompt.parts)
+    updateSession(() => result.session)
+    setDateNotice({
+      title: 'Surrender',
+      date: 'The creatures join your army.',
+    })
+  }, [surrenderPrompt])
+  const onSurrenderNo = useCallback(() => {
+    const prompt = surrenderPrompt
+    if (!prompt) {
+      return
+    }
+    const current = getSession()
+    const hero = current.heroes.find((row) => row.id === prompt.heroId)
+    const mob = current.mobs.find((row) => row.id === prompt.mobId)
+    setSurrenderPrompt(null)
+    if (!hero || !mob) {
+      return
+    }
+    const catalog = getCachedCatalog()
+    if (!catalog) {
+      return
+    }
+    const result = declineMobSurrender(current, catalog, hero, mob)
+    updateSession(() => result.session)
+    showDateThenLevelUp(
+      {
+        title: 'Fled',
+        date: 'The creatures flee.',
+        lines: result.xpLines,
+      },
+      result.levelUpNotice,
+    )
+  }, [surrenderPrompt, showDateThenLevelUp])
+  const onFleeFightAnyway = useCallback(() => {
+    const prompt = fleePrompt
+    if (!prompt) {
+      return
+    }
+    const current = getSession()
+    const hero = current.heroes.find((row) => row.id === prompt.heroId)
+    const mob = current.mobs.find((row) => row.id === prompt.mobId)
+    setFleePrompt(null)
+    if (!hero || !mob) {
+      return
+    }
+    appendAiTrace(
+      `mob_encounter — ${hero.name} vs ${mob.id} flee → fight_anyway (human)`,
+    )
+    setCombat({
+      attackerHeroId: hero.id,
+      defenderHeroId: null,
+      defenderMobId: mob.id,
+    })
+  }, [fleePrompt])
+  const onFleeLetThem = useCallback(() => {
+    const prompt = fleePrompt
+    if (!prompt) {
+      return
+    }
+    const current = getSession()
+    const hero = current.heroes.find((row) => row.id === prompt.heroId)
+    const mob = current.mobs.find((row) => row.id === prompt.mobId)
+    setFleePrompt(null)
+    if (!hero || !mob) {
+      return
+    }
+    const catalog = getCachedCatalog()
+    if (!catalog) {
+      return
+    }
+    const result = letMobFlee(current, catalog, hero, mob)
+    updateSession(() => result.session)
+    showDateThenLevelUp(
+      {
+        title: 'Fled',
+        date: 'The creatures flee.',
+        lines: result.xpLines,
+      },
+      result.levelUpNotice,
+    )
+  }, [fleePrompt, showDateThenLevelUp])
   const onMobMeet = useCallback((mobId: string) => {
     beginMobEncounter(mobId)
   }, [beginMobEncounter])
-  const closeCombat = useCallback(() => {
-    setCombat(null)
-    const done = combatWaitRef.current
-    combatWaitRef.current = null
-    done?.()
+  const maybeShowMatchEnd = useCallback(() => {
+    const result = matchVictoryResult(getSession())
+    if (!result || matchEndShownRef.current) {
+      return
+    }
+    matchEndShownRef.current = true
+    const winnerNames = result.winners.map((player) => player.id).join(', ')
+    const loserNames = result.losers.map((player) => player.id).join(', ')
+    setDateNotice({
+      title: 'Victory',
+      date: formatCalendar(getSession().game.calendar),
+      lines: [
+        `${winnerNames} — Victory`,
+        `${loserNames} — Defeat`,
+        'Eliminated players’ Resource Nodes reverted to Neutral.',
+      ],
+    })
   }, [])
+  const closeCombat = useCallback(
+    (levelUp?: LevelUpNotice | null) => {
+      setCombat(null)
+      const done = combatWaitRef.current
+      combatWaitRef.current = null
+      done?.()
+      // Re-bind world FoW after combat (live Set / paint can desync while the
+      // map stays mounted under the combat overlay).
+      syncActivePlayerView()
+      const result = matchVictoryResult(getSession())
+      if (result && !matchEndShownRef.current) {
+        matchEndShownRef.current = true
+        const winnerNames = result.winners.map((player) => player.id).join(', ')
+        const loserNames = result.losers.map((player) => player.id).join(', ')
+        showDateThenLevelUp(
+          {
+            title: 'Victory',
+            date: formatCalendar(getSession().game.calendar),
+            lines: [
+              `${winnerNames} — Victory`,
+              `${loserNames} — Defeat`,
+              'Eliminated players’ Resource Nodes reverted to Neutral.',
+            ],
+          },
+          levelUp,
+        )
+        return
+      }
+      if (levelUp) {
+        setLevelUpNotice(levelUp)
+      }
+    },
+    [showDateThenLevelUp],
+  )
   const onEndTurn = useCallback(() => {
     setWelcomeTown(null)
     setHeroScreen(false)
@@ -274,10 +494,12 @@ function App() {
     syncActivePlayerView()
     const next = getSession().game.calendar
     const title = calendarRolloverTitle(previous, next)
-    if (title) {
+    if (title && !matchVictoryResult(getSession())) {
       setDateNotice({ title, date: formatCalendar(next) })
+    } else {
+      maybeShowMatchEnd()
     }
-  }, [closeCombat])
+  }, [closeCombat, maybeShowMatchEnd])
   const onStartGame = useCallback((config: GameConfig) => {
     void (async () => {
       try {
@@ -285,11 +507,19 @@ function App() {
       } catch {
         // Launch with whatever catalog is already cached.
       }
+      allowCatalogBootDefaults = false
       setWelcomeTown(null)
       setHeroScreen(false)
       setTrade(null)
-      closeCombat()
+      setCombat(null)
+      const done = combatWaitRef.current
+      combatWaitRef.current = null
+      done?.()
       setDateNotice(null)
+      setLevelUpNotice(null)
+      pendingLevelUpRef.current = null
+      setSurrenderPrompt(null)
+      matchEndShownRef.current = false
       lastTownRef.current = null
       clearAiTraces()
       aiRanKeyRef.current = ''
@@ -306,7 +536,7 @@ function App() {
       }
       setMapEpoch((n) => n + 1)
     })()
-  }, [closeCombat])
+  }, [])
   const adoptHero = useCallback((id: string) => {
     const row = getSession().heroes.find((hero) => hero.id === id)
     if (!row) {
@@ -417,9 +647,24 @@ function App() {
         if (inOptions || editable) {
           return
         }
+        if (levelUpNotice) {
+          event.preventDefault()
+          setLevelUpNotice(null)
+          return
+        }
         if (dateNotice) {
           event.preventDefault()
-          setDateNotice(null)
+          dismissDateNotice()
+          return
+        }
+        if (surrenderPrompt) {
+          event.preventDefault()
+          onSurrenderNo()
+          return
+        }
+        if (fleePrompt) {
+          event.preventDefault()
+          onFleeLetThem()
           return
         }
         if (combat) {
@@ -473,7 +718,16 @@ function App() {
           return
         }
         event.preventDefault()
-        if (heroScreen || welcomeTown || trade || combat || dateNotice) {
+        if (
+          heroScreen ||
+          welcomeTown ||
+          trade ||
+          combat ||
+          dateNotice ||
+          levelUpNotice ||
+          surrenderPrompt ||
+          fleePrompt
+        ) {
           return
         }
         onEndTurn()
@@ -514,10 +768,16 @@ function App() {
     cycleHero,
     cycleTown,
     dateNotice,
+    dismissDateNotice,
+    fleePrompt,
     heroScreen,
+    levelUpNotice,
     onEndTurn,
+    onFleeLetThem,
+    onSurrenderNo,
     openHeroScreen,
     openTownScreen,
+    surrenderPrompt,
     trade,
     welcomeTown,
     aiPhase,
@@ -530,7 +790,7 @@ function App() {
     }
     const timer = window.setTimeout(() => {
       setDateNotice(null)
-    }, 2500)
+    }, 1500)
     return () => window.clearTimeout(timer)
   }, [dateNotice])
 
@@ -648,9 +908,18 @@ function App() {
     void refreshCatalogFromDb()
       .then((catalog) => {
         if (!cancelled) {
-          updateSession((current) =>
-            assignHeroesFromPool(current, catalog.hero_pool),
-          )
+          updateSession((current) => {
+            // F5 / bootstrap: re-apply New Game app_config defaults before spawn.
+            // Skip after Start Game so a slow catalog refresh cannot wipe picks.
+            if (
+              allowCatalogBootDefaults &&
+              current.heroes.length === 0 &&
+              current.towns.length === 0
+            ) {
+              return createSessionFromConfig(defaultGameConfig(catalog))
+            }
+            return assignHeroesFromPool(current, catalog.hero_pool)
+          })
         }
       })
       .catch(() => {})
@@ -751,17 +1020,66 @@ function App() {
         >
           End Turn
         </button>
+        {optionsHudNotice ? (
+          <p className="options-notice hud-options-notice" role="status">
+            {optionsHudNotice}
+          </p>
+        ) : null}
         <div className="hud-end">
-          <DebugCopyPanel onCopy={copyDebug} sections={debugSections} />
+          <DebugCopyPanel
+            sections={debugSections}
+            onAddStartingUnits={() => {
+              const session = getSession()
+              const selectedId = getSelectedMapHeroId()
+              const hero =
+                (selectedId
+                  ? session.heroes.find((row) => row.id === selectedId)
+                  : undefined) ?? session.heroes[0]
+              if (!hero) {
+                return
+              }
+              if (hero.class_id == null || heroArmyStackCount(session, hero.id) > 0) {
+                return
+              }
+              updateSession((current) => grantHeroStartingArmy(current, hero.id))
+            }}
+            onAddWorldMobs={() => {
+              updateSession(addWorldMobs)
+            }}
+          />
           <OptionsMenu
             hexScale={hexScale}
             onHexScale={setHexScale}
+            onLevelUpNotice={setLevelUpNotice}
+            onHudNotice={setOptionsHudNotice}
+            onStartFixedFight={(kind: FixedFightKind) => {
+              const result = prepareFixedFight(getSession(), kind)
+              if ('error' in result) {
+                setOptionsHudNotice(result.error)
+                return
+              }
+              setWelcomeTown(null)
+              setTrade(null)
+              setHeroScreen(false)
+              setSurrenderPrompt(null)
+              setFleePrompt(null)
+              setSession(result.session)
+              setCombat({
+                attackerHeroId: result.heroId,
+                defenderHeroId: result.defenderHeroId,
+                defenderMobId: result.mobId ?? undefined,
+              })
+              setOptionsHudNotice(result.notice)
+            }}
             onLoaded={() => {
               setWelcomeTown(null)
               setHeroScreen(false)
               setTrade(null)
               closeCombat()
               setDateNotice(null)
+              setLevelUpNotice(null)
+              setOptionsHudNotice(null)
+              pendingLevelUpRef.current = null
               lastTownRef.current = null
               clearAiTraces()
               aiRanKeyRef.current = ''
@@ -802,13 +1120,63 @@ function App() {
         onSiegeTown={onSiegeTown}
         onMobMeet={onMobMeet}
       />
+      {surrenderPrompt ? (
+        <div
+          className="date-notice"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="surrender-prompt-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div
+            className="date-notice-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h1 id="surrender-prompt-title">Surrender</h1>
+            <p>{surrenderPrompt.question}</p>
+            <p className="surrender-prompt-actions">
+              <button type="button" onClick={onSurrenderYes}>
+                Yes
+              </button>
+              <button type="button" onClick={onSurrenderNo}>
+                No
+              </button>
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {fleePrompt ? (
+        <div
+          className="date-notice"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="flee-prompt-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div
+            className="date-notice-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h1 id="flee-prompt-title">Flee</h1>
+            <p>{fleeOfferPrompt()}</p>
+            <p className="surrender-prompt-actions">
+              <button type="button" onClick={onFleeFightAnyway}>
+                Fight Anyway
+              </button>
+              <button type="button" onClick={onFleeLetThem}>
+                Let Them Flee
+              </button>
+            </p>
+          </div>
+        </div>
+      ) : null}
       {dateNotice ? (
         <div
           className="date-notice"
           role="status"
           aria-live="polite"
           aria-labelledby="date-notice-title"
-          onClick={() => setDateNotice(null)}
+          onClick={dismissDateNotice}
         >
           <div className="date-notice-card">
             <h1 id="date-notice-title">{dateNotice.title}</h1>
@@ -819,6 +1187,34 @@ function App() {
           </div>
         </div>
       ) : null}
+      {levelUpNotice ? (
+        <div
+          className="date-notice"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="level-up-notice-title"
+          onClick={() => setLevelUpNotice(null)}
+        >
+          <div
+            className="date-notice-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h1 id="level-up-notice-title">
+              {levelUpNotice.heroName} is now Level {levelUpNotice.level}
+            </h1>
+            {levelUpNotice.bumps.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+            <button
+              type="button"
+              className="date-notice-ok"
+              onClick={() => setLevelUpNotice(null)}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
       {combat ? (
         <CombatScreen
           attackerHeroId={combat.attackerHeroId}
@@ -826,7 +1222,6 @@ function App() {
           siegeTownId={combat.siegeTownId}
           defenderMobId={combat.defenderMobId}
           debugSections={debugSections}
-          onCopyDebug={copyDebug}
           onExit={closeCombat}
         />
       ) : null}
