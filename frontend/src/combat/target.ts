@@ -22,6 +22,7 @@ import {
   combatMovementReachable,
   combatPathSteps,
   footprintSpecFor,
+  groundEffectMovementBlockKeys,
   hexKey,
   landingOccupiedForMover,
   moveKindForUnit,
@@ -142,6 +143,7 @@ function moverStats(
     stack.side,
     kind,
   )
+  const geBlocks = groundEffectMovementBlockKeys(battle)
   return {
     unit,
     kind,
@@ -153,6 +155,7 @@ function moverStats(
     passableMoat,
     stopOnly,
     costAdjust,
+    geBlocks,
   }
 }
 
@@ -533,6 +536,7 @@ function stepsToward(
   stopOnly?: ReadonlySet<string>,
   landOccupied?: ReadonlySet<string>,
   costAdjust?: EnterCostAdjust,
+  movementBlockKeys?: ReadonlySet<string>,
 ): Axial[] | null {
   const exact = reachable.get(hexKey(hover.q, hover.r))
   if (exact != null && exact.length > 0) {
@@ -550,6 +554,7 @@ function stepsToward(
     stopOnly,
     landOccupied,
     costAdjust,
+    movementBlockKeys,
   )
   return truncated.length > 0 ? truncated : null
 }
@@ -609,7 +614,7 @@ export function combatHover(
   zone: HexZone = 'center',
   heroes?: CombatHeroes,
 ): CombatHover | null {
-  const { unit, kind, occupied, landOccupied, budget, from, spec, passableMoat, stopOnly, costAdjust } = moverStats(
+  const { unit, kind, occupied, landOccupied, budget, from, spec, passableMoat, stopOnly, costAdjust, geBlocks } = moverStats(
     attacker,
     battle,
     catalog,
@@ -689,6 +694,7 @@ export function combatHover(
         stopOnly,
         landOccupied,
         costAdjust,
+        geBlocks,
       )
       return toward ? moveTowardHover(from, toward) : null
     }
@@ -843,6 +849,7 @@ export function combatHover(
         stopOnly,
         landOccupied,
         costAdjust,
+        geBlocks,
       )
       if (!steps) {
         return null
@@ -886,6 +893,7 @@ export function combatHover(
       stopOnly,
       landOccupied,
       costAdjust,
+      geBlocks,
     )
     return steps ? moveTowardHover(from, steps) : null
   }
@@ -950,6 +958,7 @@ export function combatHover(
         stopOnly,
         landOccupied,
         costAdjust,
+        geBlocks,
       )
       if (steps.length > 0) {
         return {
@@ -992,6 +1001,7 @@ export function combatHover(
     stopOnly,
     landOccupied,
     costAdjust,
+    geBlocks,
   )
   return steps ? moveTowardHover(from, steps) : null
 }

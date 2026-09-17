@@ -5,11 +5,8 @@ import { unitAttackShape, unitById } from '../town/catalog'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
 import { isHeroStack } from './battle'
 import {
-  buildPassiveZoneFromTemplate,
-  filterFirePlaceableHexKeys,
   FIRE_GROUND_EFFECT_ID,
   placeFireOnHexKeys,
-  placeGroundEffectOnBattle,
   placeGroundEffectOnEmptyHexes,
   placeStormOnHexKeys,
   STORM_GROUND_EFFECT_ID,
@@ -63,14 +60,25 @@ export function tryLeaveGroundEffectOnAttackPath(
     rolledKeys.push(occupancyKey(hex.q, hex.r))
   }
   const unitName = unitById(catalog, stack.unitId)?.name ?? 'Attacker'
+  const effectLabel =
+    templateId === STORM_GROUND_EFFECT_ID
+      ? 'Storm'
+      : templateId === FIRE_GROUND_EFFECT_ID
+        ? 'Fire'
+        : 'ground effect'
+  // S6-36 / S6-50: one aggregated leave-behind line (not per-hex spam).
   const lines: string[] =
-    chance < 100 && attempted > 0
+    attempted > 0 && (chance < 100 || templateId === STORM_GROUND_EFFECT_ID)
       ? [
-          chanceRollLog(unitName, chance, hits > 0, {
-            action: 'to leave ground effect per hex',
-            success: `${hits}/${attempted} hexes.`,
-            fail: `0/${attempted} hexes.`,
-          }),
+          templateId === STORM_GROUND_EFFECT_ID ||
+          templateId === FIRE_GROUND_EFFECT_ID
+            ? `${unitName} dropped ${effectLabel} ${hits}/${attempted} times` +
+              (chance < 100 ? ` (${chance}% per hex).` : '.')
+            : chanceRollLog(unitName, chance, hits > 0, {
+                action: 'to leave ground effect per hex',
+                success: `${hits}/${attempted} hexes.`,
+                fail: `0/${attempted} hexes.`,
+              }),
         ]
       : []
   if (rolledKeys.length === 0) {
@@ -130,22 +138,6 @@ function leaveFireOnAttackPath(
   tiles: CombatTile[] | undefined,
   caster: Hero | null,
 ): { battle: CombatBattle; tiles?: CombatTile[] } {
-  if (!caster) {
-    const keys = filterFirePlaceableHexKeys(rolledKeys, tiles, catalog)
-    if (keys.length === 0) {
-      return { battle, ...(tiles ? { tiles } : {}) }
-    }
-    const zone = buildPassiveZoneFromTemplate(
-      catalog,
-      FIRE_GROUND_EFFECT_ID,
-      keys,
-      stack.side,
-    )
-    if (!zone) {
-      return { battle, ...(tiles ? { tiles } : {}) }
-    }
-    return placeGroundEffectOnBattle(battle, zone, tiles)
-  }
   const fire = placeFireOnHexKeys(
     battle,
     catalog,
@@ -168,18 +160,6 @@ function leaveStormOnAttackPath(
   tiles: CombatTile[] | undefined,
   caster: Hero | null,
 ): { battle: CombatBattle; tiles?: CombatTile[] } {
-  if (!caster) {
-    const zone = buildPassiveZoneFromTemplate(
-      catalog,
-      STORM_GROUND_EFFECT_ID,
-      rolledKeys,
-      stack.side,
-    )
-    if (!zone) {
-      return { battle, ...(tiles ? { tiles } : {}) }
-    }
-    return placeGroundEffectOnBattle(battle, zone, tiles)
-  }
   const storm = placeStormOnHexKeys(
     battle,
     catalog,

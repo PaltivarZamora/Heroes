@@ -3,11 +3,18 @@ import { neighborHexes } from '../hex/pathfinding'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
-  heroEffectiveStats,
   heroTypeName,
   unitAttackShape,
   unitById,
 } from '../town/catalog'
+import {
+  missingPassiveStatKey,
+  passiveStatNumber,
+  passiveStatSourceValue,
+  passiveStatString,
+  passiveStatStringList,
+  requirePassiveStats,
+} from '../town/heroPassiveStats'
 import type {
   CombatBattle,
   CombatGroundEffect,
@@ -24,8 +31,7 @@ import { chanceRollLog } from './combatLog'
 
 export const SHADOW_GROUND_EFFECT_ID = 3
 export const SHADOW_GROWTH_PCT_PER_LEVEL = 2
-export const NECRO_SHADOW_DMG_PCT_PER_INTEL = 2
-export const DEATH_KNIGHT_SHADOW_MOVE_DISCOUNT = 0.75
+
 
 let shadowSeq = 0
 
@@ -391,8 +397,8 @@ export function tickShadowGrowth(
 }
 
 /**
- * Necromancer passive: Ground/Submerge units on Shadow deal +intel×2% damage.
- * Returns the bonus percent (e.g. 20 for intel 10), or 0 if ineligible.
+ * Necromancer passive: eligible move-type units on Shadow deal
+ * +(stat × multiplier_pct)% damage. Tunables from passive_stats.
  */
 export function necromancerShadowDamageBonusPct(
   striker: CombatStack,
@@ -403,13 +409,24 @@ export function necromancerShadowDamageBonusPct(
   if (isHeroStack(striker) || striker.qty <= 0) {
     return 0
   }
-  const unit = unitById(catalog, striker.unitId)
-  const kind = moveKindForUnit(unit, catalog)
-  if (kind === 'flying' || kind === 'hover') {
-    return 0
-  }
   const hero = heroForSide(striker.side, heroes ?? {})
   if (!isHeroClass(catalog, hero, 'Necromancer') || !hero) {
+    return 0
+  }
+  const stats = requirePassiveStats(catalog, hero, 'Necromancer shadow dmg')
+  if (!stats) {
+    return 0
+  }
+  const multPct = passiveStatNumber(stats, 'multiplier_pct')
+  const statSource = passiveStatString(stats, 'stat_source')
+  const filters = passiveStatStringList(stats, 'unit_filter')
+  if (multPct == null) {
+    missingPassiveStatKey(catalog, hero, 'multiplier_pct', 'Necromancer')
+    return 0
+  }
+  const unit = unitById(catalog, striker.unitId)
+  const kind = moveKindForUnit(unit, catalog)
+  if (!necromancerMoveTypeAllowed(kind, filters)) {
     return 0
   }
   const onShadow = stackFootprint(striker, catalog).some((hex) =>
@@ -418,15 +435,42 @@ export function necromancerShadowDamageBonusPct(
   if (!onShadow) {
     return 0
   }
-  const intel = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  ).intel
-  return Math.max(0, intel * NECRO_SHADOW_DMG_PCT_PER_INTEL)
+  const base = passiveStatSourceValue(catalog, hero, statSource ?? 'INT')
+  return Math.max(0, base * multPct)
 }
 
-/** Death Knight passive: flat 0.75 MP discount when entering a Shadow hex. */
+function necromancerMoveTypeAllowed(
+  kind: MoveKind,
+  filters: string[],
+): boolean {
+  if (filters.length === 0) {
+    // Legacy equivalent: Ground + Submerge (not flying/hover).
+    return kind !== 'flying' && kind !== 'hover'
+  }
+  const allowed = new Set(filters.map((row) => row.trim().toLowerCase()))
+  if (kind === 'ground') {
+    return allowed.has('ground')
+  }
+  if (kind === 'submerge') {
+    return allowed.has('submerge')
+  }
+  if (kind === 'flying') {
+    return allowed.has('flying')
+  }
+  if (kind === 'hover') {
+    return allowed.has('hover')
+  }
+  return false
+}
+
+/**
+ * Death Knight passive: on Shadow tiles, multiply terrain move_cost by
+ * (1 - min(STR × pct_per_point%, max_reduction_pct%)).
+ *
+ * Standing rule (future): if another move-cost reducer is added, stack
+ * reduction percentages additively (sum %s, then apply once) — do not
+ * multiply independent multipliers together.
+ */
 export function deathKnightShadowMoveAdjust(
   battle: CombatBattle | undefined,
   catalog: ReferenceCatalog,
@@ -437,13 +481,34 @@ export function deathKnightShadowMoveAdjust(
   if (!battle || moverKind === 'flying' || moverKind === 'hover') {
     return undefined
   }
-  if (!sideHasHeroClass(catalog, heroes, moverSide, 'Death Knight')) {
+  const hero = heroForSide(moverSide, heroes)
+  if (!hero || !isHeroClass(catalog, hero, 'Death Knight')) {
     return undefined
   }
+  const stats = requirePassiveStats(catalog, hero, 'Death Knight shadow move')
+  if (!stats) {
+    return undefined
+  }
+  const pctPerPoint = passiveStatNumber(stats, 'pct_per_point')
+  const maxReductionPct = passiveStatNumber(stats, 'max_reduction_pct')
+  const statSource = passiveStatString(stats, 'stat_source')
+  if (pctPerPoint == null) {
+    missingPassiveStatKey(catalog, hero, 'pct_per_point', 'Death Knight')
+    return undefined
+  }
+  if (maxReductionPct == null) {
+    missingPassiveStatKey(catalog, hero, 'max_reduction_pct', 'Death Knight')
+    return undefined
+  }
+  const base = passiveStatSourceValue(catalog, hero, statSource ?? 'STR')
+  const reduction = Math.min(
+    (base * pctPerPoint) / 100,
+    maxReductionPct / 100,
+  )
   return (q, r, cost) => {
     if (!isShadowHex(battle, q, r)) {
       return cost
     }
-    return Math.max(0, cost - DEATH_KNIGHT_SHADOW_MOVE_DISCOUNT)
+    return Math.max(0, cost * (1 - reduction))
   }
 }

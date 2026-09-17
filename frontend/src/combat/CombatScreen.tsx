@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 import { Application, Container, Graphics } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
 import {
@@ -43,6 +50,8 @@ import {
   unitIsStationary,
   unitTakesTurns,
   unitAutoTarget,
+  combatEndTimerSeconds,
+  combatLogTimerSeconds,
   type AbilityRow,
 } from '../town/catalog'
 import { heroPortraitUrl, terrainArtUrl, unitPortraitUrl } from '../town/slotArt'
@@ -79,6 +88,7 @@ import {
   combatMovementReachable,
   combatStackCells,
   footprintSpecFor,
+  groundEffectMovementBlockKeys,
   hexKey,
   landingOccupiedForMover,
   moveKindForUnit,
@@ -126,7 +136,7 @@ import {
   parseTarget,
 } from './ability'
 import { applyStandingHazards, type HazardTick } from './hazards'
-import { tryTempestStormScatter } from './confluence'
+import { applyTerrainGrowth, tryTempestStormScatter } from './confluence'
 import { visibleGroundEffects } from './groundEvasion'
 import { tryAutoSplitOnTurn } from './mudSplit'
 import {
@@ -148,6 +158,7 @@ import { CombatTargetIcon } from './CombatIcons'
 import { HeroAbilityPopup } from './HeroAbilityPopup'
 import { StackInspectPopup } from './StackInspectPopup'
 import { inspectHoverRows } from './inspect'
+import { heroTooltipText } from '../town/HeroTooltip'
 import {
   abilityCooldownReady,
   canAffordAbility,
@@ -201,7 +212,7 @@ function emptyWalkHazardAcc(): WalkHazardAcc {
     fireHits: 0,
     fireDmg: 0,
     fireKilled: 0,
-    fireLabel: 'Fire',
+    fireLabel: '',
     hitKeys: [],
   }
 }
@@ -211,7 +222,9 @@ function absorbWalkHazard(acc: WalkHazardAcc, tick: HazardTick): void {
   acc.fireHits += tick.fireHits
   acc.fireDmg += tick.fireDamage
   acc.fireKilled += tick.fireKilled
-  if (tick.fireLabel) {
+  // Only keep a label from ticks that actually dealt Fire/Storm damage —
+  // empty later steps must not overwrite Storm → "Fire".
+  if (tick.fireHits > 0 && tick.fireLabel.trim()) {
     acc.fireLabel = tick.fireLabel
   }
   acc.hitKeys.push(...tick.hitKeys)
@@ -226,7 +239,7 @@ function walkHazardLogLines(
     acc.fireDmg,
     acc.fireKilled,
     unitName,
-    acc.fireLabel,
+    acc.fireLabel || 'Fire',
   )
   return fire ? [...acc.lines, fire] : [...acc.lines]
 }
@@ -235,8 +248,8 @@ const AUTO_ACT_MS = 1500
 const HIT_FLASH_MS = 450
 /** Earth Spikes / paced multi-hit knockback spacing. */
 const ABILITY_BEAT_MS = 500
-/** Informational turn log — auto-dismiss so watching fights isn't click-to-continue. */
-const LOG_AUTO_MS = 1500
+/** app_config sentinel: no auto-dismiss (Space/Esc only). */
+const POPUP_NO_AUTO_SECS = 99
 
 type CombatScreenProps = {
   attackerHeroId: string
@@ -276,6 +289,52 @@ type FieldView = {
     atk?: { q: number; r: number }
     def?: { q: number; r: number }
   }
+}
+
+function CombatHoverTip({
+  left,
+  top,
+  placeBelow,
+  children,
+}: {
+  left: number
+  top: number
+  placeBelow: boolean
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const parent = el?.offsetParent
+    if (!el || !(parent instanceof HTMLElement)) {
+      return
+    }
+    const pad = 8
+    el.style.setProperty('--tip-shift-x', '0px')
+    const tip = el.getBoundingClientRect()
+    const bound = parent.getBoundingClientRect()
+    let shift = 0
+    if (tip.left < bound.left + pad) {
+      shift = bound.left + pad - tip.left
+    } else if (tip.right > bound.right - pad) {
+      shift = bound.right - pad - tip.right
+    }
+    el.style.setProperty('--tip-shift-x', `${shift}px`)
+  }, [left, top, placeBelow, children])
+  return (
+    <div
+      ref={ref}
+      className={
+        placeBelow
+          ? 'combat-stack-hover-tip is-below'
+          : 'combat-stack-hover-tip'
+      }
+      style={{ left, top }}
+      aria-hidden="true"
+    >
+      {children}
+    </div>
+  )
 }
 
 function HeroHexArt({
@@ -552,13 +611,14 @@ export function CombatScreen({
         lineDir?: { q: number; r: number } | null
       },
       holdUnitTurn?: boolean,
-    ) => void
-  >(() => {})
+    ) => boolean
+  >(() => false)
   const performCombatIntentRef = useRef<
     (intent: CombatHover, stack: CombatStack, current: CombatBattle) => boolean
   >(() => false)
   const tryAiHeroAbilityRef = useRef<() => boolean>(() => false)
   const dismissLogRef = useRef<() => void>(() => {})
+  const queueBattleLogRef = useRef<(payload: BattleLog) => void>(() => {})
   const moatStartKeyRef = useRef<string | null>(null)
   const splitStartKeyRef = useRef<string | null>(null)
   const [field, setField] = useState<FieldView | null>(null)
@@ -593,6 +653,11 @@ export function CombatScreen({
   heroCastRef.current = heroCast
   combatHeroesRef.current = combatHeroes
   waypointPlanRef.current = waypointPlan
+  // Keep live tiles (Void/Barricade stamps) available to the Pixi hover path —
+  // that handler closes over the map-init array and must not use a stale copy.
+  if (field) {
+    fieldRef.current = field
+  }
   {
     const acting = battle && !log && !moving && !summary ? activeStack(battle) : null
     const actingOwner = acting
@@ -1035,6 +1100,7 @@ export function CombatScreen({
             stack.side,
             kind,
           ),
+          groundEffectMovementBlockKeys(battle),
         )
       }
       // Shift-click: stage a waypoint (no commit yet).
@@ -1158,6 +1224,11 @@ export function CombatScreen({
     }
     setHoverTarget(null)
     setLog(null)
+    const endSecs = combatEndTimerSeconds(catalogRef.current)
+    if (endSecs === 0) {
+      onExit(pending.levelUpNotice ?? null)
+      return true
+    }
     setSummary(pending)
     return true
   }
@@ -1178,7 +1249,7 @@ export function CombatScreen({
     }
     setBattle(advanced)
     if (advanced.roundLog && advanced.roundLog.length > 0) {
-      setLog({ lines: advanced.roundLog, holdTurn: true })
+      queueBattleLogRef.current({ lines: advanced.roundLog, holdTurn: true })
       setBattle({
         ...advanced,
         roundLog: [],
@@ -1212,6 +1283,36 @@ export function CombatScreen({
       presentRoundAdvance(advanced)
     }
   }
+  /** Show battle log, or skip entirely when combat_log_timer is 0. */
+  const queueBattleLog = (payload: BattleLog) => {
+    const skipPopup =
+      payload.lines.length === 0 ||
+      combatLogTimerSeconds(catalogRef.current) === 0
+    if (skipPopup) {
+      if (payload.lines.length === 0 && payload.holdTurn === true) {
+        return
+      }
+      // Apply dismiss side-effects without painting the popup.
+      const current = battleRef.current
+      const cat = catalogRef.current
+      if (!current || !cat) {
+        return
+      }
+      if (finishCombat(current)) {
+        return
+      }
+      if (payload.holdTurn !== true) {
+        const advanced = advanceTurn(current, cat, Math.random, {
+          tiles: fieldRef.current?.tiles,
+          heroes: combatHeroesRef.current,
+        })
+        presentRoundAdvance(advanced)
+      }
+      return
+    }
+    setLog(payload)
+  }
+  queueBattleLogRef.current = queueBattleLog
   dismissLogRef.current = dismissLog
 
   const applyOutcomeIfOver = (current: CombatBattle) => {
@@ -1245,18 +1346,18 @@ export function CombatScreen({
       lineDir?: { q: number; r: number } | null
     },
     holdUnitTurn = false,
-  ) => {
+  ): boolean => {
     if (!battle || !catalog || !field) {
-      return
+      return false
     }
     const heroRow = battle.stacks.find((row) => row.id === heroStackId)
     if (heroRow?.hasActedThisRound) {
       setHeroCast(null)
-      return
+      return false
     }
     if (!abilityMeetsCastGate(catalog, ability, battle, casterSide)) {
       setHeroCast(null)
-      return
+      return false
     }
     const liveCaster =
       getSession().heroes.find((row) => row.id === caster.id) ?? caster
@@ -1265,7 +1366,7 @@ export function CombatScreen({
       !abilityCooldownReady(liveCaster, ability)
     ) {
       setHeroCast(null)
-      return
+      return false
     }
     const resolved = resolveAbility(
       battle,
@@ -1281,19 +1382,20 @@ export function CombatScreen({
     setHeroCast(null)
     reachApiRef.current?.draw([])
     if (!resolved) {
-      setLog({
+      queueBattleLog({
         lines: [`${ability.name} is not designed yet.`],
         holdTurn: true,
       })
-      return
+      return false
     }
     if (resolved.noOp === true) {
       // Utility no-ops should not spend resources/cooldowns nor count as a
-      // successful cast for turn progression.
+      // successful cast — return false so AI can proceed to the unit action
+      // instead of retrying the same empty clear forever.
       setLog(null)
       setBattle(resolved.battle)
       applyOutcomeIfOver(resolved.battle)
-      return
+      return false
     }
     updateSession((current) => {
       const withArmy = resolved.applySession
@@ -1336,9 +1438,9 @@ export function CombatScreen({
           : markHeroActed(resolved.battle, heroStackId)
         setBattle(next)
         applyOutcomeIfOver(next)
-        setLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+        queueBattleLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
       })()
-      return
+      return true
     }
     const beats = resolved.beats
     if (beats && beats.length > 0) {
@@ -1354,7 +1456,7 @@ export function CombatScreen({
             setHitFlash({ n: Date.now(), groups: beat.flashes })
           }
           if (beat.lines.length > 0) {
-            setLog({ lines: beat.lines, holdTurn: true })
+            queueBattleLog({ lines: beat.lines, holdTurn: true })
           }
           await sleep(ABILITY_BEAT_MS)
         }
@@ -1367,9 +1469,9 @@ export function CombatScreen({
           : markHeroActed(resolved.battle, heroStackId)
         setBattle(next)
         applyOutcomeIfOver(next)
-        setLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+        queueBattleLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
       })()
-      return
+      return true
     }
     const next = resolved.endsRound
       ? resolved.battle
@@ -1385,7 +1487,8 @@ export function CombatScreen({
     if (resolved.flashes.length > 0) {
       setHitFlash({ n: Date.now(), groups: resolved.flashes })
     }
-    setLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+    queueBattleLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+    return true
   }
   finishHeroCastRef.current = finishHeroCast
 
@@ -1435,7 +1538,7 @@ export function CombatScreen({
     if (!pick) {
       return false
     }
-    finishHeroCastRef.current(
+    return finishHeroCastRef.current(
       pick.ability,
       caster,
       heroStack.side,
@@ -1443,7 +1546,6 @@ export function CombatScreen({
       pick.aim,
       acting.id !== heroStack.id,
     )
-    return true
   }
 
   presentTurnEndRef.current = (
@@ -1508,7 +1610,7 @@ export function CombatScreen({
     setBattle(next)
     applyOutcomeIfOver(next)
     if (lines.length > 0) {
-      setLog({
+      queueBattleLog({
         lines,
         holdTurn: fervorLines.length > 0,
       })
@@ -1606,7 +1708,7 @@ export function CombatScreen({
     setBattle(next)
     applyOutcomeIfOver(next)
     if (lines.length > 0) {
-      setLog({
+      queueBattleLog({
         lines,
         holdTurn: fervorLines.length > 0 || resolved.grantExtraTurn === true,
       })
@@ -1659,11 +1761,74 @@ export function CombatScreen({
     if (!log || summary) {
       return
     }
+    const secs = combatLogTimerSeconds(catalog)
+    if (secs === 0) {
+      dismissLogRef.current()
+      return
+    }
+    if (secs >= POPUP_NO_AUTO_SECS) {
+      return
+    }
     const timer = window.setTimeout(() => {
       dismissLogRef.current()
-    }, LOG_AUTO_MS)
+    }, secs * 1000)
     return () => window.clearTimeout(timer)
-  }, [log, summary])
+  }, [log, summary, catalog])
+
+  useEffect(() => {
+    if (!summary) {
+      return
+    }
+    const secs = combatEndTimerSeconds(catalog)
+    if (secs === 0) {
+      onExit(summary.levelUpNotice ?? null)
+      return
+    }
+    if (secs >= POPUP_NO_AUTO_SECS) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      onExit(summary.levelUpNotice ?? null)
+    }, secs * 1000)
+    return () => window.clearTimeout(timer)
+  }, [summary, catalog, onExit])
+
+  // Space / Esc: dismiss post-turn log or post-combat summary immediately.
+  useEffect(() => {
+    if (!log && !summary) {
+      return
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        event.key !== 'Escape' &&
+        event.key !== ' ' &&
+        event.code !== 'Space'
+      ) {
+        return
+      }
+      if (event.repeat) {
+        return
+      }
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (summary) {
+        onExit(summary.levelUpNotice ?? null)
+        return
+      }
+      dismissLogRef.current()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [log, summary, onExit])
 
   useEffect(() => {
     if (!battle || !catalog || !field) {
@@ -1775,7 +1940,11 @@ export function CombatScreen({
     setBattle(created)
     setOpening(snap)
     openingRef.current = snap
-    setLog(totems.lines.length > 0 ? { lines: totems.lines } : null)
+    if (totems.lines.length > 0) {
+      queueBattleLog({ lines: totems.lines })
+    } else {
+      setLog(null)
+    }
     setSummary(null)
     appliedRef.current = false
     pendingSummaryRef.current = null
@@ -2073,7 +2242,14 @@ export function CombatScreen({
       field.tiles,
       combatHeroesRef.current,
     )
-    if (tick.lines.length === 0) {
+    const growth = applyTerrainGrowth(
+      tick.battle,
+      stack.id,
+      catalog,
+      field.tiles,
+    )
+    const lines = [...tick.lines, ...growth.lines]
+    if (lines.length === 0) {
       return
     }
     if (tick.hitKeys.length > 0) {
@@ -2082,12 +2258,12 @@ export function CombatScreen({
         groups: [{ keys: tick.hitKeys, color: 'red' }],
       })
     }
-    const next = { ...tick.battle, moatStartKey: key }
+    const next = { ...growth.battle, moatStartKey: key }
     setBattle(next)
     applyOutcomeIfOver(next)
-    const still = tick.battle.stacks.find((row) => row.id === stack.id)
-    setLog({
-      lines: tick.lines,
+    const still = growth.battle.stacks.find((row) => row.id === stack.id)
+    queueBattleLog({
+      lines,
       holdTurn: still != null && still.qty > 0,
     })
   }, [battle, catalog, field, log, moving, summary])
@@ -2114,7 +2290,7 @@ export function CombatScreen({
     }
     setBattle(split.battle)
     if (split.lines.length > 0) {
-      setLog({ lines: split.lines, holdTurn: true })
+      queueBattleLog({ lines: split.lines, holdTurn: true })
     }
   }, [battle, catalog, field, log, moving, summary])
 
@@ -2622,12 +2798,13 @@ export function CombatScreen({
         return
       }
       if (unitAutoTarget(unit)) {
+        const name = unit?.name ?? 'Unknown'
         if (isMagicAttackSilenced(stack, catalog)) {
           presentTurnEndRef.current(
             battle,
             stack.id,
             [
-              `${stack.qty} ${unit?.name ?? 'Unknown'} are silenced and cannot use Magic attacks.`,
+              `${stack.qty} ${name} are silenced and cannot use Magic attacks.`,
             ],
             false,
             true,
@@ -2641,7 +2818,13 @@ export function CombatScreen({
           field.tiles,
         )
         if (!target) {
-          presentTurnEndRef.current(battle, stack.id, [], false, true)
+          presentTurnEndRef.current(
+            battle,
+            stack.id,
+            [`${stack.qty} ${name} find no target in range.`],
+            false,
+            true,
+          )
           return
         }
         const resolved = resolveAttack(
@@ -2657,7 +2840,26 @@ export function CombatScreen({
           combatHeroes,
         )
         if (!resolved) {
-          presentTurnEndRef.current(battle, stack.id, [], false, true)
+          presentTurnEndRef.current(
+            battle,
+            stack.id,
+            [`${stack.qty} ${name} cannot attack.`],
+            false,
+            true,
+          )
+          return
+        }
+        // Guard empty attack logs so auto-fire never silently skips the popup.
+        if (resolved.log.lines.length === 0) {
+          presentAttackRef.current(
+            {
+              ...resolved,
+              log: {
+                lines: [`${stack.qty} ${name} attack but hit nothing.`],
+              },
+            },
+            [],
+          )
           return
         }
         presentAttackRef.current(resolved, [])
@@ -3123,6 +3325,8 @@ export function CombatScreen({
         onHoverRef.current(null)
         onHoverInspectRef.current(null)
       }
+      /** Live combat tiles (Void/Barricade stamps), not the frozen map-init copy. */
+      const liveTiles = () => fieldRef.current?.tiles ?? tiles
       const setInspectHoverAt = (
         currentBattle: CombatBattle,
         currentCatalog: NonNullable<typeof catalogRef.current>,
@@ -3134,7 +3338,7 @@ export function CombatScreen({
           hex.r,
           currentCatalog,
         )
-        if (occupant && !isHeroStack(occupant) && occupant.qty > 0) {
+        if (occupant && occupant.qty > 0) {
           onHoverInspectRef.current(occupant.id)
         } else {
           onHoverInspectRef.current(null)
@@ -3184,7 +3388,7 @@ export function CombatScreen({
             ability,
             heroStack.side,
             currentBattle,
-            tiles,
+            liveTiles(),
             cast.teleportUnitId,
           )
           const caster = heroForSide(heroStack.side, combatHeroesRef.current)
@@ -3197,7 +3401,7 @@ export function CombatScreen({
             ability,
             heroStack.side,
             currentBattle,
-            tiles,
+            liveTiles(),
             { q: hex.q, r: hex.r },
             caster,
             lineDir,
@@ -3297,7 +3501,7 @@ export function CombatScreen({
           stack,
           { q: hex.q, r: hex.r },
           currentBattle,
-          tiles,
+          liveTiles(),
           currentCatalog,
           zone,
           combatHeroesRef.current,
@@ -3318,7 +3522,7 @@ export function CombatScreen({
                   virtual,
                   { q: hex.q, r: hex.r },
                   currentBattle,
-                  tiles,
+                  liveTiles(),
                   currentCatalog,
                   zone,
                   combatHeroesRef.current,
@@ -3408,7 +3612,7 @@ export function CombatScreen({
                 ability,
                 heroStack.side,
                 currentBattle,
-                tiles,
+                liveTiles(),
               ),
             )
             return
@@ -3793,12 +3997,45 @@ export function CombatScreen({
                   const stack = battle.stacks.find(
                     (row) => row.id === hoverInspectId,
                   )
-                  if (!stack || stack.qty <= 0 || isHeroStack(stack)) {
+                  if (!stack || stack.qty <= 0) {
                     return null
                   }
                   const pos = anchorAt(field.anchors, stack.q, stack.r)
                   if (!pos) {
                     return null
+                  }
+                  if (isHeroStack(stack)) {
+                    const hero =
+                      session.heroes.find((row) => row.id === stack.heroId) ??
+                      (stack.side === 'atk' ? attacker : defender) ??
+                      null
+                    if (!hero) {
+                      return null
+                    }
+                    const tipText = heroTooltipText(catalog, hero, session)
+                    const box = stackArtBox(pos, field.hexPx, 1, stack.side)
+                    const tipEstimatePx = 10 + tipText.split('\n').length * 17
+                    const placeBelow = box.top - 4 - tipEstimatePx < 0
+                    return (
+                      <CombatHoverTip
+                        left={box.left + box.width / 2}
+                        top={
+                          placeBelow
+                            ? box.top + box.height + 4
+                            : box.top - 4
+                        }
+                        placeBelow={placeBelow}
+                      >
+                        {tipText.split('\n').map((line, index) => (
+                          <div
+                            key={`${index}:${line}`}
+                            className="combat-stack-hover-row"
+                          >
+                            <span>{line || '\u00a0'}</span>
+                          </div>
+                        ))}
+                      </CombatHoverTip>
+                    )
                   }
                   const atkSample =
                     battle.stacks.find((row) => row.side === 'atk') ?? null
@@ -3851,19 +4088,14 @@ export function CombatScreen({
                   const tipEstimatePx = 10 + rows.length * 17
                   const placeBelow = box.top - 4 - tipEstimatePx < 0
                   return (
-                    <div
-                      className={
+                    <CombatHoverTip
+                      left={box.left + box.width / 2}
+                      top={
                         placeBelow
-                          ? 'combat-stack-hover-tip is-below'
-                          : 'combat-stack-hover-tip'
-                      }
-                      style={{
-                        left: box.left + box.width / 2,
-                        top: placeBelow
                           ? box.top + box.height + 4
-                          : box.top - 4,
-                      }}
-                      aria-hidden="true"
+                          : box.top - 4
+                      }
+                      placeBelow={placeBelow}
                     >
                       {rows.map((row) => (
                         <div
@@ -3874,7 +4106,7 @@ export function CombatScreen({
                           {row.value ? <span>{row.value}</span> : null}
                         </div>
                       ))}
-                    </div>
+                    </CombatHoverTip>
                   )
                 })()
               : null}

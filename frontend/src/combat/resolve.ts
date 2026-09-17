@@ -15,6 +15,7 @@ import { unitById } from '../town/catalog'
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
 import { defenderArmyIsGarrison, isHeroStack } from './battle'
 import { applyDemonReinforcement } from './demonReinforcement'
+import { applyClericEndOfBattlePassive } from './templePassive'
 import { isCreatureArmyUnit } from './siege'
 
 export type OpeningStack = {
@@ -418,6 +419,22 @@ export function applyCombatOutcome(
   if (!loser && !(siegeTown && loserSide === 'def') && !(mob && loserSide === 'def')) {
     return null
   }
+  // Cleric (S7-3): rez + heal pool before losses / army writeback so the
+  // summary and persisted qty reflect full-stack resurrects.
+  let battleResolved = battle
+  let clericLines: string[] = []
+  if (winner) {
+    const clericPass = applyClericEndOfBattlePassive(
+      battle,
+      catalog,
+      winner,
+      winnerSide,
+      opening,
+      Math.random,
+    )
+    battleResolved = clericPass.battle
+    clericLines = clericPass.lines
+  }
   const summary: CombatSummary = {
     loserPlayer:
       loserSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
@@ -426,26 +443,27 @@ export function applyCombatOutcome(
       winnerSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
     winnerHeroName: winner?.name ?? siegeTown?.name ?? (mob ? 'Creatures' : 'Town'),
     loserLosses: lossesFor(loserSide, opening, battle, catalog),
-    winnerLosses: lossesFor(winnerSide, opening, battle, catalog),
+    winnerLosses: lossesFor(winnerSide, opening, battleResolved, catalog),
     winnerGains: [],
-    xpLines: [],
+    xpLines: [...clericLines],
     levelUpNotice: null,
   }
   let next = session
   if (winner) {
-    next = applyWinnerArmy(next, winner, winnerSide, battle)
+    next = applyWinnerArmy(next, winner, winnerSide, battleResolved)
     const persisted = persistSummonedStacks(
       next,
       winner,
       winnerSide,
-      battle,
+      battleResolved,
       catalog,
     )
     next = persisted.session
     summary.winnerGains = persisted.gains
     // XP (and any level-ups) before demon tier — INT bumps from this battle
-    // must count toward floor(INT/6). Demons previously ran first, so a hero
-    // who crossed INT 18 on this fight still resolved at the old tier.
+    // must count toward floor(INT/6) Warlock / floor(INT/4) Heretic. Demons
+    // previously ran first, so a hero who crossed the tier threshold on this
+    // fight still resolved at the old tier.
     const ownValue = partsArmyValue(
       catalog,
       openingValueParts(opening, catalog, winnerSide),
@@ -458,13 +476,13 @@ export function applyCombatOutcome(
       next,
       catalog,
       winner.id,
-      openingKillParts(opening, battle, catalog, loserSide),
+      openingKillParts(opening, battleResolved, catalog, loserSide),
       enemyValue,
       ownValue,
       'battle',
     )
     next = xp.session
-    summary.xpLines = xp.lines
+    summary.xpLines = [...summary.xpLines, ...xp.lines]
     summary.levelUpNotice = levelUpNoticeForAward(catalog, xp)
     const winnerLive =
       next.heroes.find((hero) => hero.id === winner.id) ?? winner
@@ -472,7 +490,7 @@ export function applyCombatOutcome(
       next,
       catalog,
       winnerLive,
-      battle,
+      battleResolved,
       opening,
       loserSide,
     )

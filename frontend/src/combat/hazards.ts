@@ -1,7 +1,6 @@
 import type { ReferenceCatalog } from '../town/catalog'
 import type { CombatHeroes } from './attack'
 import type { CombatBattle, CombatTile } from './battle'
-import { applyTerrainGrowth } from './confluence'
 import { applyFireGroundDamage } from './groundEffect'
 import { applyMoatEntryDamage, type MoatTick } from './moat'
 
@@ -15,8 +14,9 @@ export type HazardTick = MoatTick & {
 }
 
 /**
- * Moat + Fire/Storm + terrain growth. Call at turn-start, walk entry, and
- * turn-end (skip turn-end when walk entry already applied hazards this action).
+ * Moat + Fire/Storm. Call at turn-start, walk entry, and turn-end
+ * (skip turn-end when walk entry already applied hazards this action).
+ * Mud Sprite terrain growth is turn-start only — see applyTerrainGrowth.
  */
 export function applyStandingHazards(
   battle: CombatBattle,
@@ -35,10 +35,9 @@ export function applyStandingHazards(
     heroes,
     random,
   )
-  const growth = applyTerrainGrowth(fire.battle, stackId, catalog, tiles)
   return {
-    battle: growth.battle,
-    lines: [...moat.lines, ...fire.lines, ...growth.lines],
+    battle: fire.battle,
+    lines: [...moat.lines, ...fire.lines],
     hitKeys: [...new Set([...moat.hitKeys, ...fire.hitKeys])],
     fireDamage: fire.damage,
     fireHits: fire.damage > 0 ? 1 : 0,

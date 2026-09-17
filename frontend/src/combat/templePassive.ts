@@ -1,6 +1,13 @@
+import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
-import { heroEffectiveStats, unitById } from '../town/catalog'
-import { hexDistance } from '../hex/pathfinding'
+import { unitById } from '../town/catalog'
+import {
+  missingPassiveStatKey,
+  passiveStatNumber,
+  passiveStatSourceValue,
+  passiveStatString,
+  requirePassiveStats,
+} from '../town/heroPassiveStats'
 import {
   applyStackDamage,
   applyStackHeal,
@@ -15,44 +22,26 @@ import {
   type CombatSide,
   type CombatStack,
 } from './battle'
+import { frozenTownCount, isTempleUnit } from './heroArmyPassives'
+import { hexDistance } from '../hex/pathfinding'
 import { occupancyKey } from './occupancy'
 import { isHeroClass } from './shadow'
 import { isCreatureArmyUnit } from './siege'
-import { syncTombstonesFromWipes } from './tombstone'
+import {
+  removeTombstone,
+  stackFromTombstone,
+  syncTombstonesFromWipes,
+} from './tombstone'
 
-export function isTempleUnit(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  const unit = unitById(catalog, unitId)
-  if (!unit?.town_id) {
-    return false
-  }
-  const templeId = catalog.town.find(
-    (row) => row.name.trim().toLowerCase() === 'temple',
-  )?.id
-  return templeId != null && unit.town_id === templeId
-}
+export { isTempleUnit }
 
-/** Live Temple creature count on a side — recalculated each call (not battle-start frozen). */
-export function countTempleUnits(
-  battle: CombatBattle,
-  catalog: ReferenceCatalog,
-  side: CombatSide,
-): number {
-  let total = 0
-  for (const stack of battle.stacks) {
-    if (
-      stack.side !== side ||
-      stack.qty <= 0 ||
-      isHeroStack(stack) ||
-      !isTempleUnit(catalog, stack.unitId)
-    ) {
-      continue
-    }
-    total += stack.qty
-  }
-  return total
+/** Opening snapshot fields needed for Cleric casualty / full-rez checks. */
+export type ClericOpeningStack = {
+  id: string
+  side: CombatSide
+  slot: number
+  unitId: number
+  qty: number
 }
 
 function frontDeficit(stack: CombatStack, catalog: ReferenceCatalog): number {
@@ -77,40 +66,136 @@ function stackLabel(catalog: ReferenceCatalog, stack: CombatStack): string {
   return `${stack.qty} ${unitById(catalog, stack.unitId)?.name ?? 'unit'}`
 }
 
-/**
- * Cleric: intel × Temple count heal pool, spent on Temple stacks by
- * front-unit deficit descending (most hurt first).
- */
-export function applyClericPooledHeal(
+function matchesTownFilter(
+  catalog: ReferenceCatalog,
+  unitId: number,
+  filter: string | null,
+): boolean {
+  if (!filter) {
+    return isTempleUnit(catalog, unitId)
+  }
+  const needle = filter.trim().toLowerCase()
+  if (needle === 'temple') {
+    return isTempleUnit(catalog, unitId)
+  }
+  const unit = unitById(catalog, unitId)
+  const townId = catalog.town.find(
+    (row) => row.name.trim().toLowerCase() === needle,
+  )?.id
+  return townId != null && unit?.town_id === townId
+}
+
+function templeStackCountForHeal(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
-  heroes: CombatHeroes | undefined,
   side: CombatSide,
-): { battle: CombatBattle; lines: string[]; healKeys: string[] } {
-  const hero = heroForSide(side, heroes)
+  opening: ClericOpeningStack[],
+  filter: string | null,
+): number {
+  // Prefer battle-start frozen stack count (same as Barbarian/Paladin).
+  if (battle.armyTownCounts?.temple != null) {
+    return frozenTownCount(battle.armyTownCounts, 'temple', side)
+  }
+  let n = 0
+  for (const row of opening) {
+    if (row.side !== side || row.qty <= 0) {
+      continue
+    }
+    if (matchesTownFilter(catalog, row.unitId, filter)) {
+      n += 1
+    }
+  }
+  return n
+}
+
+function liveQtyForOpening(
+  battle: CombatBattle,
+  opening: ClericOpeningStack,
+): number {
+  const live = battle.stacks.find((row) => row.id === opening.id)
+  if (live && live.qty > 0) {
+    return live.qty
+  }
+  return 0
+}
+
+/**
+ * BR S7-3 Cleric end-of-battle passive:
+ * 1) Optional full resurrect of one Temple stack that took casualties.
+ * 2) Heal pool = INT × Temple stack count, most-hurt-first on living stacks.
+ * Replaces the old end-of-round heal entirely.
+ */
+export function applyClericEndOfBattlePassive(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
+  side: CombatSide,
+  opening: ClericOpeningStack[],
+  random: () => number = Math.random,
+): { battle: CombatBattle; lines: string[] } {
   if (!isHeroClass(catalog, hero, 'Cleric') || !hero) {
-    return { battle, lines: [], healKeys: [] }
+    return { battle, lines: [] }
   }
-  const templeCount = countTempleUnits(battle, catalog, side)
-  const intel = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  ).intel
-  let pool = Math.max(0, Math.floor(intel * templeCount))
-  if (pool <= 0) {
-    return { battle, lines: [], healKeys: [] }
+  const stats = requirePassiveStats(catalog, hero, 'Cleric end of battle')
+  if (!stats) {
+    return { battle, lines: [] }
   }
-  let stacks = [...battle.stacks]
+
+  const healTown = passiveStatString(stats, 'heal_town_filter')
+  const rezTown = passiveStatString(stats, 'rez_town_filter')
+  const healStat = passiveStatString(stats, 'heal_stat_source')
+  const rezChance = passiveStatNumber(stats, 'rez_chance_pct')
   const lines: string[] = []
-  const healKeys: string[] = []
+  let next = battle
+
+  // --- B: resurrect roll first (order assumption from BR S7-3) ---
+  if (rezChance == null) {
+    missingPassiveStatKey(catalog, hero, 'rez_chance_pct', 'Cleric rez')
+  } else if (rezChance > 0 && random() * 100 < rezChance) {
+    const eligible = opening.filter((row) => {
+      if (row.side !== side || row.qty <= 0) {
+        return false
+      }
+      if (!matchesTownFilter(catalog, row.unitId, rezTown ?? 'Temple')) {
+        return false
+      }
+      const live = liveQtyForOpening(next, row)
+      return live < row.qty
+    })
+    if (eligible.length > 0) {
+      const pick =
+        eligible[
+          Math.min(eligible.length - 1, Math.floor(random() * eligible.length))
+        ]!
+      const restored = fullResurrectTempleStack(next, catalog, pick)
+      next = restored.battle
+      lines.push(...restored.lines)
+    }
+  }
+
+  // --- A: heal pool ---
+  const stackCount = templeStackCountForHeal(
+    next,
+    catalog,
+    side,
+    opening,
+    healTown ?? 'Temple',
+  )
+  const statValue = passiveStatSourceValue(catalog, hero, healStat ?? 'INT')
+  let pool = Math.max(0, Math.floor(statValue * stackCount))
+  if (pool <= 0) {
+    return { battle: next, lines }
+  }
+
+  let stacks = [...next.stacks]
   let totalHealed = 0
+  const healLines: string[] = []
   while (pool > 0) {
     const candidates = stacks
       .filter(
         (row) =>
           row.side === side &&
-          isTempleUnit(catalog, row.unitId) &&
+          matchesTownFilter(catalog, row.unitId, healTown ?? 'Temple') &&
           isDamagedCreature(row, catalog),
       )
       .sort((a, b) => {
@@ -138,31 +223,94 @@ export function applyClericPooledHeal(
     }
     pool -= healed.healed
     totalHealed += healed.healed
-    stacks = stacks.map((row) =>
-      row.id === live.id ? healed.stack : row,
-    )
-    healKeys.push(occupancyKey(live.q, live.r))
-    lines.push(
+    stacks = stacks.map((row) => (row.id === live.id ? healed.stack : row))
+    healLines.push(
       `Cleric: healed ${stackLabel(catalog, healed.stack)} for ${healed.healed}.`,
     )
   }
-  if (totalHealed <= 0) {
-    return { battle, lines: [], healKeys: [] }
+  if (totalHealed > 0) {
+    lines.push(
+      `Cleric: Temple grace restores ${totalHealed} HP (pool ${Math.floor(statValue)}×${stackCount} stacks).`,
+      ...healLines,
+    )
+  }
+  return { battle: { ...next, stacks }, lines }
+}
+
+function fullResurrectTempleStack(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  opening: ClericOpeningStack,
+): { battle: CombatBattle; lines: string[] } {
+  const fullHp = Math.max(1, unitById(catalog, opening.unitId)?.health ?? 1)
+  const name = unitById(catalog, opening.unitId)?.name ?? 'unit'
+  const live = battle.stacks.find((row) => row.id === opening.id)
+  if (live && live.qty > 0) {
+    const restored: CombatStack = {
+      ...live,
+      qty: opening.qty,
+      topHealth: fullHp,
+      startingQty: Math.max(live.startingQty, opening.qty),
+    }
+    return {
+      battle: {
+        ...battle,
+        stacks: battle.stacks.map((row) =>
+          row.id === live.id ? restored : row,
+        ),
+      },
+      lines: [
+        `Cleric: fully resurrected ${opening.qty} ${name} (was ${live.qty}).`,
+      ],
+    }
+  }
+  const tomb =
+    (battle.tombstones ?? []).find((row) => row.id === opening.id) ??
+    (battle.tombstones ?? []).find(
+      (row) =>
+        row.side === opening.side &&
+        row.slot === opening.slot &&
+        row.unitId === opening.unitId,
+    )
+  if (tomb) {
+    const raised = stackFromTombstone(tomb, catalog, opening.qty)
+    const restored: CombatStack = {
+      ...raised,
+      qty: opening.qty,
+      topHealth: fullHp,
+      startingQty: Math.max(tomb.startingQty, opening.qty),
+      hasActedThisRound: true,
+    }
+    let next = removeTombstone(battle, tomb.id)
+    next = { ...next, stacks: [...next.stacks, restored] }
+    return {
+      battle: next,
+      lines: [
+        `Cleric: fully resurrected ${opening.qty} ${name} from the fallen.`,
+      ],
+    }
+  }
+  const restored: CombatStack = {
+    id: opening.id,
+    side: opening.side,
+    slot: opening.slot,
+    unitId: opening.unitId,
+    qty: opening.qty,
+    topHealth: fullHp,
+    startingQty: opening.qty,
+    q: 0,
+    r: 0,
+    hasActedThisRound: true,
+    retaliationsLeft: 0,
   }
   return {
-    battle: { ...battle, stacks },
-    lines: [
-      `Cleric: Temple grace restores ${totalHealed} HP (pool ${Math.floor(intel)}×${templeCount}).`,
-      ...lines,
-    ],
-    healKeys: [...new Set(healKeys)],
+    battle: { ...battle, stacks: [...battle.stacks, restored] },
+    lines: [`Cleric: fully resurrected ${opening.qty} ${name}.`],
   }
 }
 
 /**
- * Paladin: intel × Temple count damage pool. Spends only enough to kill
- * exactly 1 creature on the neediest damaged enemy (front deficit desc),
- * then re-picks (may revisit if still wounded). Fresh Temple count each round.
+ * Paladin end-of-round execute — retained but unused (S7-1). Kept for restore.
  */
 export function applyPaladinPooledExecute(
   battle: CombatBattle,
@@ -174,12 +322,18 @@ export function applyPaladinPooledExecute(
   if (!isHeroClass(catalog, hero, 'Paladin') || !hero) {
     return { battle, lines: [], hitKeys: [] }
   }
-  const templeCount = countTempleUnits(battle, catalog, side)
-  const intel = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  ).intel
+  let templeCount = 0
+  for (const stack of battle.stacks) {
+    if (
+      stack.side === side &&
+      stack.qty > 0 &&
+      !isHeroStack(stack) &&
+      isTempleUnit(catalog, stack.unitId)
+    ) {
+      templeCount += stack.qty
+    }
+  }
+  const intel = passiveStatSourceValue(catalog, hero, 'INT')
   let pool = Math.max(0, Math.floor(intel * templeCount))
   if (pool <= 0) {
     return { battle, lines: [], hitKeys: [] }
@@ -191,18 +345,13 @@ export function applyPaladinPooledExecute(
   let kills = 0
   while (pool > 0) {
     const candidates = stacks
-      .filter(
-        (row) =>
-          row.side !== side &&
-          isDamagedCreature(row, catalog),
-      )
+      .filter((row) => row.side !== side && isDamagedCreature(row, catalog))
       .sort((a, b) => {
         const da = frontDeficit(a, catalog)
         const db = frontDeficit(b, catalog)
         if (db !== da) {
           return db - da
         }
-        // Closer to death on equal deficit: lower remaining HP first.
         if (a.topHealth !== b.topHealth) {
           return a.topHealth - b.topHealth
         }
@@ -213,7 +362,6 @@ export function applyPaladinPooledExecute(
       break
     }
     const live = stacks.find((row) => row.id === target.id) ?? target
-    // Minimum damage to kill exactly one creature = current front HP.
     const spend = Math.max(1, live.topHealth)
     if (spend > pool) {
       break
@@ -240,13 +388,13 @@ export function applyPaladinPooledExecute(
   if (kills <= 0) {
     return { battle, lines: [], hitKeys: [] }
   }
-  const next = syncTombstonesFromWipes(
+  const synced = syncTombstonesFromWipes(
     battle,
     { ...battle, stacks, unitDeaths },
     catalog,
   )
   return {
-    battle: next,
+    battle: synced,
     lines: [
       `Paladin: Temple judgment claims ${kills} enem${kills === 1 ? 'y' : 'ies'} (pool ${Math.floor(intel)}×${templeCount}).`,
       ...lines,
@@ -255,36 +403,18 @@ export function applyPaladinPooledExecute(
   }
 }
 
+/** End-of-round Temple passives — Cleric heal removed (S7-3 end-of-battle). */
 export function applyTempleEndOfRoundPassives(
   battle: CombatBattle,
-  catalog: ReferenceCatalog,
-  heroes: CombatHeroes | undefined,
+  _catalog: ReferenceCatalog,
+  _heroes: CombatHeroes | undefined,
 ): {
   battle: CombatBattle
   lines: string[]
   hitKeys: string[]
   healKeys: string[]
 } {
-  let next = battle
-  const lines: string[] = []
-  const hitKeys: string[] = []
-  const healKeys: string[] = []
-  for (const side of ['atk', 'def'] as CombatSide[]) {
-    const healed = applyClericPooledHeal(next, catalog, heroes, side)
-    next = healed.battle
-    lines.push(...healed.lines)
-    healKeys.push(...healed.healKeys)
-    const smote = applyPaladinPooledExecute(next, catalog, heroes, side)
-    next = smote.battle
-    lines.push(...smote.lines)
-    hitKeys.push(...smote.hitKeys)
-  }
-  return {
-    battle: next,
-    lines,
-    hitKeys: [...new Set(hitKeys)],
-    healKeys: [...new Set(healKeys)],
-  }
+  return { battle, lines: [], hitKeys: [], healKeys: [] }
 }
 
 /**
@@ -331,9 +461,7 @@ export function applyHighPriestessHealOnKill(
     stacks: stacks.map((row) =>
       row.id === target.id ? healed.stack : row,
     ),
-    lines: [
-      `High Priestess: ${healed.stack.qty} ${name} heal to full.`,
-    ],
+    lines: [`High Priestess: ${healed.stack.qty} ${name} heal to full.`],
     healKeys: [occupancyKey(target.q, target.r)],
   }
 }
@@ -341,7 +469,7 @@ export function applyHighPriestessHealOnKill(
 /**
  * Divine Aura Master: +1 effective attack qty per Temple ally stack within
  * aura radius (not including self). Stack size does not matter — each stack
- * contributes a flat +1. Same ally can contribute to multiple Aura Masters.
+ * contributes a flat +1.
  */
 export function auraExtraQty(
   attacker: CombatStack,

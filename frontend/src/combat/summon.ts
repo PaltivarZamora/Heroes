@@ -20,6 +20,7 @@ import type {
 } from './battle'
 import { insertIntoRemainingInitiative, isHeroStack, stackMaxHealth } from './battle'
 import {
+  isShamanTotemStack,
   shamanTotemCount,
   totemSpawnExtras,
   totemUnitByName,
@@ -1133,8 +1134,9 @@ export function applyRadiusBlockerPlacement(
 }
 
 /**
- * Shaman: once at battle start, summon INT/8 totems near map center.
- * Each totem is randomly Fire or Lightning; HP = hero INT.
+ * Shaman: top up Fire/Lightning Totems near map center to floor(INT/6) (min 1).
+ * Spawns only the missing count — never heals, refreshes, or replaces survivors.
+ * Called at battle start and at the start of every subsequent round.
  */
 export function applyShamanBattleStartTotems(
   battle: CombatBattle,
@@ -1161,8 +1163,12 @@ export function applyShamanBattleStartTotems(
     if (!hero || !isHeroClass(catalog, hero, 'Shaman')) {
       continue
     }
-    const count = shamanTotemCount(catalog, hero)
-    if (count <= 0) {
+    const want = shamanTotemCount(catalog, hero)
+    const live = next.stacks.filter(
+      (row) => row.side === side && isShamanTotemStack(catalog, row),
+    ).length
+    const missing = Math.max(0, want - live)
+    if (missing <= 0) {
       continue
     }
     const intel = heroEffectiveStats(
@@ -1170,11 +1176,10 @@ export function applyShamanBattleStartTotems(
       hero.class_id,
       hero.current_level ?? 1,
     ).intel
-    let placed = 0
-    for (let i = 0; i < count; i += 1) {
+    let spawned = 0
+    for (let i = 0; i < missing; i += 1) {
       const pickFire = random() < 0.5
-      const unit =
-        (pickFire ? fire : lightning) ?? fire ?? lightning
+      const unit = (pickFire ? fire : lightning) ?? fire ?? lightning
       if (!unit) {
         break
       }
@@ -1189,7 +1194,7 @@ export function applyShamanBattleStartTotems(
       if (!hex) {
         break
       }
-      const spawned = spawnSummonedStack(
+      const result = spawnSummonedStack(
         next,
         catalog,
         tiles,
@@ -1202,11 +1207,13 @@ export function applyShamanBattleStartTotems(
         totemSpawnExtras(unit, intel),
         true,
       )
-      next = spawned.battle
-      placed += 1
+      next = result.battle
+      spawned += 1
     }
-    if (placed > 0) {
-      lines.push(`Shaman: ${placed} totem${placed === 1 ? '' : 's'} rise.`)
+    if (spawned > 0) {
+      lines.push(
+        `Shaman: ${spawned} totem${spawned === 1 ? '' : 's'} rise${spawned === 1 ? 's' : ''} (${live + spawned}/${want}).`,
+      )
     }
   }
   return { battle: next, lines }

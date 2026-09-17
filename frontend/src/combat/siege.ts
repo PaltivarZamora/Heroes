@@ -392,6 +392,19 @@ export function liveWallLosKeys(
     }
     if (unit?.blocks_los === true || isWallSegmentUnit(unit)) {
       keys.add(`${stack.q},${stack.r}`)
+      continue
+    }
+    // Earth Spike / Ice Shard drops: indestructible stationary fixtures even
+    // when an older DB row omitted blocks_los. Skip Arcane Shield / Illusions.
+    if (
+      stack.indestructible === true &&
+      unit?.stationary === true &&
+      (unit.speed == null || unit.speed <= 0) &&
+      !isSiegeEngineUnit(unit) &&
+      unitAttackShape(unit).immuneToMagicDmg !== true &&
+      unitAttackShape(unit).aiTreatAsThreat !== true
+    ) {
+      keys.add(`${stack.q},${stack.r}`)
     }
   }
   return keys

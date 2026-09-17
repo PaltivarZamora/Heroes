@@ -144,6 +144,11 @@ export type UnitCombatAbilities = {
   chancePct: number | null
   /** When true with chancePct, bonus attack never fires on retaliation. */
   extraAttackOnAttackOnly: boolean
+  /**
+   * Flat % of live Speed to cut on hit (Vines Thorned Lash). Paired with
+   * chancePct + resistStat + conditionDuration (from debuff_duration).
+   */
+  speedDebuffPct: number | null
   /** Leave ground_effect while moving (Void origin, or full_path trail). */
   leavesGroundEffectOnMove: boolean
   /** Leave ground_effect on attack geometry (any shape via geometricHexes). */
@@ -230,8 +235,18 @@ export type UnitCombatAbilities = {
    * Uncapped across successive turns (Fervor-style).
    */
   extraTurnOnKill: boolean
-  /** Multiplier for strength→% chance (extra_turn_on_kill / similar). */
+  /** Multiplier for strength→% chance (extra_turn_on_kill / Ninja chain). */
   chancePctFlatStat: number | null
+  /**
+   * Ninja: after each successful bonus attack, halve the chance and roll again
+   * until a roll fails (STR × chancePctFlatStat starts the chain).
+   */
+  chanceHalvesEachAttempt: boolean
+  /**
+   * Ninja / similar: enable STR×chancePctFlatStat bonus-attack rolls
+   * (distinct from Assassin's flat chancePct + extraAttackOnAttackOnly).
+   */
+  grantsSecondAttack: boolean
   /** Angelic Warrior: always fire a second strike in the same action. */
   dualAttack: boolean
   /** Damage type of the second dual-attack strike. */
@@ -244,9 +259,11 @@ export type UnitCombatAbilities = {
   auraRadius: number | null
   /** When true with auraRadius: +1 effective qty per nearby Temple ally stack (not sum of their units). */
   auraCountsAlliesAsExtraQty: boolean
-  /** Mud Sprite: grow qty when on this terrain_type.id. */
+  /** Mud Sprite: grow at turn-start only when on this terrain_type.id. */
   terrainGrowthTerrainTypeId: number | null
-  /** Mud Sprite: qty (and startingQty) gained per growth tick. */
+  /**
+   * Legacy flat growth amount (unused). Mud Sprite grows by floor(qty/10), min 1.
+   */
   terrainGrowthAmount: number | null
   /** Tidal Caller: clear this ground_effect.id along the attack path (Fire = 6). */
   clearsGroundEffectId: number | null
@@ -290,6 +307,7 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   killOnOverflow: false,
   chancePct: null,
   extraAttackOnAttackOnly: false,
+  speedDebuffPct: null,
   leavesGroundEffectOnMove: false,
   leavesGroundEffectOnAttack: false,
   groundEffectId: null,
@@ -326,6 +344,8 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   healFull: false,
   extraTurnOnKill: false,
   chancePctFlatStat: null,
+  chanceHalvesEachAttempt: false,
+  grantsSecondAttack: false,
   dualAttack: false,
   secondAttackDmgType: null,
   secondAttackMinDmg: null,
@@ -384,6 +404,11 @@ export type HeroTypeRow = {
   stamina: number
   /** Town synergy passive (first engine support: Necromancer / Death Knight). */
   passive_ability: Record<string, unknown> | null
+  /**
+   * Tunable constants for the class passive (BR S7-2). Engine formulas read
+   * named keys from here — not from hardcoded literals.
+   */
+  passive_stats: Record<string, unknown> | null
 }
 
 export const HERO_STAT_KEYS = [
@@ -908,11 +933,17 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
       // Knight / Monk (Citadel): ensure Humanoid-scaled passive keys exist when DB
       // still only has display text.
       let passive_ability = livePassive
-      if (lower === 'warlock' || lower === 'heretic') {
+      if (lower === 'warlock') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            'Post-battle: Humanoid+Living kills summon demons equal to INT. Tier = min(floor(INT/6), highest enemy tier killed), rounded down to a real Pandemonium demon tier.',
+            'Post-battle: converts Humanoid+Living kills into demon reinforcements. Max tier = floor(INT/6), capped by highest tier killed. Qty = INT.',
+        }
+      } else if (lower === 'heretic') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            'Post-battle: converts Humanoid+Living kills into demon reinforcements. Max tier = floor(INT/4), capped by highest tier killed. Qty = INT.',
         }
       } else if (lower === 'knight') {
         passive_ability = {
@@ -952,39 +983,36 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
             'When a Tower unit takes Magic damage from an attack, gain +1 Mana (once per unit hit per attack action, capped at max).',
         }
       } else if (lower === 'cleric') {
+        // BR S7-3: end-of-battle rez + heal pool (replaces prior EOR heal copy).
         passive_ability = {
           ...(livePassive ?? {}),
-          end_of_round_temple_heal: true,
           display:
-            'End of round: heal pool = INT × Temple units. Spend on damaged Temple stacks, most-hurt (deficit) first.',
+            'End of battle: 1% chance to fully resurrect a random Temple stack that took casualties. Also heals damaged Temple stacks (most-hurt first) from a pool of INT x Temple stack count HP.',
         }
       } else if (lower === 'paladin') {
+        // BR S7-1: Temple stack dmg% bonuses replace the prior end-of-round execute copy.
         passive_ability = {
           ...(livePassive ?? {}),
-          end_of_round_temple_execute: true,
           display:
-            'End of round: damage pool = INT × Temple units. Efficiently execute 1 creature at a time on the neediest damaged enemies.',
+            'STR + Temple stacks bonus Physical dmg%; INT + Temple stacks bonus Magic dmg%',
         }
       } else if (lower === 'druid') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            livePassive?.display ??
-            '(INT × total Grove units in army)% bonus Resistance, army-wide',
+            'Hero gains +1 Mana when a Grove stack attacks (once per attack action, capped at max)',
         }
       } else if (lower === 'ranger') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            livePassive?.display ??
-            '(STR/6 × total Grove units)% chance a Grove unit attack avoids enemy retaliation',
+            'STR + (Grove stacks x3) chance to avoid enemy retaliation (min 1%, max 90%)',
         }
       } else if (lower === 'barbarian') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            livePassive?.display ??
-            '(STR/3 × total Fortress units)% bonus Physical dmg, half that as Armor reduction, army-wide',
+            'STR + (Fortress stacks x2) bonus Physical dmg%, army-wide',
         }
       } else if (lower === 'rogue') {
         passive_ability = {
@@ -997,29 +1025,32 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            livePassive?.display ??
-            '(STR/5 × Non-Living Factory unit count)% bonus Physical dmg, applies only to Non-Living Factory units',
+            'STR + (Non-Living Factory stacks x2) bonus Physical dmg%, applies only to Non-Living Factory units',
         }
       } else if (lower === 'conjurer') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            livePassive?.display ??
-            '(INT/5 × Non-Living Factory unit count)% bonus Magic dmg, applies only to Non-Living Factory units',
+            'INT + (Non-Living Factory stacks x2) bonus Magic dmg%, applies only to Non-Living Factory units',
         }
       } else if (lower === 'shaman') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            livePassive?.display ??
-            'Once per battle, summons INT/8 totems (random Fire or Lightning each) near map center',
+            "Each round, ensures INT/6 (min 1) totems are up near map center, spawning only what's missing (random Fire or Lightning)",
         }
       } else if (lower === 'evoker') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
             livePassive?.display ??
-            '(INT × total Confluence units)% bonus dmg on Hero own Arcane spell casts',
+            '(INT × Confluence STACKS in army, not unit headcount)% bonus dmg on Hero own spell casts',
+        }
+      } else if (lower === 'death knight') {
+        passive_ability = {
+          ...(livePassive ?? {}),
+          display:
+            'Each step on Shadow costs (terrain move cost x (1 - STR x 2%)), capped at max 75% reduction',
         }
       }
       return {
@@ -1035,6 +1066,25 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         crit_amt: asInt(rec.crit_amt, 10),
         stamina: asInt(rec.stamina, 10),
         passive_ability,
+        // Cleric S7-3: ensure engine keys exist when DB still has the old
+        // 1%-rez-only payload. DB values override defaults when present.
+        passive_stats:
+          lower === 'cleric'
+            ? {
+                heal_stat_source: 'INT',
+                heal_count_mode: 'stack_count',
+                heal_town_filter: 'Temple',
+                heal_timing: 'end_of_battle',
+                heal_target_rule: 'most_hurt_first',
+                rez_chance_pct: 1,
+                rez_town_filter: 'Temple',
+                rez_condition: 'casualties_gt_0',
+                rez_selection: 'random',
+                rez_scope: 'full_stack',
+                rez_timing: 'end_of_battle',
+                ...(asJsonObject(rec.passive_stats) ?? {}),
+              }
+            : asJsonObject(rec.passive_stats),
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
@@ -1438,8 +1488,8 @@ function fillDesignedAbilities(
           ...(row.stats ?? {}),
           min_dmg: 10,
           max_dmg: 20,
-          // Freeze is not in condition table yet — Stun is the proven skip-turn key.
-          inflicts_condition: 2,
+          // BR S7-4: Slow (condition 12), not Stun — differentiates from Earthquake.
+          inflicts_condition: 12,
           duration: 1,
           resist_stat: 'resistance',
         },
@@ -2413,7 +2463,200 @@ function fillDesignedAbilities(
       }
     }
     return row
-  })
+  }).map(applyS75AbilityNormalization)
+}
+
+/**
+ * BR S7-5: normalize condition chance / resist patterns on listed hero abilities.
+ * Final pass so older fillDesignedAbilities blocks cannot leave resist_stat or
+ * chance_pct_flat_stat on rows that must not have them.
+ */
+function applyS75AbilityNormalization(row: AbilityRow): AbilityRow {
+  const id = row.id
+  const name = row.name.trim().toLowerCase()
+  const stats: Record<string, unknown> = { ...(row.stats ?? {}) }
+
+  const stripResistAndLegacyChance = () => {
+    delete stats.resist_stat
+    delete stats.no_stat_threshold
+    delete stats.chance_pct_flat_stat
+  }
+
+  // Condition-is-the-point: 100%, resistable.
+  if (id === 59 || name === 'confuse') {
+    stats.chance_pct = 100
+    stats.resist_stat = 'resistance'
+    stats.duration = 1
+    stats.inflicts_condition = 3
+    return { ...row, stats }
+  }
+  if (id === 95 || name === 'fear') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 100
+    stats.resist_stat = 'resistance'
+    stats.duration = 1
+    stats.inflicts_condition = 1
+    return { ...row, stats }
+  }
+
+  // Condition-as-side-effect: tier flat %, NOT resistable.
+  if (id === 26 || name === 'mind spike') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 25
+    stats.duration = 1
+    stats.inflicts_condition = 4
+    return { ...row, stats }
+  }
+  if (id === 27 || name === 'mass silence') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 25
+    stats.duration = 1
+    stats.inflicts_condition = 4
+    return { ...row, stats }
+  }
+  if (id === 14 || name === 'blizzard') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 33
+    stats.duration = 1
+    stats.inflicts_condition = 12
+    return { ...row, stats }
+  }
+  if (id === 61 || name === 'explosive trap') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 33
+    stats.duration = 1
+    stats.inflicts_condition = 2
+    return { ...row, stats }
+  }
+  if (id === 15 || name === 'earthquake') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 50
+    stats.duration = 1
+    stats.inflicts_condition = 2
+    return { ...row, stats }
+  }
+  if (id === 79 || name === 'shield slam') {
+    stripResistAndLegacyChance()
+    stats.chance_pct = 50
+    stats.duration = 1
+    stats.inflicts_condition = 2
+    return { ...row, stats }
+  }
+
+  // Knockback — 100%, not resistable (not a condition).
+  if (id === 42 || name === 'wind shear') {
+    delete stats.resist_stat
+    stats.chance_pct = 100
+    return { ...row, stats }
+  }
+
+  return row
+}
+
+/** BR S7-5 unit condition chance / duration overrides (Base 33% / Advanced 50%). */
+function s75UnitConditionNorm(
+  unitId: number,
+  lowerName: string,
+): Partial<UnitCombatAbilities> | null {
+  const byId: Record<number, Partial<UnitCombatAbilities>> = {
+    // Fear
+    20: { chancePct: 50, conditionDuration: 1, resistStat: 'resistance' },
+    90: { chancePct: 33, conditionDuration: 1, resistStat: 'resistance' },
+    91: { chancePct: 50, conditionDuration: 1, resistStat: 'resistance' },
+    144: { chancePct: 33, conditionDuration: 1, resistStat: 'resistance' },
+    222: { chancePct: 33, conditionDuration: 1, resistStat: 'resistance' },
+    // Stun
+    38: { chancePct: 33, conditionDuration: 1, resistStat: 'resistance' },
+    39: { chancePct: 50, conditionDuration: 1, resistStat: 'resistance' },
+    150: {
+      chancePct: 33,
+      conditionDuration: 1,
+      resistStat: 'resistance',
+      chancePctFlatStat: null,
+    },
+    151: {
+      chancePct: 50,
+      conditionDuration: 1,
+      resistStat: 'resistance',
+      chancePctFlatStat: null,
+    },
+    // Silence
+    84: { chancePct: 33, resistStat: 'resistance' },
+    85: { chancePct: 50, resistStat: 'resistance' },
+    212: {
+      chancePct: 33,
+      resistStat: 'resistance',
+      chancePctFlatStat: null,
+    },
+    213: {
+      chancePct: 50,
+      resistStat: 'resistance',
+      chancePctFlatStat: null,
+    },
+    // Confuse (was qty_plus_stat / chance_pct_stat_mult — retired)
+    206: {
+      chancePct: 33,
+      conditionDuration: 1,
+      resistStat: 'resistance',
+      chancePctFlatStat: null,
+    },
+    207: {
+      chancePct: 50,
+      conditionDuration: 1,
+      resistStat: 'resistance',
+      chancePctFlatStat: null,
+    },
+  }
+  if (byId[unitId]) {
+    return byId[unitId]!
+  }
+  // Name fallbacks when ids drift.
+  if (lowerName === 'advanced spirit') {
+    return byId[20]!
+  }
+  if (lowerName === 'nightmare') {
+    return byId[90]!
+  }
+  if (lowerName === 'advanced nightmare') {
+    return byId[91]!
+  }
+  if (lowerName === 'leviathan') {
+    return byId[144]!
+  }
+  if (lowerName === 'bound spirit') {
+    return byId[222]!
+  }
+  if (lowerName === 'medusa') {
+    return byId[38]!
+  }
+  if (lowerName === 'advanced medusa') {
+    return byId[39]!
+  }
+  if (lowerName === 'arbalast') {
+    return byId[150]!
+  }
+  if (lowerName === 'advanced arbalast') {
+    return byId[151]!
+  }
+  if (lowerName === 'concussive turret') {
+    return byId[84]!
+  }
+  if (lowerName === 'advanced concussive turret') {
+    return byId[85]!
+  }
+  if (lowerName === 'abyssal siren') {
+    return byId[212]!
+  }
+  if (lowerName === 'advanced abyssal siren') {
+    return byId[213]!
+  }
+  if (lowerName === 'succubus') {
+    return byId[206]!
+  }
+  if (lowerName === 'advanced succubus') {
+    return byId[207]!
+  }
+  return null
 }
 
 function asGroundEffects(rows: unknown): GroundEffectRow[] {
@@ -2736,7 +2979,10 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     skipIfNone: rec?.skip_if_none === true,
     inflictsCondition: asOptionalId(rec?.inflicts_condition),
     resistStat: asResistStat(rec?.resist_stat),
-    conditionDuration: asShapeInt(rec?.duration, DEFAULT_UNIT_ABILITIES.conditionDuration),
+    conditionDuration: asShapeInt(
+      rec?.debuff_duration ?? rec?.duration,
+      DEFAULT_UNIT_ABILITIES.conditionDuration,
+    ),
     autoSplitOnTurn: rec?.auto_split_on_turn === true,
     skipFirstTurn: rec?.skip_first_turn === true,
     killOnOverflow: rec?.kill_on_overflow === true,
@@ -2745,6 +2991,10 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
         ? Math.min(100, Math.floor(chanceRaw))
         : null,
     extraAttackOnAttackOnly: rec?.extra_attack_on_attack_only === true,
+    speedDebuffPct: (() => {
+      const n = Number(rec?.speed_debuff_pct)
+      return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null
+    })(),
     leavesGroundEffectOnMove: rec?.leaves_ground_effect_on_move === true,
     leavesGroundEffectOnAttack: rec?.leaves_ground_effect_on_attack === true,
     groundEffectId: asOptionalId(rec?.ground_effect_id),
@@ -2821,6 +3071,11 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
       const n = Number(rec?.chance_pct_flat_stat)
       return Number.isFinite(n) && n > 0 ? n : null
     })(),
+    chanceHalvesEachAttempt: rec?.chance_halves_each_attempt === true,
+    grantsSecondAttack:
+      rec?.grants_second_attack === true ||
+      rec?.grants_second_attack_pct === true ||
+      Number(rec?.grants_second_attack) === 1,
     dualAttack: rec?.dual_attack === true,
     secondAttackDmgType: (() => {
       const raw =
@@ -3064,6 +3319,23 @@ function designedFactoryAbilities(
   unitName: string,
 ): Partial<UnitCombatAbilities> | null {
   const name = unitName.trim().toLowerCase()
+  // S6-51: Ninja — blink + diminishing STR×2% extra-attack chain.
+  if (
+    unitId === 68 ||
+    unitId === 69 ||
+    name === 'ninja' ||
+    name === 'advanced ninja'
+  ) {
+    return {
+      shape: 'single',
+      blinkMovement: true,
+      requiresLos: true,
+      respectsHexSize: true,
+      grantsSecondAttack: true,
+      chancePctFlatStat: 2,
+      chanceHalvesEachAttempt: true,
+    }
+  }
   if (
     unitId === 76 ||
     unitId === 77 ||
@@ -3311,7 +3583,7 @@ function designedConfluenceAbilities(
 ): Partial<UnitCombatAbilities> | null {
   const name = unitName.trim().toLowerCase()
   const advanced = name.startsWith('advanced ') || unitId % 2 === 1
-  // Mud Sprite 170/171
+  // Mud Sprite 170/171 — turn-start growth on Mud (id 9): +floor(qty/10) min 1
   if (
     unitId === 170 ||
     unitId === 171 ||
@@ -3321,7 +3593,6 @@ function designedConfluenceAbilities(
     return {
       shape: 'single',
       terrainGrowthTerrainTypeId: 9,
-      terrainGrowthAmount: 1,
     }
   }
   // Spark 172/173 — Storm on target 100%
@@ -3827,6 +4098,32 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
             skipFirstTurn: true,
           }
         }
+        // BR S7-4: Thorned Lash speed debuff is resistable (DB may omit key).
+        {
+          const lower = unitName.trim().toLowerCase()
+          if (
+            unitId === 26 ||
+            unitId === 27 ||
+            lower === 'vines' ||
+            lower === 'advanced vines'
+          ) {
+            next = {
+              ...next,
+              resistStat: next.resistStat ?? 'resistance',
+            }
+          }
+        }
+        // BR S7-5: flat condition chance + duration on listed units.
+        {
+          const s75 = s75UnitConditionNorm(unitId, unitName.trim().toLowerCase())
+          if (s75) {
+            next = {
+              ...next,
+              ...s75,
+              resistStat: s75.resistStat ?? next.resistStat ?? 'resistance',
+            }
+          }
+        }
         // Factory S6-28/29/35: DB rows may still be null — fill designed stats only
         // when abilities JSON is absent so a live DB row always wins.
         if (!abilitiesConfigPresent(extra.abilities)) {
@@ -3875,6 +4172,90 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
                     auraRadius: next.auraRadius ?? temple.auraRadius,
                   }
                 : {}),
+            }
+          }
+        }
+        // S6-50 Confluence: force engine keys when DB JSON is partial/outdated.
+        {
+          const confluence = designedConfluenceAbilities(unitId, unitName)
+          if (confluence) {
+            next = {
+              ...next,
+              ...(confluence.scatterGroundEffectOnMoveStop
+                ? {
+                    scatterGroundEffectOnMoveStop: true,
+                    groundEffectId:
+                      next.groundEffectId ?? confluence.groundEffectId,
+                    chancePctIntelStat:
+                      next.chancePctIntelStat ?? confluence.chancePctIntelStat,
+                    radius: Math.max(
+                      next.radius ?? 0,
+                      confluence.radius ?? 0,
+                    ),
+                  }
+                : {}),
+              ...(confluence.leavesGroundEffectOnAttack
+                ? {
+                    leavesGroundEffectOnAttack: true,
+                    groundEffectId:
+                      next.groundEffectId ?? confluence.groundEffectId,
+                    chancePct: next.chancePct ?? confluence.chancePct,
+                    chancePctIntelStat:
+                      next.chancePctIntelStat ?? confluence.chancePctIntelStat,
+                  }
+                : {}),
+              ...(confluence.selfRezOnWipe
+                ? {
+                    selfRezOnWipe: true,
+                    selfRezChanceStatDiv:
+                      next.selfRezChanceStatDiv ??
+                      confluence.selfRezChanceStatDiv,
+                    selfRezCapPct:
+                      next.selfRezCapPct ?? confluence.selfRezCapPct,
+                    selfRezBasedOnKillsThisRound: true,
+                  }
+                : {}),
+              ...(confluence.terrainGrowthTerrainTypeId != null
+                ? {
+                    terrainGrowthTerrainTypeId:
+                      next.terrainGrowthTerrainTypeId ??
+                      confluence.terrainGrowthTerrainTypeId,
+                    terrainGrowthAmount:
+                      next.terrainGrowthAmount ??
+                      confluence.terrainGrowthAmount,
+                  }
+                : {}),
+              ...(confluence.clearsGroundEffectId != null
+                ? {
+                    clearsGroundEffectId:
+                      next.clearsGroundEffectId ??
+                      confluence.clearsGroundEffectId,
+                    dmgIncreasePerHex:
+                      next.dmgIncreasePerHex ?? confluence.dmgIncreasePerHex,
+                    shape:
+                      next.shape === 'single'
+                        ? (confluence.shape ?? next.shape)
+                        : next.shape,
+                  }
+                : {}),
+              ...(confluence.shape === 'spiral'
+                ? {
+                    shape: 'spiral' as const,
+                    radius: Math.max(
+                      next.radius ?? 0,
+                      confluence.radius ?? 0,
+                    ),
+                    spiralChanceDecayPct:
+                      next.spiralChanceDecayPct ??
+                      confluence.spiralChanceDecayPct,
+                    groundEffectId:
+                      next.groundEffectId ?? confluence.groundEffectId,
+                  }
+                : {}),
+              ...(confluence.immuneToLightning
+                ? { immuneToLightning: true }
+                : {}),
+              ...(confluence.immuneToFire ? { immuneToFire: true } : {}),
             }
           }
         }
@@ -3947,6 +4328,25 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
               respectsHexSize: true,
             }
           }
+          // S6-51 Ninja: blink + diminishing extra-attack chain.
+          if (
+            unitId === 68 ||
+            unitId === 69 ||
+            lower === 'ninja' ||
+            lower === 'advanced ninja'
+          ) {
+            next = {
+              ...next,
+              blinkMovement: true,
+              requiresLos: true,
+              respectsHexSize: true,
+              grantsSecondAttack: true,
+              chancePctFlatStat: 2,
+              chanceHalvesEachAttempt: true,
+              // Must not take Assassin's flat-chance path (that skips this chain).
+              extraAttackOnAttackOnly: false,
+            }
+          }
           if (
             unitId === 138 ||
             unitId === 139 ||
@@ -3964,7 +4364,22 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       })(),
       tags: asIntIds(extra.tags),
       has_abilities: abilitiesConfigPresent(extra.abilities),
-      blocks_los: asBoolFlag(extra.blocks_los),
+      blocks_los: (() => {
+        if (asBoolFlag(extra.blocks_los)) {
+          return true
+        }
+        const lower = unitName.toLowerCase()
+        // Terrain drops / Rift: always block sight even if an older DB row
+        // omitted blocks_los (Tidal Caller could shoot through Earth Spikes).
+        return (
+          unitId === 223 ||
+          unitId === 257 ||
+          unitId === 258 ||
+          lower === 'unstable rift' ||
+          lower === 'earth spike' ||
+          lower === 'ice shard'
+        )
+      })(),
       town_id: townId != null && townId > 0 ? townId : null,
       class_id: extra.class_id == null || extra.class_id === '' ? null : asInt(extra.class_id),
       tier: extra.tier == null || extra.tier === '' ? null : asInt(extra.tier),
@@ -4019,9 +4434,19 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     unit_tag: asNamedValues(
       (payload as { unit_tag?: unknown }).unit_tag,
     ),
-    condition: asNamedValues(
-      (payload as { condition?: unknown }).condition,
-    ),
+    condition: (() => {
+      const rows = asNamedValues(
+        (payload as { condition?: unknown }).condition,
+      )
+      // BR S7-4: Slow (id 12) — keep a local label if Rod's SQL hasn't landed yet.
+      if (!rows.some((row) => row.id === 12 || row.value.toLowerCase() === 'slow')) {
+        return [
+          ...rows,
+          { id: 12, value: 'Slow' },
+        ].sort((a, b) => a.id - b.id)
+      }
+      return rows
+    })(),
     discipline: asNamed(payload.discipline),
     ability_level: asAbilityLevels(payload.ability_level),
     hero_discipline: asHeroDisciplines(payload.hero_discipline),
@@ -4896,6 +5321,37 @@ export function dummyHeroStat(
   return Math.max(0, Math.floor(appConfigNumber(catalog, 'dummy_hero_stat', 10)))
 }
 
+/**
+ * STR/INT/etc. for combat formulas. When no commanding Hero is present
+ * (world mobs, hero-less sides), every stat is app_config.dummy_hero_stat.
+ */
+export function commandingHeroStats(
+  catalog: ReferenceCatalog | null | undefined,
+  hero:
+    | { class_id: number | null; current_level?: number }
+    | null
+    | undefined,
+): HeroStats {
+  if (!catalog || !hero) {
+    const n = dummyHeroStat(catalog)
+    return {
+      speed: n,
+      stamina: n,
+      strength: n,
+      intel: n,
+      defense: n,
+      resist: n,
+      crit_pct: n,
+      crit_amt: n,
+    }
+  }
+  return heroEffectiveStats(
+    catalog,
+    hero.class_id,
+    hero.current_level ?? 1,
+  )
+}
+
 export function dummyArmyQty(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
@@ -5233,6 +5689,29 @@ export function debugSeeEnemyStats(
   catalog: ReferenceCatalog | null | undefined,
 ): boolean {
   return appConfigNumber(catalog, 'debug_see_enemy_stats', 0) !== 0
+}
+
+/**
+ * Post-turn battle log popup seconds.
+ * 0 = skip popup; 99 = stay open until dismissed (no auto-advance).
+ */
+export function combatLogTimerSeconds(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, Math.floor(appConfigNumber(catalog, 'combat_log_timer', 2)))
+}
+
+/**
+ * Post-combat results popup seconds.
+ * 0 = skip popup; 99 = stay open until dismissed (no auto-advance).
+ */
+export function combatEndTimerSeconds(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(
+    0,
+    Math.floor(appConfigNumber(catalog, 'combat_end_timer', 99)),
+  )
 }
 
 /** Catalog convention: always enterable, dumps remaining MP. Not a literal cost. */

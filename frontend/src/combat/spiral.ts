@@ -94,7 +94,7 @@ export function applySpiralFireFromAttacker(
   random: () => number = Math.random,
 ): { battle: CombatBattle; tiles?: CombatTile[]; lines: string[] } {
   const attacker = battle.stacks.find((row) => row.id === attackerId)
-  if (!attacker || !caster) {
+  if (!attacker) {
     return { battle, lines: [] }
   }
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))

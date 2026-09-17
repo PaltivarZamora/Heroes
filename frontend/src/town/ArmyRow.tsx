@@ -1,7 +1,8 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { ArmyRowId } from '../session/accessors'
 import { heroPortraitUrl } from './slotArt'
 import { UnitStackFace, type UnitStackView } from './unitStack'
+import { AbilityTip } from './AbilityTip'
 
 export function PortraitFace({
   label,
@@ -29,12 +30,21 @@ export function PortraitFace({
   )
 }
 
+function maybeTip(description: string | null | undefined, child: ReactNode) {
+  if (!description) {
+    return child
+  }
+  return <AbilityTip description={description}>{child}</AbilityTip>
+}
+
 export function ArmyRow({
   row,
   heroId,
   portraitLabel,
   portraitFilename,
   armyStacks,
+  portraitTip,
+  slotTip,
   onSlotPointerDown,
   onSlotContextMenu,
   onPortraitClick,
@@ -44,37 +54,43 @@ export function ArmyRow({
   portraitLabel: string
   portraitFilename: string | null
   armyStacks: UnitStackView[]
+  /** Shared Hero / Garrison mouseover text. */
+  portraitTip?: string | null
+  /** Per-slot unit toolkit tip (1-based slot → text). */
+  slotTip?: (slot: number, stack: UnitStackView) => string | null
   onSlotPointerDown?: (slot: number, event: ReactPointerEvent) => void
   onSlotContextMenu?: (slot: number, event: ReactMouseEvent) => void
   onPortraitClick?: () => void
 }) {
   const portrait = <PortraitFace label={portraitLabel} filename={portraitFilename} />
   const interactive = onSlotPointerDown != null || onSlotContextMenu != null
+  const portraitBox = onPortraitClick ? (
+    <button
+      type="button"
+      className="town-army-box town-army-portrait"
+      data-portrait={row}
+      aria-label={portraitLabel}
+      onClick={onPortraitClick}
+    >
+      {portrait}
+    </button>
+  ) : (
+    <div
+      className="town-army-box town-army-portrait"
+      data-portrait={row}
+      aria-label={portraitLabel}
+    >
+      {portrait}
+    </div>
+  )
   return (
     <div className="town-army-row">
-      {onPortraitClick ? (
-        <button
-          type="button"
-          className="town-army-box town-army-portrait"
-          data-portrait={row}
-          aria-label={portraitLabel}
-          onClick={onPortraitClick}
-        >
-          {portrait}
-        </button>
-      ) : (
-        <div
-          className="town-army-box town-army-portrait"
-          data-portrait={row}
-          aria-label={portraitLabel}
-        >
-          {portrait}
-        </div>
-      )}
-      {armyStacks.map((stack, index) =>
-        interactive ? (
+      {maybeTip(portraitTip, portraitBox)}
+      {armyStacks.map((stack, index) => {
+        const tip = slotTip?.(index + 1, stack) ?? null
+        const face = <UnitStackFace {...stack} />
+        const box = interactive ? (
           <button
-            key={index}
             type="button"
             className="town-army-box town-army-slot"
             data-row={row}
@@ -83,17 +99,21 @@ export function ArmyRow({
             onPointerDown={(event) => onSlotPointerDown?.(index + 1, event)}
             onContextMenu={(event) => onSlotContextMenu?.(index + 1, event)}
           >
-            <UnitStackFace {...stack} />
+            {face}
           </button>
         ) : (
           <div
-            key={index}
             className="town-army-box town-army-slot town-army-slot-static"
           >
-            <UnitStackFace {...stack} />
+            {face}
           </div>
-        ),
-      )}
+        )
+        return (
+          <span key={index} className="town-army-slot-tip-wrap">
+            {maybeTip(tip, box)}
+          </span>
+        )
+      })}
     </div>
   )
 }

@@ -7,19 +7,22 @@ import {
 } from '../session/accessors'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
-  heroEffectiveStats,
   isAdvancedUnit,
   unitById,
   unitEffectiveTier,
   unitHasTag,
 } from '../town/catalog'
+import {
+  missingPassiveStatKey,
+  passiveStatNumber,
+  passiveStatSourceValue,
+  passiveStatString,
+  passiveStatStringList,
+  requirePassiveStats,
+} from '../town/heroPassiveStats'
 import { isHeroClass } from './shadow'
 import type { CombatBattle, CombatSide } from './battle'
 import { isCreatureArmyUnit } from './siege'
-
-/** unit_tag.id — both required for demon-reinforcement kill credit. */
-const HUMANOID_TAG = 2
-const LIVING_TAG = 10
 
 /**
  * Pandemonium demon roster by creature tier (base + Advanced ids).
@@ -54,6 +57,36 @@ function isDemonHero(catalog: ReferenceCatalog, hero: Hero): boolean {
   )
 }
 
+function tagIdByName(
+  catalog: ReferenceCatalog,
+  name: string,
+): number | null {
+  const needle = name.trim().toLowerCase()
+  return (
+    catalog.unit_tag.find((row) => row.value.trim().toLowerCase() === needle)
+      ?.id ?? null
+  )
+}
+
+/** Kill must match every tag named in passive_stats.kill_filter. */
+function matchesKillFilter(
+  catalog: ReferenceCatalog,
+  unitId: number,
+  filterNames: string[],
+): boolean {
+  if (filterNames.length === 0) {
+    return false
+  }
+  const unit = unitById(catalog, unitId)
+  for (const name of filterNames) {
+    const tagId = tagIdByName(catalog, name)
+    if (tagId == null || !unitHasTag(unit, tagId)) {
+      return false
+    }
+  }
+  return true
+}
+
 function enemyKillParts(
   opening: DemonOpeningStack[],
   battle: CombatBattle,
@@ -76,14 +109,6 @@ function enemyKillParts(
       }
     })
     .filter((part) => part.killed > 0)
-}
-
-function isHumanoidLiving(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  const unit = unitById(catalog, unitId)
-  return unitHasTag(unit, HUMANOID_TAG) && unitHasTag(unit, LIVING_TAG)
 }
 
 function roundDownToDemonTier(tier: number): number | null {
@@ -220,12 +245,31 @@ export function applyDemonReinforcement(
   if (!isDemonHero(catalog, hero)) {
     return { session, gains: [] }
   }
+  const stats = requirePassiveStats(catalog, hero, 'demon reinforcement')
+  if (!stats) {
+    return { session, gains: [] }
+  }
+  const tierDivisor = passiveStatNumber(stats, 'tier_divisor')
+  const qtyStat = passiveStatString(stats, 'qty_stat')
+  const killFilter = passiveStatStringList(stats, 'kill_filter')
+  if (tierDivisor == null || tierDivisor <= 0) {
+    missingPassiveStatKey(catalog, hero, 'tier_divisor', 'demon reinforcement')
+    return { session, gains: [] }
+  }
+  if (!qtyStat) {
+    missingPassiveStatKey(catalog, hero, 'qty_stat', 'demon reinforcement')
+    return { session, gains: [] }
+  }
+  if (killFilter.length === 0) {
+    missingPassiveStatKey(catalog, hero, 'kill_filter', 'demon reinforcement')
+    return { session, gains: [] }
+  }
   const kills = enemyKillParts(opening, battle, catalog, loserSide)
   if (kills.length === 0) {
     return { session, gains: [] }
   }
   const qualifying = kills
-    .filter((part) => isHumanoidLiving(catalog, part.unitId))
+    .filter((part) => matchesKillFilter(catalog, part.unitId, killFilter))
     .reduce((sum, part) => sum + part.killed, 0)
   if (qualifying < 1) {
     return { session, gains: [] }
@@ -241,16 +285,10 @@ export function applyDemonReinforcement(
       unitEffectiveTier(catalog, unit),
     )
   }
-  const intel = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  ).intel
-  // Qty = flat INT. Tier = min(floor(INT/6), highest enemy tier killed), then
-  // snap down to a real Pandemonium demon tier (no T2 unit → T2 becomes T1).
-  // So INT 12–17 always yields Tier 1; Hellions need INT ≥ 18 (and a T3+ kill).
-  const qty = Math.max(0, Math.floor(intel))
-  const maxFromIntel = Math.floor(intel / 6)
+  // Qty = flat qty_stat. Tier = min(floor(stat/tier_divisor), highest enemy tier).
+  const qtyBase = passiveStatSourceValue(catalog, hero, qtyStat)
+  const qty = Math.max(0, Math.floor(qtyBase))
+  const maxFromIntel = Math.floor(qtyBase / tierDivisor)
   const resolved = Math.min(maxFromIntel, highestEnemyTier)
   const tier = roundDownToDemonTier(resolved)
   if (tier == null || qty <= 0) {

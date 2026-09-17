@@ -15,12 +15,18 @@ import type { GameSession } from '../session/types'
 import type { ReferenceCatalog } from './catalog'
 import { ArmyRow } from './ArmyRow'
 import { stackView } from './unitStack'
+import {
+  formatToolkitRows,
+  sessionUnitToolkitRows,
+} from './UnitToolkitTip'
+import { heroTooltipText } from './HeroTooltip'
 
 export type ArmyRowSpec = {
   row: ArmyRowId
   heroId?: string | null
   portraitLabel: string
   portraitFilename: string | null
+  portraitTip?: string | null
 }
 
 function stackLabel(
@@ -325,9 +331,38 @@ export function ArmyTransfer({
           heroId={spec.heroId}
           portraitLabel={spec.portraitLabel}
           portraitFilename={spec.portraitFilename}
+          portraitTip={
+            spec.portraitTip ??
+            (catalog && spec.heroId
+              ? (() => {
+                  const h = session.heroes.find((row) => row.id === spec.heroId)
+                  return h ? heroTooltipText(catalog, h, session) : null
+                })()
+              : null)
+          }
           armyStacks={rowSlotIds(session, townId, spec.row, spec.heroId).map(
             (id) => stackView(session, id, catalog),
           )}
+          slotTip={(slot, stack) => {
+            if (!catalog || stack.empty) {
+              return null
+            }
+            const id = rowSlotIds(
+              session,
+              townId,
+              spec.row,
+              spec.heroId,
+            )[slot - 1]
+            const unit = id
+              ? session.units.find((row) => row.id === id)
+              : null
+            if (!unit) {
+              return null
+            }
+            return formatToolkitRows(
+              sessionUnitToolkitRows(catalog, unit.unit_id, unit.qty),
+            )
+          }}
           onSlotPointerDown={(slot, event) => {
             if (event.button !== 0 || held) {
               return

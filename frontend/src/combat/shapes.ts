@@ -134,8 +134,8 @@ export function lineHexesToRange(
 
 /**
  * Clear sight along Beam's hex-line. Barrier terrain and live
- * `unit.blocks_los` stacks (Wall, Rift) plus closed Drawbridge block;
- * other units do not. Endpoints are not treated as blockers.
+ * `unit.blocks_los` stacks (Wall, Rift, Earth Spike) plus closed Drawbridge
+ * block; other units do not. Endpoints are not treated as blockers.
  */
 export function hasLineOfSight(
   from: Axial,
@@ -148,6 +148,21 @@ export function hasLineOfSight(
   if (line.length <= 2) {
     return true
   }
+  const blocked = losBlockKeys(tiles, stacks, catalog)
+  for (let i = 1; i < line.length - 1; i += 1) {
+    if (blocked.has(keyOf(line[i]!))) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Terrain + live wall/fixture keys that stop sight and piercing lines. */
+function losBlockKeys(
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  catalog?: ReferenceCatalog,
+): Set<string> {
   const blocked = new Set(
     tiles
       .filter((tile) => tile.blocksLos)
@@ -158,12 +173,39 @@ export function hasLineOfSight(
       blocked.add(key)
     }
   }
-  for (let i = 1; i < line.length - 1; i += 1) {
-    if (blocked.has(keyOf(line[i]!))) {
-      return false
+  return blocked
+}
+
+/**
+ * Keep hexes along a path until (and including) the first LOS blocker.
+ * Used so line/beam previews and damage stop at Earth Spikes / Barricades.
+ */
+export function clipHexesAtLosBlocker(
+  hexes: Axial[],
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+  /** Origin hex is never treated as a stop (attacker stands there). */
+  origin?: Axial | null,
+): Axial[] {
+  if (hexes.length === 0) {
+    return hexes
+  }
+  const blocked = losBlockKeys(tiles, stacks, catalog)
+  const originKey =
+    origin != null ? keyOf(origin) : null
+  const out: Axial[] = []
+  for (const hex of hexes) {
+    const key = keyOf(hex)
+    out.push(hex)
+    if (originKey != null && key === originKey) {
+      continue
+    }
+    if (blocked.has(key)) {
+      break
     }
   }
-  return true
+  return out
 }
 
 export function hexDisk(center: Axial, radius: number): Axial[] {
@@ -428,26 +470,58 @@ export function previewImpactKeys(
   const acting = actorAt(attacker, battle)
   const board = boardKeys(tiles)
   const from = { q: acting.attacker.q, r: acting.attacker.r }
-  const hexes =
-    spec.shape === 'line'
-      ? lineHexesToRange(
-          from,
-          aim,
-          stackMaxRange(acting.attacker, catalog),
-          board,
-        )
-      : spec.shape === 'charge_line'
-        ? chargeLineHexes(chargePathOrigin ?? from, aim, board)
-        : geometricHexes(
-            spec,
-            from,
-            aim,
-            acting.battle,
-            board,
-            acting.attacker.side,
-            tiles,
-            catalog,
-          )
+  const origin = chargePathOrigin ?? from
+  let hexes: Axial[]
+  if (spec.shape === 'line') {
+    hexes = clipHexesAtLosBlocker(
+      lineHexesToRange(
+        from,
+        aim,
+        stackMaxRange(acting.attacker, catalog),
+        board,
+      ),
+      tiles,
+      battle.stacks,
+      catalog,
+      from,
+    )
+  } else if (spec.shape === 'charge_line') {
+    hexes = clipHexesAtLosBlocker(
+      chargeLineHexes(origin, aim, board),
+      tiles,
+      battle.stacks,
+      catalog,
+      origin,
+    )
+  } else if (spec.shape === 'beam') {
+    hexes = clipHexesAtLosBlocker(
+      geometricHexes(
+        spec,
+        from,
+        aim,
+        acting.battle,
+        board,
+        acting.attacker.side,
+        tiles,
+        catalog,
+      ),
+      tiles,
+      battle.stacks,
+      catalog,
+      from,
+    )
+  } else {
+    hexes = geometricHexes(
+      spec,
+      from,
+      aim,
+      acting.battle,
+      board,
+      acting.attacker.side,
+      tiles,
+      catalog,
+    )
+  }
   const keys: string[] = []
   for (const hex of hexes) {
     const stack = occupant(acting.battle, hex, catalog)
@@ -546,7 +620,7 @@ export function resolveShapeHits(
         : from
     const perHex = Math.max(1, spec.dmgIncreasePerHex ?? 1)
     const minDmg = Math.max(0, stackMinDmg(acting.attacker, catalog))
-    const hexes =
+    const rawHexes =
       spec.shape === 'line'
         ? lineHexesToRange(
             origin,
@@ -555,6 +629,13 @@ export function resolveShapeHits(
             board,
           )
         : chargeLineHexes(origin, aim, board)
+    const hexes = clipHexesAtLosBlocker(
+      rawHexes,
+      tiles,
+      field.stacks,
+      catalog,
+      origin,
+    )
     const hits: ShapeHit[] = []
     const seen = new Set<string>()
     for (const hex of hexes) {
@@ -583,8 +664,18 @@ export function resolveShapeHits(
     return hits
   }
 
+  const geoHexes =
+    spec.shape === 'beam'
+      ? clipHexesAtLosBlocker(
+          geometricHexes(spec, from, aim, field, board, side, tiles, catalog),
+          tiles,
+          field.stacks,
+          catalog,
+          from,
+        )
+      : geometricHexes(spec, from, aim, field, board, side, tiles, catalog)
   return hexHits(
-    geometricHexes(spec, from, aim, field, board, side, tiles, catalog),
+    geoHexes,
     field,
     catalog,
     side,

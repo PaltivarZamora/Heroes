@@ -2,7 +2,12 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatResourceLine, RESOURCES } from '../hex/resources'
 import { humanPlayer, walletFromSession } from '../session/accessors'
 import { getSession, subscribe } from '../session/store'
-import { getCachedCatalog, formatHeroLevelLine, heroEffectiveStats, heroTypeName, subscribeCatalog } from './catalog'
+import {
+  getCachedCatalog,
+  heroEffectiveStats,
+  subscribeCatalog,
+  xpToReachLevel,
+} from './catalog'
 import { classDisciplines } from './libraryRules'
 import { HeroAbilitiesPanel } from './HeroAbilitiesPanel'
 import { ReservedCorner } from './ReservedCorner'
@@ -18,6 +23,8 @@ import {
   heroPortraitUrl,
   itemArtUrl,
 } from './slotArt'
+import { heroAbilitiesHeader } from './heroPassiveDisplay'
+import { HeroTooltip } from './HeroTooltip'
 
 const STAT_CELLS: Array<{ key: keyof ReturnType<typeof heroEffectiveStats>; label: string }> = [
   { key: 'speed', label: 'Speed' },
@@ -140,16 +147,21 @@ export function HeroScreen({
   while (otherHeroes.length < 7) {
     otherHeroes.push(null)
   }
-  const typeName = catalog ? heroTypeName(catalog, hero?.class_id ?? null) : ''
-  const abilitiesTitle = typeName ? `${typeName} Abilities` : 'Abilities'
+  const abilitiesTitle = catalog
+    ? heroAbilitiesHeader(catalog, hero)
+    : 'Abilities'
   const level = hero?.current_level ?? 1
   const xp = hero?.current_xp ?? 0
-  const identityLine = formatHeroLevelLine(
-    catalog,
-    hero?.name ?? 'Hero',
-    level,
-    xp,
-  )
+  const xpNext = catalog ? xpToReachLevel(catalog, level) : null
+  const xpPct =
+    xpNext != null && xpNext > 0
+      ? Math.min(100, Math.max(0, (xp / xpNext) * 100))
+      : 100
+  const xpFmt = (n: number) => n.toLocaleString('en-US')
+  const xpLabel =
+    xpNext != null
+      ? `${hero?.name ?? 'Hero'} - Lvl ${level} XP (${xpFmt(xp)} / ${xpFmt(xpNext)})`
+      : `${hero?.name ?? 'Hero'} - Lvl ${level} XP (${xpFmt(xp)})`
   const stats = catalog
     ? heroEffectiveStats(catalog, hero?.class_id ?? null, level)
     : null
@@ -175,6 +187,7 @@ export function HeroScreen({
       role="dialog"
       aria-modal="true"
       aria-labelledby="hero-screen-title"
+      data-tip-contain
     >
       <header className="town-management-bar">
         <h1 id="hero-screen-title">Hero</h1>
@@ -204,7 +217,7 @@ export function HeroScreen({
               ))}
             </div>
           </div>
-          <h2>{abilitiesTitle}</h2>
+          <h2 className="hero-abilities-header">{abilitiesTitle}</h2>
           {catalog && resourceId != null ? (
             <div
               className="combat-hero-resource"
@@ -241,7 +254,17 @@ export function HeroScreen({
         </section>
         <section className="hero-screen-panel hero-screen-right" aria-label="Hero">
           <div className="hero-screen-identity">
-            <h2>{identityLine}</h2>
+            <div
+              className="combat-hero-resource"
+              data-resource="xp"
+              aria-label="Experience"
+            >
+              <span
+                className="combat-hero-resource-fill"
+                style={{ width: `${xpPct}%` }}
+              />
+              <span className="combat-hero-resource-text">{xpLabel}</span>
+            </div>
           </div>
           <div className="hero-paperdoll-wrap" aria-hidden="true">
             <div className="hero-equip-col">
@@ -250,7 +273,15 @@ export function HeroScreen({
               ))}
             </div>
             <div className="hero-paperdoll">
-              <Face filename={PAPERDOLL_FILE} label="paperdoll.png" large />
+              {catalog && hero ? (
+                <HeroTooltip catalog={catalog} hero={hero} session={session}>
+                  <span className="hero-paperdoll-tip-anchor">
+                    <Face filename={PAPERDOLL_FILE} label="paperdoll.png" large />
+                  </span>
+                </HeroTooltip>
+              ) : (
+                <Face filename={PAPERDOLL_FILE} label="paperdoll.png" large />
+              )}
             </div>
             <div className="hero-equip-col">
               {Array.from({ length: EQUIP_SLOTS / 2 }, (_, i) => (
@@ -288,9 +319,8 @@ export function HeroScreen({
                     />
                   )
                 }
-                return (
+                const face = (
                   <button
-                    key={other.id}
                     type="button"
                     className="town-army-box town-army-portrait"
                     aria-label={other.name}
@@ -301,6 +331,18 @@ export function HeroScreen({
                       label={other.name}
                     />
                   </button>
+                )
+                return catalog ? (
+                  <HeroTooltip
+                    key={other.id}
+                    catalog={catalog}
+                    hero={other}
+                    session={session}
+                  >
+                    {face}
+                  </HeroTooltip>
+                ) : (
+                  <span key={other.id}>{face}</span>
                 )
               })}
             </div>

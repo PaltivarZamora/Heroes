@@ -575,17 +575,20 @@
 }
 
 .unit-stack-face {
-  position: absolute;
-  inset: 0;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .unit-stack-face img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  display: block;
 }
 
 .unit-stack-face .town-building-slot-filename {
@@ -1030,9 +1033,9 @@
 .combat-stack-hover-tip {
   position: absolute;
   z-index: 6;
-  transform: translate(-50%, -100%);
+  transform: translate(calc(-50% + var(--tip-shift-x, 0px)), -100%);
   min-width: 160px;
-  max-width: 240px;
+  max-width: 320px;
   padding: 6px 8px;
   border: 1px solid #666;
   border-radius: 4px;
@@ -1041,10 +1044,11 @@
   font: 12px/1.35 system-ui, 'Segoe UI', Roboto, sans-serif;
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  white-space: pre-line;
 }
 
 .combat-stack-hover-tip.is-below {
-  transform: translate(-50%, 0);
+  transform: translate(calc(-50% + var(--tip-shift-x, 0px)), 0);
 }
 
 .combat-stack-hover-row {
@@ -1589,7 +1593,7 @@
   bottom: calc(100% + 6px);
   z-index: 20;
   width: max-content;
-  max-width: 240px;
+  max-width: 320px;
   padding: 6px 8px;
   border: 1px solid #666;
   border-radius: 4px;
@@ -1641,10 +1645,53 @@ button.town-army-portrait {
   background: rgba(14, 14, 14, 0.55);
 }
 
-.hero-screen-abilities h2,
-.hero-screen-identity h2 {
+.hero-screen-abilities h2 {
   margin: 0 0 12px;
   font-size: 20px;
+}
+
+.hero-abilities-header {
+  font-size: 15px !important;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.town-army-slot-tip-wrap {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.town-army-slot-tip-wrap > .ability-tip,
+.town-army-row > .ability-tip {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+}
+
+.town-army-slot-tip-wrap > .town-army-box,
+.town-army-slot-tip-wrap > button.town-army-box,
+.town-army-slot-tip-wrap > .ability-tip > .town-army-box,
+.town-army-slot-tip-wrap > .ability-tip > button.town-army-box,
+.town-army-row > .ability-tip > .town-army-box,
+.town-army-row > .ability-tip > button.town-army-box {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.hero-paperdoll-tip-anchor {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .hero-stats-block {
@@ -1852,6 +1899,10 @@ button.hero-ability-name:disabled {
 
 .combat-hero-resource[data-resource='energy'] .combat-hero-resource-fill {
   background: #2e7d32;
+}
+
+.combat-hero-resource[data-resource='xp'] .combat-hero-resource-fill {
+  background: #43a047;
 }
 
 .combat-hero-resource-text {

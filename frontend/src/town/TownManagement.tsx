@@ -79,6 +79,12 @@ import type { SlotState } from './townSlots'
 import { stackView, type UnitStackView } from './unitStack'
 import { ArmyRow } from './ArmyRow'
 import { ReservedCorner } from './ReservedCorner'
+import { garrisonTooltipText } from './garrisonTooltip'
+import { heroTooltipText } from './HeroTooltip'
+import {
+  formatToolkitRows,
+  sessionUnitToolkitRows,
+} from './UnitToolkitTip'
 
 function panelAnchorFromClick(
   event: ReactMouseEvent<HTMLButtonElement>,
@@ -390,7 +396,7 @@ export function TownManagement({
       setMessage(error)
       return false
     }
-    setMessage(null)
+    closePanel()
     return true
   }
 
@@ -408,7 +414,7 @@ export function TownManagement({
       setMessage(error)
       return false
     }
-    setMessage(null)
+    closePanel()
     return true
   }
 
@@ -534,6 +540,7 @@ export function TownManagement({
           selectedHeroId={selectedHeroId}
           onOpenHero={onOpenHero}
           readOnly={readOnly}
+          hasActedToday={hasActedToday}
         />
       </div>
       {openSlot != null && slotState ? (
@@ -708,6 +715,7 @@ function ArmyRows({
   selectedHeroId = null,
   onOpenHero,
   readOnly = false,
+  hasActedToday = false,
 }: {
   session: GameSession
   townId: string
@@ -716,6 +724,7 @@ function ArmyRows({
   selectedHeroId?: string | null
   onOpenHero?: (heroId?: string | null) => void
   readOnly?: boolean
+  hasActedToday?: boolean
 }) {
   const town = findTownById(session, townId)
   const visitingId = town
@@ -951,7 +960,32 @@ function ArmyRows({
         row="garrison"
         portraitLabel="Garrison"
         portraitFilename={GARRISON_ART_FILENAME}
+        portraitTip={
+          catalog
+            ? garrisonTooltipText(
+                catalog,
+                session,
+                townId,
+                hasActedToday,
+              )
+            : null
+        }
         armyStacks={rowStacks(session, townId, 'garrison', catalog)}
+        slotTip={(slot, stack) => {
+          if (!catalog || stack.empty) {
+            return null
+          }
+          const unit = stackAt(session, townId, {
+            row: 'garrison',
+            slot,
+          }, selectedHeroId)
+          if (!unit) {
+            return null
+          }
+          return formatToolkitRows(
+            sessionUnitToolkitRows(catalog, unit.unit_id, unit.qty),
+          )
+        }}
         onSlotPointerDown={(slot, event) => {
           if (event.button !== 0 || held) {
             return
@@ -980,7 +1014,27 @@ function ArmyRows({
         row="hero"
         portraitLabel={visiting?.name ?? (visitingId ? visitingHeroName : 'None')}
         portraitFilename={visiting?.image_path ?? null}
+        portraitTip={
+          catalog && visiting
+            ? heroTooltipText(catalog, visiting, session)
+            : null
+        }
         armyStacks={rowStacks(session, townId, 'hero', catalog, selectedHeroId)}
+        slotTip={(slot, stack) => {
+          if (!catalog || stack.empty) {
+            return null
+          }
+          const unit = stackAt(session, townId, {
+            row: 'hero',
+            slot,
+          }, selectedHeroId)
+          if (!unit) {
+            return null
+          }
+          return formatToolkitRows(
+            sessionUnitToolkitRows(catalog, unit.unit_id, unit.qty),
+          )
+        }}
         onPortraitClick={
           visitingId && !held
             ? () => onOpenHero?.(visitingId)

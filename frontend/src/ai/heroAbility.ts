@@ -30,7 +30,7 @@ import {
   type CombatTile,
 } from '../combat/battle'
 import { hexKey, stackOccupyingHex } from '../combat/movement'
-import { isCreatureArmyUnit, isUntargetableStack } from '../combat/siege'
+import { isCreatureArmyUnit, isTerrainBlockerUnit, isUntargetableStack, isWallSegmentUnit } from '../combat/siege'
 import { abilityMeetsCastGate, isSummonStats } from '../combat/summon'
 import {
   heroEffectiveStats,
@@ -377,6 +377,166 @@ function buffAppliesToStack(
   return true
 }
 
+/** Timed buffs may expire and be worth recasting; charge budgets spend down. */
+function abilityHasTimedDuration(stats: Record<string, unknown>): boolean {
+  if (asFinite(stats.duration) != null || asFinite(stats.duration_stat_div) != null) {
+    return true
+  }
+  for (const nested of [asRecord(stats.ally_effect), asRecord(stats.enemy_effect)]) {
+    if (!nested) {
+      continue
+    }
+    if (
+      asFinite(nested.duration) != null ||
+      asFinite(nested.duration_stat_div) != null
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function abilityHasChargeBudget(stats: Record<string, unknown>): boolean {
+  for (const row of [stats, asRecord(stats.ally_effect), asRecord(stats.enemy_effect)]) {
+    if (!row) {
+      continue
+    }
+    if (
+      asFinite(row.uses) != null ||
+      asFinite(row.uses_stat_div) != null ||
+      asFinite(row.hit_count_stat_div) != null
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * No-duration Buff-type effects that persist for the whole battle (Expose,
+ * Brisk Renewal, Steady Aim, …). Short-duration and charge-based buffs stay
+ * eligible for normal re-evaluation.
+ */
+function isBattleLongBuff(
+  stats: Record<string, unknown>,
+  kind: AbilityEffectKind,
+): boolean {
+  if (kind !== 'buff') {
+    return false
+  }
+  // Terrain clears are utilities, not persistent army buffs.
+  if (
+    stats.clears_terrain === true ||
+    stats.clears_los_blockers === true
+  ) {
+    return false
+  }
+  if (abilityHasTimedDuration(stats) || abilityHasChargeBudget(stats)) {
+    return false
+  }
+  return true
+}
+
+function statsLayers(
+  stats: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const layers: Record<string, unknown>[] = [stats]
+  const ally = asRecord(stats.ally_effect)
+  const enemy = asRecord(stats.enemy_effect)
+  if (ally) {
+    layers.push(ally)
+  }
+  if (enemy) {
+    layers.push(enemy)
+  }
+  return layers
+}
+
+/** Idempotent stack flags — recasting after these are set adds nothing. */
+function idempotentBuffPredicates(
+  stats: Record<string, unknown>,
+): Array<(stack: CombatStack) => boolean> {
+  const preds: Array<(stack: CombatStack) => boolean> = []
+  for (const layer of statsLayers(stats)) {
+    if (layer.reveals_enemy_stats === true) {
+      preds.push((row) => row.exposed === true)
+    }
+    if (layer.disable_min_range_penalty === true) {
+      preds.push((row) => row.ignoreMinRangePenalty === true)
+    }
+    if (layer.grants_kill_on_overflow === true) {
+      preds.push((row) => row.killOnOverflow === true)
+    }
+    if (
+      layer.vampiric_strike === true ||
+      layer.revive_on_dmg_dealt === true
+    ) {
+      preds.push((row) => row.vampiricStrike === true)
+    }
+    if (layer.grants_ignore_target_armor === true) {
+      preds.push((row) => row.ignoreTargetArmor === true)
+    }
+    if (layer.ignores_sublethal_damage === true) {
+      preds.push((row) => row.ignoresSublethal === true)
+    }
+    const setDef = asFinite(layer.set_defense)
+    if (setDef != null) {
+      const want = Math.floor(setDef)
+      preds.push((row) => row.defenseSet === want)
+    }
+    const maxMult = asFinite(layer.max_dmg_mult)
+    if (maxMult != null && maxMult > 0) {
+      preds.push((row) => row.maxDmgMult === maxMult)
+    }
+    const minMult = asFinite(layer.min_dmg_mult)
+    if (minMult != null && minMult > 0) {
+      preds.push((row) => row.minDmgMult === minMult)
+    }
+  }
+  return preds
+}
+
+/**
+ * True when this battle-long buff's live effect is already fully active, so
+ * the ability should be dropped from hero_ability candidates (like a cooldown).
+ */
+function battleLongBuffAlreadyActive(
+  ability: AbilityRow,
+  stats: Record<string, unknown>,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  casterSide: CombatSide,
+): boolean {
+  for (const layer of statsLayers(stats)) {
+    if (layer.recurring_trigger !== 'end_of_round') {
+      continue
+    }
+    const pct = asFinite(layer.heal_pct_stat)
+    return (battle.recurringHeals ?? []).some(
+      (row) =>
+        row.side === casterSide &&
+        (pct == null || row.healPctStat === pct),
+    )
+  }
+  const preds = idempotentBuffPredicates(stats)
+  if (preds.length === 0) {
+    // Additive / placement / unknown shapes may still gain value on recast.
+    return false
+  }
+  const probe = effectStats(stats, 'buff')
+  const parsed = parseTarget(catalog, ability)
+  const living = livingCreatures(battle, catalog).filter((row) =>
+    matchesGroup(row, casterSide, parsed.group),
+  )
+  const applicable = living.filter((row) =>
+    buffAppliesToStack(probe, row, catalog),
+  )
+  if (applicable.length === 0) {
+    return true
+  }
+  return applicable.every((row) => preds.every((fn) => fn(row)))
+}
+
 function buffMagnitude(
   stats: Record<string, unknown>,
   catalog: ReferenceCatalog,
@@ -519,6 +679,71 @@ function impactSummon(
   return catalogUnitValue(catalog, unit.id, qty)
 }
 
+function impactClearTerrain(
+  stats: Record<string, unknown>,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  caster: Hero,
+  ability: AbilityRow,
+): number {
+  const clearsTerrain = stats.clears_terrain === true
+  const clearsLos = stats.clears_los_blockers === true
+  if (!clearsTerrain && !clearsLos) {
+    return 0
+  }
+  let blockers = 0
+  for (const stack of battle.stacks) {
+    if (stack.qty <= 0 || isHeroStack(stack)) {
+      continue
+    }
+    const unit = unitById(catalog, stack.unitId)
+    if (!unit) {
+      continue
+    }
+    const shape = unitAttackShape(unit)
+    // Match resolveAbility: Arcane Shield / Illusions are not terrain clears.
+    if (shape.immuneToMagicDmg === true || shape.aiTreatAsThreat === true) {
+      continue
+    }
+    let match = false
+    if (
+      clearsTerrain &&
+      (isTerrainBlockerUnit(unit) ||
+        (stack.indestructible === true &&
+          unit.stationary === true &&
+          (unit.speed ?? 0) <= 0 &&
+          !isWallSegmentUnit(unit)))
+    ) {
+      match = true
+    }
+    if (clearsLos && (unit.blocks_los === true || isWallSegmentUnit(unit))) {
+      match = true
+    }
+    if (match) {
+      blockers += 1
+    }
+  }
+  let geHexes = 0
+  if (clearsTerrain) {
+    for (const zone of battle.groundEffects ?? []) {
+      geHexes += zone.hexKeys.length
+    }
+  }
+  if (blockers + geHexes <= 0) {
+    return 0
+  }
+  // Unit blockers may be chance-gated; ground effects always clear for Gaia.
+  const clearChanceStat = asFinite(stats.clear_chance_pct_stat)
+  let expectedBlockers = blockers
+  if (clearChanceStat != null && clearChanceStat > 0 && blockers > 0) {
+    const intel = casterStat(catalog, caster, ability.resource_id)
+    const chance = Math.min(1, Math.max(0, (intel * clearChanceStat) / 100))
+    expectedBlockers = blockers * chance
+  }
+  // Modest board-control weight — never inflate like a full-army buff.
+  return expectedBlockers * 80 + geHexes * 25
+}
+
 function impactOf(
   kind: AbilityEffectKind,
   stats: Record<string, unknown>,
@@ -539,6 +764,15 @@ function impactOf(
   if (seedFactor != null) {
     const intel = casterStat(catalog, caster, 2)
     return Math.max(0, Math.floor(intel * seedFactor)) * 8
+  }
+  // Gift of Gaia / Sanctify Grounds: score real clearable clutter only.
+  // Treating these as generic buffs made impact enormous and caused AI
+  // no-op cast loops when nothing was on the board to clear.
+  if (
+    stats.clears_terrain === true ||
+    stats.clears_los_blockers === true
+  ) {
+    return impactClearTerrain(stats, battle, catalog, caster, ability)
   }
   if (kind === 'dmg') {
     const raw = rawAbilityDamage(probe, catalog, caster)
@@ -808,6 +1042,18 @@ export function decideHeroAbility(
       continue
     }
     const kind = classify(ability, stats, catalog)
+    if (
+      isBattleLongBuff(stats, kind) &&
+      battleLongBuffAlreadyActive(
+        ability,
+        stats,
+        battle,
+        catalog,
+        heroStack.side,
+      )
+    ) {
+      continue
+    }
     const picked = bestAim(
       ability,
       stats,

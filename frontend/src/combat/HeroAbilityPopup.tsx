@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { AbilityRow, ReferenceCatalog } from '../town/catalog'
-import { formatHeroLevelLine, heroTypeName } from '../town/catalog'
+import { xpToReachLevel } from '../town/catalog'
 import { classDisciplines } from '../town/libraryRules'
 import { HeroAbilitiesPanel } from '../town/HeroAbilitiesPanel'
+import { heroAbilitiesHeader } from '../town/heroPassiveDisplay'
 import type { Hero } from '../session/types'
 import {
   abilityCooldownMessage,
@@ -53,8 +54,7 @@ export function HeroAbilityPopup({
     setDisciplineId(disciplines[0]?.id ?? null)
   }, [disciplineId, disciplines])
 
-  const typeName = heroTypeName(catalog, hero.class_id)
-  const title = typeName ? `${typeName} Abilities` : 'Abilities'
+  const title = heroAbilitiesHeader(catalog, hero)
   const selectedDiscipline =
     disciplines.find((row) => row.id === disciplineId) ?? null
   const resourceId =
@@ -64,6 +64,14 @@ export function HeroAbilityPopup({
     (resourceId != null ? resourceLabel(catalog, resourceId) : '')
   const current = resourceId != null ? poolCurrent(hero, resourceId) : 0
   const max = resourceId != null ? poolMax(catalog, hero, resourceId) : 0
+  const level = hero.current_level ?? 1
+  const xp = hero.current_xp ?? 0
+  const xpNext = xpToReachLevel(catalog, level)
+  const xpPct =
+    xpNext != null && xpNext > 0
+      ? Math.min(100, Math.max(0, (xp / xpNext) * 100))
+      : 100
+  const xpLabel = xpNext != null ? `XP (${xp} / ${xpNext})` : `XP (${xp})`
 
   return (
     <div
@@ -81,10 +89,23 @@ export function HeroAbilityPopup({
         >
           ×
         </button>
-        <h2 id="combat-hero-popup-title">{title}</h2>
+        <h2 id="combat-hero-popup-title" className="hero-abilities-header">
+          {title}
+        </h2>
         <p className="combat-hero-popup-identity">
-          {formatHeroLevelLine(catalog, hero.name, hero.current_level, hero.current_xp)}
+          {hero.name} — Lvl {level}
         </p>
+        <div
+          className="combat-hero-resource"
+          data-resource="xp"
+          aria-label="Experience"
+        >
+          <span
+            className="combat-hero-resource-fill"
+            style={{ width: `${xpPct}%` }}
+          />
+          <span className="combat-hero-resource-text">{xpLabel}</span>
+        </div>
         {resourceId != null ? (
           <div
             className="combat-hero-resource"

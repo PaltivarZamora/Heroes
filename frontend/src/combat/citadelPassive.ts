@@ -3,15 +3,13 @@ import type { ReferenceCatalog } from '../town/catalog'
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
 import {
   citadelHumanoidChancePct,
+  citadelPassiveUnitTagId,
   frozenTagCount,
-  HUMANOID_TAG,
   isCitadelUnit,
-  knightCapPctStat,
-  monkCapPctStat,
 } from './armyTags'
 import { isHeroClass } from './shadow'
 
-/** Knight: 0.25% × Humanoids, capped at STR × cap_pct_stat (default 2). */
+/** Knight: passive_stats per_unit_pct × filter units, capped at stat × cap_multiplier. */
 export function knightBonusChancePct(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
@@ -21,16 +19,12 @@ export function knightBonusChancePct(
   if (!isHeroClass(catalog, hero, 'Knight')) {
     return 0
   }
-  const count = frozenTagCount(battle.armyTagCounts, HUMANOID_TAG, side)
-  return citadelHumanoidChancePct(
-    catalog,
-    hero,
-    count,
-    knightCapPctStat(catalog, hero),
-  )
+  const tagId = citadelPassiveUnitTagId(catalog, hero)
+  const count = frozenTagCount(battle.armyTagCounts, tagId, side)
+  return citadelHumanoidChancePct(catalog, hero, count)
 }
 
-/** Monk: 0.25% × Humanoids, capped at STR × cap_pct_stat (default 3). */
+/** Monk: same shape as Knight; constants from that hero's passive_stats. */
 export function monkSuppressChancePct(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
@@ -40,13 +34,9 @@ export function monkSuppressChancePct(
   if (!isHeroClass(catalog, hero, 'Monk')) {
     return 0
   }
-  const count = frozenTagCount(battle.armyTagCounts, HUMANOID_TAG, side)
-  return citadelHumanoidChancePct(
-    catalog,
-    hero,
-    count,
-    monkCapPctStat(catalog, hero),
-  )
+  const tagId = citadelPassiveUnitTagId(catalog, hero)
+  const count = frozenTagCount(battle.armyTagCounts, tagId, side)
+  return citadelHumanoidChancePct(catalog, hero, count)
 }
 
 export function citadelUnitGetsPassives(

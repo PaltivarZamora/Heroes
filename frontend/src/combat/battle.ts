@@ -4,7 +4,12 @@ import type { ReferenceCatalog } from '../town/catalog'
 import { retaliationCharges, unitById } from '../town/catalog'
 import { stacksWithoutOverlap } from './occupancy'
 import { siegeStructureStacks } from './siege'
-import { tickRoundConditions, type ConditionExtra } from './condition'
+import {
+  tickRoundConditions,
+  isSlowed,
+  SLOW_SPEED_REDUCTION_PCT,
+  type ConditionExtra,
+} from './condition'
 import { applyStackHeal } from './attack'
 import type { CombatHeroes } from './attack'
 import { tickShadowGrowth } from './shadow'
@@ -14,6 +19,7 @@ import {
   freezeArmyTownCounts,
 } from './heroArmyPassives'
 import { applyTempleEndOfRoundPassives } from './templePassive'
+import { applyShamanBattleStartTotems } from './summon'
 
 export type CombatSide = 'atk' | 'def'
 
@@ -23,7 +29,7 @@ export type ArmyTagCounts = Record<number, Partial<Record<CombatSide, number>>>
 /** Town-scoped counts for S6-46 army passives, frozen at battle start. */
 export type ArmyTownCounts = Partial<
   Record<
-    'grove' | 'fortress' | 'confluence' | 'factory_nonliving',
+    'grove' | 'fortress' | 'confluence' | 'factory_nonliving' | 'temple',
     Partial<Record<CombatSide, number>>
   >
 >
@@ -472,7 +478,7 @@ export type CombatBattle = {
   terrainPatches?: CombatTerrainPatch[]
   /** Start-of-round condition logs (Polymorph break/expiry). */
   roundLog?: string[]
-  /** End-of-round splash keys (Paladin execute / Cleric heal). */
+  /** End-of-round splash keys (legacy Temple passives; Cleric heal is end-of-battle). */
   roundHitKeys?: string[]
   roundHealKeys?: string[]
   /** Brisk Renewal-style heals: tick at end of every round for the side. */
@@ -710,7 +716,7 @@ export function stackCombatSpeed(
   if (stack.speedLock != null) {
     return Math.max(0, stack.speedLock.value)
   }
-  return Math.max(
+  let speed = Math.max(
     0,
     base +
       (stack.speedMod ?? 0) +
@@ -718,6 +724,15 @@ export function stackCombatSpeed(
       (stack.speedUses?.amount ?? 0) +
       (stack.speedBoost?.amount ?? 0),
   )
+  // BR S7-4 Slow: flat −33% of live Speed for initiative / turn order.
+  if (isSlowed(stack, catalog) && speed > 0) {
+    let cut = Math.floor((speed * SLOW_SPEED_REDUCTION_PCT) / 100)
+    if (cut === 0) {
+      cut = 1
+    }
+    speed = Math.max(0, speed - cut)
+  }
+  return speed
 }
 
 /** Movement budget this turn. Furious Rush multiplies live speed; initiative does not. */
@@ -740,35 +755,24 @@ function stackSpeed(stack: CombatStack, catalog: ReferenceCatalog): number | nul
   return stackCombatSpeed(stack, catalog)
 }
 
-function mergeTiedSides(
-  atk: CombatStack[],
-  def: CombatStack[],
+function shuffleStacks(
+  stacks: CombatStack[],
   random: () => number,
 ): CombatStack[] {
-  const out: CombatStack[] = []
-  let i = 0
-  let j = 0
-  while (i < atk.length && j < def.length) {
-    if (random() < 0.5) {
-      out.push(atk[i]!)
-      i += 1
-    } else {
-      out.push(def[j]!)
-      j += 1
-    }
-  }
-  while (i < atk.length) {
-    out.push(atk[i]!)
-    i += 1
-  }
-  while (j < def.length) {
-    out.push(def[j]!)
-    j += 1
+  const out = [...stacks]
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.min(i, Math.floor(random() * (i + 1)))
+    const tmp = out[i]!
+    out[i] = out[j]!
+    out[j] = tmp
   }
   return out
 }
 
-/** Recalculated every round: Speed desc, same-side slot asc, opposing sides random. */
+/**
+ * Recalculated every round: Speed desc, then a fresh random shuffle of all
+ * stacks at that speed (both sides together — no attacker/defender bias).
+ */
 export function initiativeOrder(
   stacks: CombatStack[],
   catalog: ReferenceCatalog,
@@ -787,20 +791,7 @@ export function initiativeOrder(
   const speeds = [...bySpeed.keys()].sort((a, b) => b - a)
   const order: CombatStack[] = []
   for (const speed of speeds) {
-    const tied = bySpeed.get(speed) ?? []
-    const atk = tied
-      .filter((stack) => stack.side === 'atk')
-      .sort((a, b) => a.slot - b.slot)
-    const def = tied
-      .filter((stack) => stack.side === 'def')
-      .sort((a, b) => a.slot - b.slot)
-    if (atk.length === 0) {
-      order.push(...def)
-    } else if (def.length === 0) {
-      order.push(...atk)
-    } else {
-      order.push(...mergeTiedSides(atk, def, random))
-    }
+    order.push(...shuffleStacks(bySpeed.get(speed) ?? [], random))
   }
   return order.map((stack) => stack.id)
 }
@@ -1227,15 +1218,31 @@ export function forceEndRound(
   const started = startRound(grown.battle, catalog, random, {
     skipDurationTicks: opts?.skipDurationTicks,
   })
-  const prefix = [...healed.lines, ...temple.lines, ...grown.lines]
+  // Shaman: top up totems at the start of every round (battle-start also calls this).
+  const totems =
+    opts?.tiles && opts.tiles.length > 0
+      ? applyShamanBattleStartTotems(
+          started,
+          catalog,
+          opts.tiles,
+          { atk: opts.heroes?.atk, def: opts.heroes?.def },
+          random,
+        )
+      : { battle: started, lines: [] as string[] }
+  const prefix = [
+    ...healed.lines,
+    ...temple.lines,
+    ...grown.lines,
+    ...totems.lines,
+  ]
   const hitKeys = [...(temple.hitKeys ?? [])]
   const healKeys = [...(temple.healKeys ?? [])]
   if (prefix.length === 0 && hitKeys.length === 0 && healKeys.length === 0) {
-    return started
+    return totems.battle
   }
   return {
-    ...started,
-    roundLog: [...prefix, ...(started.roundLog ?? [])],
+    ...totems.battle,
+    roundLog: [...prefix, ...(totems.battle.roundLog ?? [])],
     roundHitKeys: hitKeys.length > 0 ? hitKeys : undefined,
     roundHealKeys: healKeys.length > 0 ? healKeys : undefined,
   }

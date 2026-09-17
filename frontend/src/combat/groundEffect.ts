@@ -2,7 +2,7 @@ import type { Axial } from '../hex/hero'
 import { hexDistance } from '../hex/pathfinding'
 import type { AbilityRow, GroundEffectRow, ReferenceCatalog } from '../town/catalog'
 import {
-  heroEffectiveStats,
+  commandingHeroStats,
   terrainByName,
   unitAttackShape,
   unitById,
@@ -57,14 +57,18 @@ function stackName(catalog: ReferenceCatalog, stack: CombatStack): string {
   return unitById(catalog, stack.unitId)?.name ?? 'Unknown'
 }
 
-function casterStrength(catalog: ReferenceCatalog, caster: Hero): number {
-  return heroEffectiveStats(catalog, caster.class_id, caster.current_level)
-    .strength
+function casterStrength(
+  catalog: ReferenceCatalog,
+  caster: Hero | null | undefined,
+): number {
+  return commandingHeroStats(catalog, caster).strength
 }
 
-function casterIntel(catalog: ReferenceCatalog, caster: Hero): number {
-  return heroEffectiveStats(catalog, caster.class_id, caster.current_level)
-    .intel
+function casterIntel(
+  catalog: ReferenceCatalog,
+  caster: Hero | null | undefined,
+): number {
+  return commandingHeroStats(catalog, caster).intel
 }
 
 /** Fire (id 6) — not Storm; Storm shares timing but is a separate template. */
@@ -240,15 +244,31 @@ export function groundEffectById(
   return catalog.ground_effect.find((row) => row.id === id) ?? null
 }
 
-/** Most-recent-wins: drop any zone that shares a hex with `hexKeys`. */
+/** Most-recent-wins: clear only the overlapping hexes from existing zones. */
 export function replaceOverlappingGroundEffects(
   battle: CombatBattle,
   hexKeys: string[],
 ): CombatGroundEffect[] {
   const want = new Set(hexKeys)
-  return (battle.groundEffects ?? []).filter(
-    (row) => !row.hexKeys.some((key) => want.has(key)),
-  )
+  const kept: CombatGroundEffect[] = []
+  for (const row of battle.groundEffects ?? []) {
+    const remain = row.hexKeys.filter((key) => !want.has(key))
+    if (remain.length === row.hexKeys.length) {
+      kept.push(row)
+      continue
+    }
+    if (remain.length === 0) {
+      continue
+    }
+    kept.push({
+      ...row,
+      hexKeys: remain,
+      tilePrevious: row.tilePrevious?.filter(
+        (snap) => !want.has(occupancyKey(snap.q, snap.r)),
+      ),
+    })
+  }
+  return kept
 }
 
 export function clearGroundEffectsOnKeys(
@@ -391,7 +411,7 @@ export function buildGroundEffectFromAbility(
   catalog: ReferenceCatalog,
   ability: AbilityRow,
   stats: Record<string, unknown>,
-  caster: Hero,
+  caster: Hero | null | undefined,
   casterSide: CombatSide,
   aim: Axial,
   tiles: CombatTile[],
@@ -423,6 +443,7 @@ export function buildGroundEffectFromAbility(
   const evasionMult = asFinite(stats.evasion_pct_flat_stat)
   const dmgMult = asFinite(stats.flat_dmg_flat_stat)
   const chanceMult = asFinite(stats.chance_pct_flat_stat)
+  const flatChancePct = asFinite(stats.chance_pct)
   const explodeDiv = asFinite(stats.radius_stat_div)
   const duration = asFinite(stats.duration)
 
@@ -447,9 +468,20 @@ export function buildGroundEffectFromAbility(
         : stormExpiresRounds(catalog)
   } else if (isFireMechanic(mechanicType, effect, templateId)) {
     flatDmg = Math.max(0, Math.floor(intel))
+    // Fire never auto-expires (Storm's roundsLeft must not leak here).
+    roundsLeft = null
   } else if (dmgMult != null) {
     flatDmg = Math.max(0, Math.floor(strength * dmgMult))
   }
+
+  // BR S7-5: prefer flat chance_pct; legacy chance_pct_flat_stat × STR remains
+  // only when flat chance is absent.
+  const stunChancePct =
+    flatChancePct != null
+      ? Math.max(0, Math.min(100, Math.floor(flatChancePct)))
+      : chanceMult != null
+        ? Math.max(0, Math.floor(strength * chanceMult))
+        : 0
 
   return {
     id: nextGroundId(),
@@ -471,8 +503,7 @@ export function buildGroundEffectFromAbility(
       explodeDiv != null && explodeDiv > 0
         ? Math.max(0, Math.floor(strength / explodeDiv))
         : 0,
-    stunChancePct:
-      chanceMult != null ? Math.max(0, Math.floor(strength * chanceMult)) : 0,
+    stunChancePct,
     stunConditionId: Math.max(
       0,
       Math.floor(asFinite(stats.inflicts_condition) ?? 0),
@@ -673,6 +704,7 @@ export function buildPassiveZoneFromTemplate(
   templateId: number,
   hexKeys: string[],
   casterSide: CombatSide,
+  caster?: Hero | null,
 ): CombatGroundEffect | null {
   if (templateId <= 0 || hexKeys.length === 0) {
     return null
@@ -686,6 +718,8 @@ export function buildPassiveZoneFromTemplate(
     typeof mechanic.type === 'string' ? mechanic.type : 'passive_zone'
   const effect = typeof mechanic.effect === 'string' ? mechanic.effect : ''
   const storm = isStormMechanic(effect, templateId)
+  const fire = isFireMechanic(mechanicType, effect, templateId)
+  const intel = casterIntel(catalog, caster)
   const expires = storm
     ? Math.max(
         1,
@@ -694,6 +728,11 @@ export function buildPassiveZoneFromTemplate(
         ),
       )
     : null
+  const flatDmg = storm
+    ? stormFlatDmgFromIntel(catalog, intel)
+    : fire
+      ? Math.max(0, Math.floor(intel))
+      : 0
   return {
     id: nextGroundId(),
     templateId,
@@ -708,7 +747,7 @@ export function buildPassiveZoneFromTemplate(
     effect,
     triggerMoveTypes: parseMoveKinds(mechanic.trigger_move_types),
     evasionPct: 0,
-    flatDmg: 0,
+    flatDmg,
     explodeRadius: 0,
     stunChancePct: 0,
     stunConditionId: 0,
@@ -890,13 +929,21 @@ export function placeGroundEffectOnBattle(
   effect: CombatGroundEffect,
   tiles?: CombatTile[],
 ): { battle: CombatBattle; tiles?: CombatTile[] } {
-  // Restore any overlapping zones' tile stamps before dropping them.
+  // Restore tile stamps only on hexes this placement is overwriting.
   let nextTiles = tiles
-  const outgoing = (battle.groundEffects ?? []).filter((row) =>
-    row.hexKeys.some((key) => effect.hexKeys.includes(key)),
-  )
-  if (nextTiles && outgoing.length > 0) {
-    const snaps = outgoing.flatMap((row) => row.tilePrevious ?? [])
+  const want = new Set(effect.hexKeys)
+  if (nextTiles) {
+    const snaps: NonNullable<CombatGroundEffect['tilePrevious']> = []
+    for (const row of battle.groundEffects ?? []) {
+      if (!row.tilePrevious || row.tilePrevious.length === 0) {
+        continue
+      }
+      for (const snap of row.tilePrevious) {
+        if (want.has(occupancyKey(snap.q, snap.r))) {
+          snaps.push(snap)
+        }
+      }
+    }
     if (snaps.length > 0) {
       nextTiles = restoreTilesFromSnapshots(nextTiles, snaps)
     }
@@ -936,7 +983,7 @@ export function placeGroundEffectOnBattle(
 export function placeFireOnHexKeys(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
-  caster: Hero,
+  caster: Hero | null | undefined,
   casterSide: CombatSide,
   hexKeys: string[],
   tiles?: CombatTile[],
@@ -989,12 +1036,8 @@ export function placeFireOnHexKeys(
   const effect: CombatGroundEffect = {
     ...base,
     hexKeys: keys,
-    flatDmg: Math.max(
-      0,
-      Math.floor(
-        heroEffectiveStats(catalog, caster.class_id, caster.current_level).intel,
-      ),
-    ),
+    flatDmg: Math.max(0, Math.floor(casterIntel(catalog, caster))),
+    roundsLeft: null,
   }
   const placed = placeGroundEffectOnBattle(battle, effect, tiles)
   return {
@@ -1011,7 +1054,7 @@ export function placeFireOnHexKeys(
 export function placeStormOnHexKeys(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
-  caster: Hero,
+  caster: Hero | null | undefined,
   casterSide: CombatSide,
   hexKeys: string[],
   tiles?: CombatTile[],
@@ -1061,11 +1104,7 @@ export function placeStormOnHexKeys(
   if (!base) {
     return { battle, ...(tiles ? { tiles } : {}), placedKeys: [] }
   }
-  const intel = heroEffectiveStats(
-    catalog,
-    caster.class_id,
-    caster.current_level,
-  ).intel
+  const intel = casterIntel(catalog, caster)
   const effect: CombatGroundEffect = {
     ...base,
     hexKeys: keys,
@@ -1176,7 +1215,7 @@ export function applyFireGroundDamage(
     hitKeys: [],
     damage: 0,
     killed: 0,
-    label: 'Fire',
+    label: '',
   }
   const stack = battle.stacks.find((row) => row.id === stackId)
   if (!stack || stack.qty <= 0 || stack.indestructible || isHeroStack(stack)) {
@@ -1194,7 +1233,7 @@ export function applyFireGroundDamage(
     stackFootprint(stack, catalog).map((hex) => occupancyKey(hex.q, hex.r)),
   )
   let damage = 0
-  let label = 'Fire'
+  let label = ''
   for (const zone of battle.groundEffects ?? []) {
     if (
       !isEntryTurnStartDamageZone(zone) ||
@@ -1207,9 +1246,7 @@ export function applyFireGroundDamage(
       continue
     }
     damage += zone.flatDmg
-    if (zone.name?.trim()) {
-      label = zone.name.trim()
-    }
+    label = hazardZoneLabel(zone)
   }
   if (damage <= 0) {
     return empty
@@ -1250,7 +1287,24 @@ export function applyFireGroundDamage(
   }
 }
 
-/** Aggregate walk-through Fire ticks into one battle-log line. */
+/** Log label for Fire/Storm (and other entry damage) zones. */
+function hazardZoneLabel(zone: {
+  templateId: number
+  mechanicType: string
+  effect: string
+  name: string
+}): string {
+  if (isStormMechanic(zone.effect, zone.templateId)) {
+    return 'Storm'
+  }
+  if (isFireMechanic(zone.mechanicType, zone.effect, zone.templateId)) {
+    return 'Fire'
+  }
+  const named = zone.name?.trim()
+  return named || 'ground effect'
+}
+
+/** Aggregate walk-through Fire/Storm ticks into one battle-log line. */
 export function fireHazardSummaryLine(
   hits: number,
   totalDamage: number,
@@ -1262,7 +1316,8 @@ export function fireHazardSummaryLine(
     return null
   }
   const times = hits === 1 ? '1 time' : `${hits} times`
-  let line = `${label} hits ${times} for ${totalDamage} dmg`
+  const who = label.trim() || 'Fire'
+  let line = `${who} hits ${times} for ${totalDamage} dmg`
   if (killed > 0) {
     line += ` and ${killed} ${unitName} died`
   }

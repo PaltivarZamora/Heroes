@@ -2,7 +2,7 @@ import type { Axial } from '../hex/hero'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
-  heroEffectiveStats,
+  commandingHeroStats,
   terrainByName,
   unitAttackShape,
   unitById,
@@ -10,7 +10,7 @@ import {
 import type { CombatBattle, CombatSide, CombatStack, CombatTile } from './battle'
 import { isHeroStack } from './battle'
 import { chanceRollLog, rollChancePct } from './combatLog'
-import { placeStormOnHexKeys } from './groundEffect'
+import { placeStormOnHexKeys, STORM_GROUND_EFFECT_ID } from './groundEffect'
 import { occupancyKey, stackFootprint } from './occupancy'
 import { hexDisk } from './shapes'
 import { syncTombstonesFromWipes } from './tombstone'
@@ -27,7 +27,7 @@ function heroForSide(
   return side === 'atk' ? heroes.atk : heroes.def
 }
 
-/** Mud Sprite: +qty when entering / standing on matching terrain. */
+/** Mud Sprite: at turn-start only, if standing on Mud, +floor(qty/10) (min 1). */
 export function applyTerrainGrowth(
   battle: CombatBattle,
   stackId: string,
@@ -40,8 +40,7 @@ export function applyTerrainGrowth(
   }
   const spec = unitAttackShape(unitById(catalog, stack.unitId))
   const terrainId = spec.terrainGrowthTerrainTypeId
-  const amount = spec.terrainGrowthAmount
-  if (terrainId == null || terrainId <= 0 || amount == null || amount <= 0) {
+  if (terrainId == null || terrainId <= 0) {
     return { battle, lines: [] }
   }
   const byKey = new Map(
@@ -58,7 +57,7 @@ export function applyTerrainGrowth(
   if (!onTerrain) {
     return { battle, lines: [] }
   }
-  const gain = Math.max(1, Math.floor(amount))
+  const gain = Math.max(1, Math.floor(stack.qty / 10))
   const next: CombatStack = {
     ...stack,
     qty: stack.qty + gain,
@@ -96,16 +95,10 @@ export function tryTempestStormScatter(
   if (spec.scatterGroundEffectOnMoveStop !== true) {
     return { battle, lines: [] }
   }
-  const templateId = spec.groundEffectId ?? 7
+  const templateId = spec.groundEffectId ?? STORM_GROUND_EFFECT_ID
+  const label = unitById(catalog, stack.unitId)?.name ?? 'Tempest'
   const caster = heroForSide(stack.side, heroes)
-  if (!caster) {
-    return { battle, lines: [] }
-  }
-  const intel = heroEffectiveStats(
-    catalog,
-    caster.class_id,
-    caster.current_level,
-  ).intel
+  const intel = commandingHeroStats(catalog, caster).intel
   const chanceMult = spec.chancePctIntelStat ?? 4
   const chance = Math.min(100, Math.max(0, Math.floor(intel * chanceMult)))
   const radius = Math.max(0, spec.radius ?? 2)
@@ -113,7 +106,6 @@ export function tryTempestStormScatter(
   const hexes = hexDisk({ q: stack.q, r: stack.r }, radius).filter((hex) =>
     board.has(occupancyKey(hex.q, hex.r)),
   )
-  const label = unitById(catalog, stack.unitId)?.name ?? 'Tempest'
   let attempted = 0
   let hits = 0
   const keys: string[] = []
@@ -126,15 +118,15 @@ export function tryTempestStormScatter(
     keys.push(occupancyKey(hex.q, hex.r))
   }
   const lines = [
-    chanceRollLog(label, chance, hits > 0, {
-      detail: `INT ${intel} × ${chanceMult}`,
-      action: 'Storm scatter per hex',
-      success: `${hits}/${attempted} hexes.`,
-      fail: `0/${attempted} hexes.`,
-    }),
+    `${label} dropped Storm ${hits}/${attempted} times` +
+      (chance < 100
+        ? ` (${chance}% per hex, INT ${intel} × ${chanceMult}).`
+        : '.'),
   ]
-  if (keys.length === 0 || templateId !== 7) {
-    // Only Storm is implemented for move-stop scatter.
+  if (keys.length === 0) {
+    return { battle, lines }
+  }
+  if (templateId !== STORM_GROUND_EFFECT_ID) {
     return { battle, lines }
   }
   const storm = placeStormOnHexKeys(
@@ -181,10 +173,7 @@ export function applySelfRezThenTombstones(
     const div = Math.max(1, spec.selfRezChanceStatDiv ?? 3)
     const cap = Math.min(100, Math.max(0, spec.selfRezCapPct ?? 90))
     const caster = heroForSide(stack.side, heroes)
-    const intel = caster
-      ? heroEffectiveStats(catalog, caster.class_id, caster.current_level)
-          .intel
-      : 0
+    const intel = commandingHeroStats(catalog, caster).intel
     const killedThisRound = Math.max(
       1,
       roundDeaths[stack.unitId] ?? stack.qty,
@@ -198,10 +187,10 @@ export function applySelfRezThenTombstones(
     const triggered = rollChancePct(chance, random)
     lines.push(
       chanceRollLog(name, chance, triggered, {
-        detail: `INT ${intel}/${div} × ${killedThisRound} deaths`,
+        detail: `INT ${intel} / ${div} × ${killedThisRound} deaths this round`,
         action: 'to self-resurrect',
-        success: 'risen!',
-        fail: 'did not trigger — tombstone remains.',
+        success: 'triggered!',
+        fail: 'did not trigger.',
       }),
     )
     if (!triggered) {
@@ -220,6 +209,7 @@ export function applySelfRezThenTombstones(
     }
     stacks.push(restored)
     stillLive.add(stack.id)
+    lines.push(`${name}: risen (${restored.qty})!`)
   }
 
   const withStacks: CombatBattle = {
@@ -241,12 +231,8 @@ export function leaveBehindChancePct(
   chancePct: number | null,
   chancePctIntelStat: number | null,
 ): number {
-  if (chancePctIntelStat != null && chancePctIntelStat > 0 && caster) {
-    const intel = heroEffectiveStats(
-      catalog,
-      caster.class_id,
-      caster.current_level,
-    ).intel
+  if (chancePctIntelStat != null && chancePctIntelStat > 0) {
+    const intel = commandingHeroStats(catalog, caster).intel
     return Math.min(100, Math.max(0, Math.floor(intel * chancePctIntelStat)))
   }
   if (chancePct != null && chancePct > 0) {

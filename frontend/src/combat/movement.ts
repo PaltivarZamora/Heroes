@@ -89,16 +89,22 @@ function isAirborne(kind: MoveKind): boolean {
  * Flying/Hover may cross `is_blocked` terrain and ground-effect blockers
  * (Void, Barricade, etc.), including ones that also block LOS — landing is
  * still forbidden via combatCanLandOn.
+ * `movementBlockKeys` covers live ground-effect stamps when tile.blocked
+ * is stale (hover used to close over the map-init tile array).
  */
 export function combatEnterCost(
   tile: CombatTile | undefined,
   kind: MoveKind,
   passableMoatKeys?: ReadonlySet<string>,
+  movementBlockKeys?: ReadonlySet<string>,
 ): number | null {
   if (!tile) {
     return null
   }
-  if (tile.blocked) {
+  const blocked =
+    tile.blocked ||
+    (movementBlockKeys?.has(hexKey(tile.q, tile.r)) ?? false)
+  if (blocked) {
     if (isAirborne(kind)) {
       return 1
     }
@@ -127,11 +133,34 @@ export function combatCanLandOn(
   tile: CombatTile | undefined,
   kind: MoveKind,
   passableMoatKeys?: ReadonlySet<string>,
+  movementBlockKeys?: ReadonlySet<string>,
 ): boolean {
-  if (!tile || tile.blocked) {
+  if (!tile) {
     return false
   }
-  return combatEnterCost(tile, kind, passableMoatKeys) != null
+  if (
+    tile.blocked ||
+    (movementBlockKeys?.has(hexKey(tile.q, tile.r)) ?? false)
+  ) {
+    return false
+  }
+  return combatEnterCost(tile, kind, passableMoatKeys, movementBlockKeys) != null
+}
+
+/** Hexes from ground effects that block walking (Void, Barricade, …). */
+export function groundEffectMovementBlockKeys(
+  battle: CombatBattle,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const zone of battle.groundEffects ?? []) {
+    if (zone.blocksMovement !== true) {
+      continue
+    }
+    for (const key of zone.hexKeys) {
+      keys.add(key)
+    }
+  }
+  return keys
 }
 
 export function occupiedForMover(
@@ -186,9 +215,15 @@ function stackEnterCost(
   tiles: Map<string, CombatTile>,
   kind: MoveKind,
   passableMoatKeys?: ReadonlySet<string>,
+  movementBlockKeys?: ReadonlySet<string>,
 ): (q: number, r: number) => number | null {
   return (q, r) =>
-    combatEnterCost(tiles.get(hexKey(q, r)), kind, passableMoatKeys)
+    combatEnterCost(
+      tiles.get(hexKey(q, r)),
+      kind,
+      passableMoatKeys,
+      movementBlockKeys,
+    )
 }
 
 export type FootprintSpec = {
@@ -232,13 +267,14 @@ function landFits(
   occupied: ReadonlySet<string>,
   spec: FootprintSpec | undefined,
   passableMoatKeys?: ReadonlySet<string>,
+  movementBlockKeys?: ReadonlySet<string>,
 ): boolean {
   const landCost = (q: number, r: number): number | null => {
     const tile = tiles.get(hexKey(q, r))
-    if (!combatCanLandOn(tile, kind, passableMoatKeys)) {
+    if (!combatCanLandOn(tile, kind, passableMoatKeys, movementBlockKeys)) {
       return null
     }
-    return combatEnterCost(tile, kind, passableMoatKeys)
+    return combatEnterCost(tile, kind, passableMoatKeys, movementBlockKeys)
   }
   return footprintFits(
     origin,
@@ -291,13 +327,14 @@ export function combatPathSteps(
   stopOnlyKeys?: ReadonlySet<string>,
   landOccupied?: ReadonlySet<string>,
   costAdjust?: EnterCostAdjust,
+  movementBlockKeys?: ReadonlySet<string>,
 ): Axial[] {
   if (budget <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return []
   }
   const tilesByKey = tileMap(tiles)
   const enterCost = withCostAdjust(
-    stackEnterCost(tilesByKey, kind, passableMoatKeys),
+    stackEnterCost(tilesByKey, kind, passableMoatKeys, movementBlockKeys),
     costAdjust,
   )
   const destKey = hexKey(to.q, to.r)
@@ -340,7 +377,17 @@ export function combatPathSteps(
       if (!standFits(hex, enterCost, occupied, spec)) {
         break
       }
-      if (!landFits(hex, tilesByKey, kind, landingOccupied, spec, passableMoatKeys)) {
+      if (
+        !landFits(
+          hex,
+          tilesByKey,
+          kind,
+          landingOccupied,
+          spec,
+          passableMoatKeys,
+          movementBlockKeys,
+        )
+      ) {
         break
       }
       steps.push(hex)
@@ -359,7 +406,15 @@ export function combatPathSteps(
     const last = steps[steps.length - 1]
     if (
       last &&
-      landFits(last, tilesByKey, kind, landingOccupied, spec, passableMoatKeys)
+      landFits(
+        last,
+        tilesByKey,
+        kind,
+        landingOccupied,
+        spec,
+        passableMoatKeys,
+        movementBlockKeys,
+      )
     ) {
       break
     }
@@ -381,6 +436,7 @@ export function resolveCombatWaypointLeg(
   stopOnlyKeys?: ReadonlySet<string>,
   landOccupied?: ReadonlySet<string>,
   costAdjust?: EnterCostAdjust,
+  movementBlockKeys?: ReadonlySet<string>,
 ): { steps: Axial[]; remaining: number } | null {
   if (from.q === to.q && from.r === to.r) {
     return null
@@ -397,6 +453,7 @@ export function resolveCombatWaypointLeg(
     stopOnlyKeys,
     landOccupied,
     costAdjust,
+    movementBlockKeys,
   )
   if (steps.length === 0) {
     return null
@@ -407,7 +464,7 @@ export function resolveCombatWaypointLeg(
   }
   const tilesByKey = tileMap(tiles)
   const enterCost = withCostAdjust(
-    stackEnterCost(tilesByKey, kind, passableMoatKeys),
+    stackEnterCost(tilesByKey, kind, passableMoatKeys, movementBlockKeys),
     costAdjust,
   )
   let mp = budget
@@ -440,10 +497,11 @@ export function combatReachable(
   stopOnlyKeys?: ReadonlySet<string>,
   landOccupied?: ReadonlySet<string>,
   costAdjust?: EnterCostAdjust,
+  movementBlockKeys?: ReadonlySet<string>,
 ): Map<string, Axial[]> {
   const tilesByKey = tileMap(tiles)
   const enterCost = withCostAdjust(
-    stackEnterCost(tilesByKey, kind, passableMoatKeys),
+    stackEnterCost(tilesByKey, kind, passableMoatKeys, movementBlockKeys),
     costAdjust,
   )
   const paths = reachableWithin(from, budget, enterCost, occupied, stopOnlyKeys)
@@ -459,7 +517,15 @@ export function combatReachable(
     const dest = steps[steps.length - 1]
     if (
       dest &&
-      !landFits(dest, tilesByKey, kind, landingOccupied, spec, passableMoatKeys)
+      !landFits(
+        dest,
+        tilesByKey,
+        kind,
+        landingOccupied,
+        spec,
+        passableMoatKeys,
+        movementBlockKeys,
+      )
     ) {
       continue
     }
@@ -483,9 +549,15 @@ export function combatBlinkReachable(
   passableMoatKeys?: ReadonlySet<string>,
   landOccupied?: ReadonlySet<string>,
   requireLos = true,
+  movementBlockKeys?: ReadonlySet<string>,
 ): Map<string, Axial[]> {
   const tilesByKey = tileMap(tiles)
-  const enterCost = stackEnterCost(tilesByKey, kind, passableMoatKeys)
+  const enterCost = stackEnterCost(
+    tilesByKey,
+    kind,
+    passableMoatKeys,
+    movementBlockKeys,
+  )
   const landingOccupied = landOccupied ?? occupied
   const out = new Map<string, Axial[]>()
   out.set(hexKey(from.q, from.r), [])
@@ -502,7 +574,15 @@ export function combatBlinkReachable(
       continue
     }
     if (
-      !landFits(dest, tilesByKey, kind, landingOccupied, spec, passableMoatKeys)
+      !landFits(
+        dest,
+        tilesByKey,
+        kind,
+        landingOccupied,
+        spec,
+        passableMoatKeys,
+        movementBlockKeys,
+      )
     ) {
       continue
     }
@@ -540,6 +620,7 @@ export function combatMovementReachable(
   const spec = footprintSpecFor(stack, catalog)
   const passable = openBridgeMoatKeys(battle, catalog, tiles)
   const stopOnly = stopOnlyForMover(battle, catalog, tiles, kind)
+  const geBlocks = groundEffectMovementBlockKeys(battle)
   const abilities = unitAttackShape(unit)
   if (abilities.blinkMovement) {
     return combatBlinkReachable(
@@ -554,6 +635,7 @@ export function combatMovementReachable(
       landOccupied,
       // Blink is LOS-constrained (requires_los); never unrestricted like Shadow Step.
       true,
+      geBlocks,
     )
   }
   return combatReachable(
@@ -567,6 +649,7 @@ export function combatMovementReachable(
     stopOnly,
     landOccupied,
     costAdjust,
+    geBlocks,
   )
 }
 

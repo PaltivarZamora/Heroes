@@ -10,12 +10,16 @@ import {
   type ReferenceCatalog,
   type UnitRow,
 } from '../town/catalog'
+import { DEFAULT_AI_ARCH_ID } from '../ai/types'
 import { insertHeroArmyStack, nextUnitStackId } from './accessors'
+import { startingResources } from './create'
 import {
   ARMY_STACK_SLOTS,
+  playerIdForSlot,
   type GameSession,
   type Hero,
   type Mob,
+  type Player,
   type UnitStack,
 } from './types'
 
@@ -24,6 +28,7 @@ export type FixedFightKind =
   | 'raise_demons'
   | 'holy_wrath'
   | 'for_the_hoard'
+  | 'fight_yourself'
 
 export type FixedFightOk = {
   session: GameSession
@@ -406,18 +411,46 @@ function fillHeroArmy(
   return next
 }
 
+/** Solo debug games may only have player-1; hero vs hero needs a distinct defender slot. */
+function opponentPlayerForFixedFight(
+  session: GameSession,
+  attacker: Hero,
+): { session: GameSession; player: Player } {
+  const existing =
+    session.players.find((player) => player.is_ai) ??
+    session.players.find((player) => player.id !== attacker.player_id)
+  if (existing) {
+    return { session, player: existing }
+  }
+  const slot = session.players.length + 1
+  const player: Player = {
+    id: playerIdForSlot(slot),
+    is_ai: true,
+    ai_spectator: false,
+    arch_id: DEFAULT_AI_ARCH_ID,
+    eliminated: false,
+    resources: startingResources(),
+    hero_ids: [],
+    town_ids: [],
+    explored: [],
+  }
+  return {
+    session: { ...session, players: [...session.players, player] },
+    player,
+  }
+}
+
 function ensureOpponentHero(
   session: GameSession,
   attacker: Hero,
   catalog: ReferenceCatalog,
   classId: number,
 ): { session: GameSession; heroId: string } | null {
-  const aiPlayer =
-    session.players.find((player) => player.is_ai) ??
-    session.players.find((player) => player.id !== attacker.player_id)
-  if (!aiPlayer) {
-    return null
-  }
+  const { session: withPlayer, player: aiPlayer } = opponentPlayerForFixedFight(
+    session,
+    attacker,
+  )
+  session = withPlayer
   const existing = session.heroes.find(
     (row) => row.player_id === aiPlayer.id && row.id !== attacker.id,
   )
@@ -487,6 +520,124 @@ function prepareHolyWrath(
   }
 }
 
+function ensureMirrorDefender(
+  session: GameSession,
+  attacker: Hero,
+): { session: GameSession; heroId: string } {
+  const { session: withPlayer, player: aiPlayer } = opponentPlayerForFixedFight(
+    session,
+    attacker,
+  )
+  session = withPlayer
+  const existing = session.heroes.find(
+    (row) => row.player_id === aiPlayer.id && row.id !== attacker.id,
+  )
+  if (existing) {
+    return { session, heroId: existing.id }
+  }
+  const id = nextHeroId(session)
+  const hero: Hero = {
+    id,
+    player_id: aiPlayer.id,
+    name: `${attacker.name} (Mirror)`,
+    class_id: attacker.class_id,
+    image_path: attacker.image_path,
+    position: { ...attacker.position },
+    movement_remaining: 0,
+    army: {
+      slot_0: attacker.army.slot_0,
+      slots_1_to_6: Array.from({ length: ARMY_STACK_SLOTS }, () => null),
+    },
+    learned_abilities: [...attacker.learned_abilities],
+    current_level: attacker.current_level,
+    current_xp: attacker.current_xp,
+    used_abilities_this_battle: [],
+    used_abilities_today: [],
+    arch_id: attacker.arch_id,
+    current_mana: attacker.current_mana,
+    current_energy: attacker.current_energy,
+  }
+  return {
+    session: {
+      ...session,
+      heroes: [...session.heroes, hero],
+      players: session.players.map((player) =>
+        player.id === aiPlayer.id
+          ? { ...player, hero_ids: [...player.hero_ids, id] }
+          : player,
+      ),
+    },
+    heroId: id,
+  }
+}
+
+function cloneHeroAsMirror(
+  session: GameSession,
+  fromHeroId: string,
+  toHeroId: string,
+): GameSession {
+  const from = session.heroes.find((row) => row.id === fromHeroId)
+  if (!from) {
+    return session
+  }
+  let next = clearHeroArmy(session, toHeroId)
+  for (let slot = 0; slot < ARMY_STACK_SLOTS; slot += 1) {
+    const stackId = from.army.slots_1_to_6[slot]
+    if (!stackId) {
+      continue
+    }
+    const stack = next.units.find((row) => row.id === stackId)
+    if (!stack || stack.qty <= 0) {
+      continue
+    }
+    next = insertHeroArmyStack(next, toHeroId, slot, {
+      id: nextUnitStackId(next),
+      unitId: stack.unit_id,
+      qty: stack.qty,
+    })
+  }
+  return {
+    ...next,
+    heroes: next.heroes.map((row) =>
+      row.id === toHeroId
+        ? {
+            ...row,
+            name: `${from.name} (Mirror)`,
+            class_id: from.class_id,
+            image_path: from.image_path,
+            army: { ...row.army, slot_0: from.army.slot_0 },
+            learned_abilities: [...from.learned_abilities],
+            current_level: from.current_level,
+            current_xp: from.current_xp,
+            arch_id: from.arch_id,
+            current_mana: from.current_mana,
+            current_energy: from.current_energy,
+            used_abilities_this_battle: [],
+            used_abilities_today: [],
+          }
+        : row,
+    ),
+  }
+}
+
+function prepareFightYourself(
+  session: GameSession,
+  hero: Hero,
+): FixedFightResult {
+  if (hero.class_id == null) {
+    return { error: 'Fight Yourself: hero has no class' }
+  }
+  const defender = ensureMirrorDefender(session, hero)
+  const next = cloneHeroAsMirror(defender.session, hero.id, defender.heroId)
+  return {
+    session: next,
+    heroId: hero.id,
+    mobId: null,
+    defenderHeroId: defender.heroId,
+    notice: `${hero.name}: Fight Yourself`,
+  }
+}
+
 function prepareForTheHoard(
   session: GameSession,
   hero: Hero,
@@ -532,7 +683,14 @@ export function prepareFixedFight(
   if (!hero) {
     return { error: 'No hero for Fixed Fight' }
   }
-  if (kind === 'holy_wrath' || kind === 'for_the_hoard') {
+  if (
+    kind === 'holy_wrath' ||
+    kind === 'for_the_hoard' ||
+    kind === 'fight_yourself'
+  ) {
+    if (kind === 'fight_yourself') {
+      return prepareFightYourself(session, hero)
+    }
     const catalog = getCachedCatalog()
     if (!catalog) {
       return { error: 'Catalog not loaded' }

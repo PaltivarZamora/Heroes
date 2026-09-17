@@ -30,10 +30,15 @@ export const SILENCE_CONDITION_ID = 4
 export const BLIND_CONDITION_ID = 5
 export const TAUNT_CONDITION_ID = 6
 export const VANISH_CONDITION_ID = 9
+/** BR S7-4: Slow — Speed −33% while active (duration from source ability). */
+export const SLOW_CONDITION_ID = 12
 export const POLYMORPH_ART_FILENAME = 'Polymorph_1.png'
 
 /** Blind: attacks from the afflicted stack miss this often. */
 export const BLIND_MISS_PCT = 50
+
+/** Flat Speed reduction while Slow is active (not stat-scaled). */
+export const SLOW_SPEED_REDUCTION_PCT = 33
 
 export type ConditionExtra = {
   roundTick?: boolean
@@ -85,6 +90,22 @@ export function isStunned(
   catalog?: ReferenceCatalog,
 ): boolean {
   const id = catalog ? stunConditionId(catalog) : STUN_CONDITION_ID
+  return conditionRemaining(stack, id) > 0
+}
+
+export function slowConditionId(catalog: ReferenceCatalog): number {
+  const named = catalog.condition.find(
+    (row) => row.value.trim().toLowerCase() === 'slow',
+  )
+  return named?.id ?? SLOW_CONDITION_ID
+}
+
+/** Slow: effective Speed reduced by SLOW_SPEED_REDUCTION_PCT while active. */
+export function isSlowed(
+  stack: CombatStack,
+  catalog?: ReferenceCatalog,
+): boolean {
+  const id = catalog ? slowConditionId(catalog) : SLOW_CONDITION_ID
   return conditionRemaining(stack, id) > 0
 }
 

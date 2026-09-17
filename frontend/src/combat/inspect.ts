@@ -651,6 +651,20 @@ export function inspectRows(
           },
         ]
       : []),
+    ...(unit.abilities.chanceHalvesEachAttempt ||
+    (unit.abilities.grantsSecondAttack &&
+      unit.abilities.chancePctFlatStat != null)
+      ? [
+          {
+            label: 'bonus attack chain',
+            value: `STR × ${unit.abilities.chancePctFlatStat ?? 2}%${
+              unit.abilities.chanceHalvesEachAttempt
+                ? ', halves each success'
+                : ''
+            }`,
+          },
+        ]
+      : []),
     { label: 'abilities', value: formatAbilities(unit.abilities) },
   ]
 }

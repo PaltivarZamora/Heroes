@@ -3,6 +3,7 @@ import type { Axial } from '../hex/hero'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
+  commandingHeroStats,
   heroEffectiveStats,
   minRangePenaltyMult,
   shapeIsUntargeted,
@@ -91,8 +92,11 @@ import {
   fortressUnitGetsPassives,
   grantHeroEnergy,
   groveUnitGetsPassives,
+  isDruidHero,
   isRogueHero,
+  passiveManaPerAttack,
   rangerSuppressChancePct,
+  rogueEnergyPerTrigger,
 } from './heroArmyPassives'
 import {
   grantHeroMana,
@@ -159,7 +163,10 @@ function outputTotalPct(stack: CombatStack, kind: DmgKind): number {
 }
 
 /**
- * Flat unit soak (floor 1) → hero Defense/Resistance % → stack buff %.
+ * Flat unit soak (Defense/Resistance × defender qty) → hero % → stack buff %.
+ * Flat soak scales with the defending stack: each creature blocks individually.
+ * Default floor is 1 for the whole damage packet; callers that still need a
+ * per-connecting-attacker chip floor pass `minDamage`.
  * `blocked` is the total taken off raw.
  */
 export function mitigateIncoming(
@@ -168,7 +175,7 @@ export function mitigateIncoming(
   catalog: ReferenceCatalog,
   kind: DmgKind,
   defenderHero: Hero | undefined,
-  opts?: { ignoreArmor?: boolean },
+  opts?: { ignoreArmor?: boolean; minDamage?: number },
 ): { damage: number; blocked: number; blockBy: BlockLabel | null } {
   if (raw <= 0 || target.indestructible) {
     return { damage: 0, blocked: Math.max(0, raw), blockBy: null }
@@ -180,14 +187,21 @@ export function mitigateIncoming(
   ) {
     return { damage: 0, blocked: Math.max(0, raw), blockBy: 'Resistance' }
   }
-  const soak =
+  const defQty = Math.max(0, target.qty)
+  const soakPer =
     opts?.ignoreArmor === true
       ? 0
       : kind === 'magic'
         ? stackResistance(target, catalog)
         : stackDefense(target, catalog)
+  const soak = soakPer * defQty
   const label: BlockLabel = kind === 'magic' ? 'Resistance' : 'Defense'
-  let dealt = opts?.ignoreArmor === true ? Math.max(0, raw) : Math.max(1, raw - soak)
+  const floor =
+    opts?.ignoreArmor === true
+      ? 0
+      : Math.max(1, opts?.minDamage ?? 1)
+  let dealt =
+    opts?.ignoreArmor === true ? Math.max(0, raw) : Math.max(floor, raw - soak)
   let blocked = Math.max(0, raw - dealt)
   if (defenderHero) {
     const stats = heroEffectiveStats(
@@ -397,13 +411,7 @@ function liveCritStats(
   extraPct = 0,
   extraAmt = 0,
 ): { pct: number; amt: number; minBonus: number } {
-  const base = attackerHero
-    ? heroEffectiveStats(
-        catalog,
-        attackerHero.class_id,
-        attackerHero.current_level,
-      )
-    : { crit_pct: 0, crit_amt: 0 }
+  const base = commandingHeroStats(catalog, attackerHero)
   return {
     pct: base.crit_pct + (striker.critPctBonus ?? 0) + extraPct,
     amt: base.crit_amt + (striker.critAmtBonus ?? 0) + extraAmt,
@@ -569,7 +577,7 @@ export function trySpeedSwapIfTargetFaster(
   }
 }
 
-/** Gladiator-style flat speed cut: floor(strength / div), chance + resist. */
+/** Gladiator flat Speed cut / Vines % Slow: chance + resist, then apply. */
 export function tryFlatSpeedDebuff(
   striker: CombatStack,
   target: CombatStack,
@@ -579,7 +587,10 @@ export function tryFlatSpeedDebuff(
 ): { stack: CombatStack; lines: string[] } {
   const spec = unitAttackShape(unitById(catalog, striker.unitId))
   const div = spec.speedDebuffFlatStatDiv
-  if (div == null || div <= 0) {
+  const pct = spec.speedDebuffPct
+  const usePct = pct != null && pct > 0
+  const useFlat = div != null && div > 0
+  if (!usePct && !useFlat) {
     return { stack: target, lines: [] }
   }
   if (
@@ -598,7 +609,7 @@ export function tryFlatSpeedDebuff(
         unitById(catalog, striker.unitId)?.name ?? 'Attacker',
         chance,
         triggered,
-        { action: 'to inflict knockdown' },
+        { action: 'to slow' },
       ),
     )
     if (!triggered) {
@@ -619,19 +630,22 @@ export function tryFlatSpeedDebuff(
         stack: target,
         lines: [
           ...chanceLines,
-          `${target.qty} ${name}: ${resistChance}% ${spec.resistStat} vs knockdown — resisted!`,
+          `${target.qty} ${name}: ${resistChance}% ${spec.resistStat} vs slow — resisted!`,
         ],
       }
     }
   }
-  const strength = attackerHero
-    ? heroEffectiveStats(
-        catalog,
-        attackerHero.class_id,
-        attackerHero.current_level ?? 1,
-      ).strength
-    : 0
-  const cut = Math.max(0, Math.floor(strength / div))
+  let cut = 0
+  if (usePct) {
+    const live = stackCombatSpeed(target, catalog) ?? 0
+    cut = Math.max(0, Math.floor((live * pct!) / 100))
+    if (cut === 0 && pct! > 0 && live > 0) {
+      cut = 1
+    }
+  } else {
+    const strength = commandingHeroStats(catalog, attackerHero).strength
+    cut = Math.max(0, Math.floor(strength / div!))
+  }
   if (cut <= 0) {
     return { stack: target, lines: chanceLines }
   }
@@ -912,11 +926,10 @@ function afterDamageTaken(
 type BlockLabel = 'Defense' | 'Resistance'
 
 /**
- * Per creature, then summed (BR 4-12): roll → dmg_pct → min_range penalty →
- * unit soak floored at 1 → hero % → incoming buff %. Stack outgoing %
- * (Sap Strength and similar) is applied after that per-creature floor,
- * never to an aggregated total. bonus_dmg_tag/mult scales the final per-creature
- * dealt amount when the target has that tag.
+ * Per attacking creature roll, then one mitigation pass (BR 4-12):
+ * roll → dmg_pct → min_range penalty (summed) → flat Defense/Resistance ×
+ * defender qty (floor ≥ connecting attackers) → hero % → incoming buff % →
+ * stack outgoing % → per-connecting crit → bonus_dmg_tag/mult on the total.
  */
 export function computeStrikeDamage(
   striker: CombatStack,
@@ -972,13 +985,13 @@ export function computeStrikeDamage(
     bonusMult > 0 &&
     bonusMult !== 1 &&
     bonusTags.some((tag) => unitHasTag(targetUnit, tag))
-  let damage = 0
-  let blocked = 0
-  let crits = 0
+  let totalRaw = 0
+  let connects = 0
   for (let i = 0; i < striker.qty; i += 1) {
     if (!strikeConnects(mods)) {
       continue
     }
+    connects += 1
     let raw: number
     if (guaranteed != null) {
       raw = guaranteed
@@ -997,24 +1010,48 @@ export function computeStrikeDamage(
         raw = Math.floor(raw * minRangePenaltyMult(catalog))
       }
     }
-    const mit = mitigateIncoming(raw, target, catalog, kind, defenderHero, {
-      ignoreArmor,
-    })
-    let dealt = scaleBySignedPct(mit.damage, totalPct)
-    if (dealt > 0 && crit.pct > 0 && random() * 100 < crit.pct) {
-      dealt += critBonusDamage(dealt, crit.amt, crit.minBonus)
-      crits += 1
-    }
-    if (applyTagBonus && dealt > 0) {
-      dealt = Math.max(0, Math.floor(dealt * bonusMult))
-    }
-    damage += dealt
-    blocked += mit.blocked
-    if (dealt < mit.damage) {
-      blocked += mit.damage - dealt
+    totalRaw += raw
+  }
+  if (connects <= 0) {
+    return {
+      damage: 0,
+      blocked: 0,
+      rangePenalty: guaranteed != null ? false : rangePenalty,
+      crits: 0,
     }
   }
-  return { damage, blocked, rangePenalty: guaranteed != null ? false : rangePenalty, crits }
+  // Flat soak uses defender qty; chip floor stays 1 per connecting attacker
+  // (re-anchoring the floor to defender qty would inflate hits when raw < defQty).
+  const mit = mitigateIncoming(totalRaw, target, catalog, kind, defenderHero, {
+    ignoreArmor,
+    minDamage: connects,
+  })
+  let damage = scaleBySignedPct(mit.damage, totalPct)
+  let blocked = mit.blocked + Math.max(0, mit.damage - damage)
+  let crits = 0
+  // Crits still roll once per connecting creature against an equal share of
+  // post-mitigation damage so multi-stack crit rate is unchanged.
+  const critBase = connects > 0 ? Math.floor(damage / connects) : damage
+  for (let i = 0; i < connects; i += 1) {
+    if (damage > 0 && crit.pct > 0 && random() * 100 < crit.pct) {
+      const base = critBase > 0 ? critBase : damage
+      damage += critBonusDamage(base, crit.amt, crit.minBonus)
+      crits += 1
+    }
+  }
+  if (applyTagBonus && damage > 0) {
+    const beforeTag = damage
+    damage = Math.max(0, Math.floor(damage * bonusMult))
+    if (damage < beforeTag) {
+      blocked += beforeTag - damage
+    }
+  }
+  return {
+    damage,
+    blocked,
+    rangePenalty: guaranteed != null ? false : rangePenalty,
+    crits,
+  }
 }
 
 export function applyStrike(
@@ -1652,10 +1689,7 @@ export function resolveAttack(
   const chargeHexes = strikeMods?.chargeHexes ?? 0
   if (spec.chargeDmgEscalation && chargeHexes > 0) {
     const hero = heroForSide(attacker.side, heroes)
-    const strength = hero
-      ? heroEffectiveStats(catalog, hero.class_id, hero.current_level ?? 1)
-          .strength
-      : 0
+    const strength = commandingHeroStats(catalog, hero).strength
     const kind = damageKindOf(atkUnit)
     const minDmg = scaleBySignedPct(
       stackMinDmg(attacker, catalog),
@@ -2103,7 +2137,7 @@ export function resolveAttack(
       }
       retaliator = fireRetaliationStrike(retaliator)
       didRetaliate = true
-      // Rogue: +1 Energy when a Fortress unit's attack is retaliated against.
+      // Rogue: Energy when a Fortress unit's attack is retaliated against.
       if (
         atk &&
         fortressUnitGetsPassives(catalog, atk) &&
@@ -2111,14 +2145,15 @@ export function resolveAttack(
       ) {
         const rogue = heroForSide(atk.side, heroState)
         if (rogue) {
-          const gained = grantHeroEnergy(catalog, rogue, 1)
+          const amount = rogueEnergyPerTrigger(catalog, rogue)
+          const gained = grantHeroEnergy(catalog, rogue, amount)
           if (gained.current_energy > rogue.current_energy) {
             heroState =
               atk.side === 'atk'
                 ? { ...heroState, atk: gained }
                 : { ...heroState, def: gained }
             lines.push(
-              `Rogue: +1 Energy (${gained.current_energy}/${poolMax(catalog, gained, 1)}).`,
+              `Rogue: +${amount} Energy (${gained.current_energy}/${poolMax(catalog, gained, 1)}).`,
             )
           }
         }
@@ -2540,6 +2575,75 @@ export function resolveAttack(
         }
       }
     }
+    // Ninja (68/69): STR × chancePctFlatStat % bonus attacks; halve and re-roll
+    // until a failure (own turn only). Always logs each attempt (S6-49).
+    {
+      const liveAtk = live(attackerId)
+      const unitId = liveAtk?.unitId ?? before.unitId
+      const atkAbilities = unitAttackShape(unitById(catalog, unitId))
+      const unitName = (unitById(catalog, unitId)?.name ?? '')
+        .trim()
+        .toLowerCase()
+      const isNinjaUnit =
+        unitId === 68 ||
+        unitId === 69 ||
+        unitName === 'ninja' ||
+        unitName === 'advanced ninja'
+      const factor =
+        atkAbilities.chancePctFlatStat != null &&
+        atkAbilities.chancePctFlatStat > 0
+          ? atkAbilities.chancePctFlatStat
+          : isNinjaUnit
+            ? 2
+            : null
+      const wantsChain =
+        liveAtk != null &&
+        liveAtk.qty > 0 &&
+        !atkAbilities.extraAttackOnAttackOnly &&
+        factor != null &&
+        (isNinjaUnit ||
+          atkAbilities.chanceHalvesEachAttempt === true ||
+          atkAbilities.grantsSecondAttack === true)
+      if (wantsChain && liveAtk && factor != null) {
+        const hero = heroForSide(liveAtk.side, heroState)
+        const strength = commandingHeroStats(catalog, hero).strength
+        let chance = Math.max(0, Math.floor(strength * factor))
+        const label = stackName(catalog, liveAtk.unitId)
+        const halves =
+          atkAbilities.chanceHalvesEachAttempt === true || isNinjaUnit
+        const safety = 20
+        // Always run/log at least one attempt — even at 0% — so S6-49 rolls are visible.
+        for (let attempt = 0; attempt < safety; attempt += 1) {
+          const striker = live(attackerId)
+          if (!striker || striker.qty <= 0) {
+            break
+          }
+          const triggered = rollChancePct(chance, random)
+          lines.push(
+            chanceRollLog(label, chance, triggered, {
+              detail: `STR ${strength} × ${factor}${
+                attempt > 0 ? `, attempt ${attempt + 1}` : ''
+              }`,
+              action: 'to strike again',
+            }),
+          )
+          if (!triggered) {
+            break
+          }
+          atk = striker
+          const again = fireOffensive(
+            (pct) => pct,
+            qtyOverride != null ? { qtyOverride } : undefined,
+          )
+          offensivePool += again.pool
+          offensiveKills += again.kills
+          if (!halves) {
+            break
+          }
+          chance = Math.max(0, chance / 2)
+        }
+      }
+    }
     // Chronomancer Temporal Bolt: swap Speeds with a faster primary target.
     {
       const liveAtk = live(attackerId)
@@ -2712,6 +2816,8 @@ export function resolveAttack(
     lines.push(...rez.lines)
   }
   // S6-44 Tower passives — apply after all offensive waves (never retaliation).
+  // BR S7-1 Druid: +1 Mana when a Grove stack attacks (any dmg type), once per
+  // attack action, capped at max — same grantHeroMana path as Wizard.
   {
     const attackerSide = before.side
     if (
@@ -2721,14 +2827,34 @@ export function resolveAttack(
     ) {
       const wizard = heroForSide(attackerSide, heroState)
       if (wizard) {
-        const gained = grantHeroMana(catalog, wizard, 1)
+        const amount = passiveManaPerAttack(catalog, wizard, 'Wizard mana')
+        const gained = grantHeroMana(catalog, wizard, amount)
         if (gained.current_mana > wizard.current_mana) {
           heroState =
             attackerSide === 'atk'
               ? { ...heroState, atk: gained }
               : { ...heroState, def: gained }
           lines.push(
-            `Wizard: +1 Mana (${gained.current_mana}/${poolMax(catalog, gained, 2)}).`,
+            `Wizard: +${amount} Mana (${gained.current_mana}/${poolMax(catalog, gained, 2)}).`,
+          )
+        }
+      }
+    }
+    if (
+      groveUnitGetsPassives(catalog, before) &&
+      isDruidHero(catalog, heroForSide(attackerSide, heroState))
+    ) {
+      const druid = heroForSide(attackerSide, heroState)
+      if (druid) {
+        const amount = passiveManaPerAttack(catalog, druid, 'Druid mana')
+        const gained = grantHeroMana(catalog, druid, amount)
+        if (gained.current_mana > druid.current_mana) {
+          heroState =
+            attackerSide === 'atk'
+              ? { ...heroState, atk: gained }
+              : { ...heroState, def: gained }
+          lines.push(
+            `Druid: +${amount} Mana (${gained.current_mana}/${poolMax(catalog, gained, 2)}).`,
           )
         }
       }
@@ -2741,14 +2867,15 @@ export function resolveAttack(
       if (!sorcerer) {
         continue
       }
-      const gained = grantHeroMana(catalog, sorcerer, 1)
+      const amount = passiveManaPerAttack(catalog, sorcerer, 'Sorcerer mana')
+      const gained = grantHeroMana(catalog, sorcerer, amount)
       if (gained.current_mana > sorcerer.current_mana) {
         heroState =
           side === 'atk'
             ? { ...heroState, atk: gained }
             : { ...heroState, def: gained }
         lines.push(
-          `Sorcerer: +1 Mana (${gained.current_mana}/${poolMax(catalog, gained, 2)}).`,
+          `Sorcerer: +${amount} Mana (${gained.current_mana}/${poolMax(catalog, gained, 2)}).`,
         )
       }
     }
@@ -2773,13 +2900,7 @@ export function resolveAttack(
     const actor = live(attackerId)
     if (actor && actor.qty > 0) {
       const hero = heroForSide(actor.side, heroState)
-      const strength = hero
-        ? heroEffectiveStats(
-            catalog,
-            hero.class_id,
-            hero.current_level ?? 1,
-          ).strength
-        : 0
+      const strength = commandingHeroStats(catalog, hero).strength
       const factor = spec.chancePctFlatStat ?? 1
       const chance = Math.max(0, strength * factor)
       const detail = `STR ${strength} × ${Number.isInteger(factor) ? factor : factor}`

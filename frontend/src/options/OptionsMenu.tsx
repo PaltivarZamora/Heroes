@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { clearCachedGrid, getSelectedMapHeroId, setHeroMovementRemaining, setMapCameraFollowMoves } from '../hex/HexMap'
 import type { DataStatus } from '../hex/debug'
 import {
@@ -184,6 +184,7 @@ export function OptionsMenu({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [stepsUnlimited, setStepsUnlimited] = useState(false)
+  const saveNameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!notice) {
@@ -196,6 +197,22 @@ export function OptionsMenu({
   useEffect(() => {
     onHudNotice?.(notice)
   }, [notice, onHudNotice])
+
+  // Focus the save-name field when Save Game opens (autoFocus fails while busy).
+  useEffect(() => {
+    if (panel !== 'save') {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      const input = saveNameRef.current
+      if (!input || input.disabled) {
+        return
+      }
+      input.focus()
+      input.select()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [panel, busy])
 
   const closePanel = () => {
     if (busy) {
@@ -663,6 +680,16 @@ export function OptionsMenu({
                 >
                   For the Hoard
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('fight_yourself')
+                    setExpanded(false)
+                  }}
+                >
+                  Fight Yourself
+                </button>
               </div>
             </div>
           ) : null}
@@ -789,10 +816,19 @@ export function OptionsMenu({
             <label className="options-field">
               Game Name
               <input
+                ref={saveNameRef}
                 value={saveName}
                 onChange={(event) => setSaveName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') {
+                    return
+                  }
+                  event.preventDefault()
+                  if (!busy) {
+                    void onSave()
+                  }
+                }}
                 autoFocus
-                disabled={busy}
               />
             </label>
             {saves.some((row) => row.name === saveName.trim()) ? (

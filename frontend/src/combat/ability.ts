@@ -7,6 +7,7 @@ import type {
 } from '../town/catalog'
 import {
   DEFAULT_UNIT_ABILITIES,
+  conditionName,
   heroEffectiveStats,
   parseAttackShape,
   unitAttackShape,
@@ -53,8 +54,8 @@ import {
 import { occupancyKey, occupiedHexes, stackFootprint } from './occupancy'
 import {
   boardKeys,
+  chargeLineHexes,
   geometricHexes,
-  hexLine,
   resolveShapeHits,
   type ShapeHit,
 } from './shapes'
@@ -79,7 +80,7 @@ import {
   isSummonStats,
   placeBlockerAtHex,
 } from './summon'
-import { applyEvokerArcaneSpellBonus } from './heroArmyPassives'
+import { applyEvokerSpellBonus } from './heroArmyPassives'
 import { scatterShadowSeeds } from './shadow'
 import {
   stackFromTombstone,
@@ -604,6 +605,30 @@ export function abilityAimImpactKeys(
       }
     }
     return keys
+  }
+  // Wildfire: caster→target line preview (stops at aim; excludes hero origin).
+  if (stats && isWildfireStats(stats)) {
+    const hoverKey = occupancyKey(hover.q, hover.r)
+    if (!valid.includes(hoverKey)) {
+      return []
+    }
+    const from = heroCasterHex(battle, casterSide)
+    if (!from) {
+      return []
+    }
+    const board = boardKeys(tiles)
+    const blocked = new Set(
+      tiles
+        .filter((tile) => tile.blocksLos)
+        .map((tile) => occupancyKey(tile.q, tile.r)),
+    )
+    for (const key of liveWallLosKeys(battle.stacks, catalog, tiles)) {
+      blocked.add(key)
+    }
+    // Same path as placement: chargeLine-style stop at target (Pangolin precedent).
+    return chargeLineHexes(from, hover, board)
+      .filter((hex) => !blocked.has(occupancyKey(hex.q, hex.r)))
+      .map((hex) => occupancyKey(hex.q, hex.r))
   }
   if (stats && isInstantPulse(stats) && shapeFromStats(stats) === 'pulse') {
     const occupant =
@@ -2495,10 +2520,9 @@ const hitOne = (target: CombatStack, raw: number) => {
       if (rolled == null) {
         return null
       }
-      return applyEvokerArcaneSpellBonus(
+      return applyEvokerSpellBonus(
         rolled,
         catalog,
-        ability,
         caster,
         casterSide,
         battle,
@@ -3189,6 +3213,12 @@ const hitOne = (target: CombatStack, raw: number) => {
             casterStat(catalog, caster, ability.resource_id) / durationDiv,
           )
         : null
+    const chancePct = asFinite(stats.chance_pct)
+    const resistStat =
+      typeof stats.resist_stat === 'string' &&
+      (stats.resist_stat === 'resistance' || stats.resist_stat === 'defense')
+        ? stats.resist_stat
+        : null
     for (const target of liveTargets()) {
       const live = stacks.find((row) => row.id === target.id)
       if (!live) {
@@ -3206,16 +3236,26 @@ const hitOne = (target: CombatStack, raw: number) => {
       if (duration <= 0) {
         continue
       }
+      // BR S7-5: flat chance_pct gates condition attempt; missing resist_stat
+      // means the effect cannot be resisted (tryInflictSpec skips the roll).
+      if (chancePct != null) {
+        const label = conditionName(catalog, conditionId)
+        const triggered = rollChancePct(chancePct, random)
+        lines.push(
+          chanceRollLog(ability.name, chancePct, triggered, {
+            action: `to inflict ${label}`,
+          }),
+        )
+        if (!triggered) {
+          continue
+        }
+      }
       const inflicted = tryInflictSpec(
         live,
         catalog,
         {
           conditionId,
-          resistStat:
-            typeof stats.resist_stat === 'string' &&
-            (stats.resist_stat === 'resistance' || stats.resist_stat === 'defense')
-              ? stats.resist_stat
-              : null,
+          resistStat,
           duration,
           requiredTag: asFinite(stats.target_tag_required),
           extra: {
@@ -3715,8 +3755,8 @@ export function resolveAbility(
       ],
     }
   }
-  // Wildfire: Fire along hexLine from the casting Hero hex through the aim hex.
-  // Skip LOS-blocker hexes but continue the line (do not stop short).
+  // Wildfire: Fire along the caster→target line (stops at aim; excludes origin).
+  // Skip LOS-blocker hexes but continue past them toward the target.
   if (isWildfireStats(stats)) {
     const from = heroCasterHex(battle, casterSide)
     if (!from) {
@@ -3727,7 +3767,7 @@ export function resolveAbility(
         noOp: true,
       }
     }
-    const line = hexLine(from, aim.hex)
+    const board = boardKeys(tiles)
     const blocked = new Set(
       tiles
         .filter((tile) => tile.blocksLos)
@@ -3736,7 +3776,7 @@ export function resolveAbility(
     for (const key of liveWallLosKeys(battle.stacks, catalog, tiles)) {
       blocked.add(key)
     }
-    const fireKeys = line
+    const fireKeys = chargeLineHexes(from, aim.hex, board)
       .filter((hex) => !blocked.has(occupancyKey(hex.q, hex.r)))
       .map((hex) => occupancyKey(hex.q, hex.r))
     if (fireKeys.length === 0) {

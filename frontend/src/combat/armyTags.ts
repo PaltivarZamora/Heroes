@@ -1,17 +1,17 @@
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
-import { heroEffectiveStats, unitById, unitHasTag } from '../town/catalog'
+import { unitById, unitHasTag } from '../town/catalog'
+import {
+  missingPassiveStatKey,
+  passiveStatNumber,
+  passiveStatSourceValue,
+  passiveStatString,
+  requirePassiveStats,
+} from '../town/heroPassiveStats'
 import type { ArmyTagCounts, CombatSide, CombatStack } from './battle'
 
 /** unit_tag.id — Humanoid (Citadel Knight/Monk scale; reusable). */
 export const HUMANOID_TAG = 2
-
-/** Default S6-40 addendum: 0.25% per Humanoid. */
-const DEFAULT_TRIGGER_PCT_PER_HUMANOID = 0.25
-/** Knight: chance caps at STR × this. */
-const DEFAULT_KNIGHT_CAP_PCT_STAT = 2
-/** Monk: chance caps at STR × this. */
-const DEFAULT_MONK_CAP_PCT_STAT = 3
 
 /**
  * Frozen at battle start: tag id → qty of tagged creatures per side.
@@ -84,76 +84,90 @@ export function isCitadelUnit(
   return citadelId != null && unit.town_id === citadelId
 }
 
-function heroPassive(
+function tagIdByFilterName(
   catalog: ReferenceCatalog,
-  hero: Hero | null | undefined,
-): Record<string, unknown> | null {
-  if (!hero) {
+  name: string | null,
+): number | null {
+  if (!name) {
     return null
   }
+  const needle = name.trim().toLowerCase()
   return (
-    catalog.hero_type.find((row) => row.id === hero.class_id)?.passive_ability ??
-    null
+    catalog.unit_tag.find((row) => row.value.trim().toLowerCase() === needle)
+      ?.id ?? null
   )
 }
 
-function passiveNumber(
-  passive: Record<string, unknown> | null | undefined,
-  key: string,
-  fallback: number,
-): number {
-  const n = Number(passive?.[key])
-  return Number.isFinite(n) && n >= 0 ? n : fallback
-}
-
 /**
- * Citadel passives: min(humanoids × pct_per_unit, strength × cap_pct_stat).
- * Shared shape for Knight / Monk; only the cap multiplier differs.
+ * Citadel passives: min(humanoids × per_unit_pct, stat × cap_multiplier).
+ * Constants from hero_type.passive_stats (BR S7-2).
  */
 export function citadelHumanoidChancePct(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
   humanoidCount: number,
-  defaultCapPctStat: number,
 ): number {
   if (!hero) {
     return 0
   }
-  const passive = heroPassive(catalog, hero)
-  const per = passiveNumber(
-    passive,
-    'trigger_chance_pct_per_humanoid_unit',
-    DEFAULT_TRIGGER_PCT_PER_HUMANOID,
-  )
-  const capStat = passiveNumber(passive, 'cap_pct_stat', defaultCapPctStat)
-  const strength = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  ).strength
+  const stats = requirePassiveStats(catalog, hero, 'citadel chance')
+  if (!stats) {
+    return 0
+  }
+  const per = passiveStatNumber(stats, 'per_unit_pct')
+  const capMult = passiveStatNumber(stats, 'cap_multiplier')
+  if (per == null) {
+    missingPassiveStatKey(catalog, hero, 'per_unit_pct', 'citadel chance')
+    return 0
+  }
+  if (capMult == null) {
+    missingPassiveStatKey(catalog, hero, 'cap_multiplier', 'citadel chance')
+    return 0
+  }
+  const source = passiveStatString(stats, 'stat_source')
+  const statValue = passiveStatSourceValue(catalog, hero, source ?? 'STR')
   const raw = Math.max(0, humanoidCount * per)
-  const cap = Math.max(0, strength * capStat)
+  const cap = Math.max(0, statValue * capMult)
   return Math.min(raw, cap)
+}
+
+/** Tag id for Knight/Monk unit_filter (default Humanoid when key absent). */
+export function citadelPassiveUnitTagId(
+  catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
+): number {
+  const stats = hero ? requirePassiveStats(catalog, hero, 'citadel unit_filter') : null
+  const filter = passiveStatString(stats, 'unit_filter')
+  const fromFilter = tagIdByFilterName(catalog, filter)
+  if (fromFilter != null) {
+    return fromFilter
+  }
+  if (hero && filter == null) {
+    missingPassiveStatKey(catalog, hero, 'unit_filter', 'citadel unit_filter')
+  }
+  return HUMANOID_TAG
 }
 
 export function knightCapPctStat(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
 ): number {
-  return passiveNumber(
-    heroPassive(catalog, hero),
-    'cap_pct_stat',
-    DEFAULT_KNIGHT_CAP_PCT_STAT,
-  )
+  const stats = hero ? requirePassiveStats(catalog, hero, 'knight cap') : null
+  const n = passiveStatNumber(stats, 'cap_multiplier')
+  if (n == null && hero) {
+    missingPassiveStatKey(catalog, hero, 'cap_multiplier', 'knight cap')
+  }
+  return n ?? 0
 }
 
 export function monkCapPctStat(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
 ): number {
-  return passiveNumber(
-    heroPassive(catalog, hero),
-    'cap_pct_stat',
-    DEFAULT_MONK_CAP_PCT_STAT,
-  )
+  const stats = hero ? requirePassiveStats(catalog, hero, 'monk cap') : null
+  const n = passiveStatNumber(stats, 'cap_multiplier')
+  if (n == null && hero) {
+    missingPassiveStatKey(catalog, hero, 'cap_multiplier', 'monk cap')
+  }
+  return n ?? 0
 }
