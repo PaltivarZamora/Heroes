@@ -478,7 +478,10 @@ export function passiveManaPerAttack(
 }
 
 /**
- * Evoker: (stat × confluence stacks × stack_multiplier)% on hero spell damage.
+ * Evoker spell bonus % from passive_stats.
+ * stack_operator "add": (stat + stacks × stack_multiplier)% — stack_multiplier
+ *   defaults to 1 when omitted (INT + Confluence stacks).
+ * stack_operator "multiply": (stat × stacks × stack_multiplier)% (legacy; mult required).
  */
 export function applyEvokerSpellBonus(
   raw: number,
@@ -494,31 +497,61 @@ export function applyEvokerSpellBonus(
   if (!stats) {
     return raw
   }
+  const opRaw = passiveStatString(stats, 'stack_operator')
+  if (!opRaw) {
+    missingPassiveStatKey(catalog, caster, 'stack_operator', 'Evoker')
+    return raw
+  }
+  const op = opRaw.trim().toLowerCase()
   const stackMult = passiveStatNumber(stats, 'stack_multiplier')
   const townFilter = passiveStatString(stats, 'town_filter')
   const statSource = passiveStatString(stats, 'stat_source')
-  if (stackMult == null) {
-    missingPassiveStatKey(catalog, caster, 'stack_multiplier', 'Evoker')
-    return raw
-  }
   const countKey = townCountKeyForFilter(townFilter) ?? 'confluence'
   const count = frozenTownCount(battle.armyTownCounts, countKey, casterSide)
   const base = passiveStatSourceValue(catalog, caster, statSource ?? 'INT')
-  const pct = Math.max(0, base * count * stackMult)
+
+  let pct = 0
+  if (op === 'add') {
+    const mult = stackMult ?? 1
+    pct = Math.max(0, base + count * mult)
+  } else {
+    if (stackMult == null) {
+      missingPassiveStatKey(catalog, caster, 'stack_multiplier', 'Evoker')
+      return raw
+    }
+    pct = Math.max(0, base * count * stackMult)
+  }
   if (pct <= 0) {
     return raw
   }
   return Math.max(0, Math.floor((raw * (100 + pct)) / 100))
 }
 
+export type TotemUnitName = 'Fire Totem' | 'Lightning Totem' | 'Nature Totem'
+
 export function totemUnitByName(
   catalog: ReferenceCatalog,
-  name: 'Fire Totem' | 'Lightning Totem',
+  name: TotemUnitName,
 ): UnitRow | null {
   const needle = name.toLowerCase()
   return (
     catalog.unit.find((row) => row.name.trim().toLowerCase() === needle) ?? null
   )
+}
+
+/** Map passive_stats totem_types entry → unit name. */
+export function totemTypeToUnitName(type: string): TotemUnitName | null {
+  const key = type.trim().toLowerCase()
+  if (key === 'fire' || key === 'fire totem') {
+    return 'Fire Totem'
+  }
+  if (key === 'lightning' || key === 'lightning totem') {
+    return 'Lightning Totem'
+  }
+  if (key === 'nature' || key === 'nature totem') {
+    return 'Nature Totem'
+  }
+  return null
 }
 
 /** Totem HP override extras from summoning hero INT. */
@@ -563,7 +596,7 @@ export function shamanTotemCount(
   return Math.max(minTotems, Math.floor(intel / divisor))
 }
 
-/** Living Fire/Lightning Totem stacks on this side (Shaman summons). */
+/** Living Fire/Lightning/Nature Totem stacks on this side (Shaman summons). */
 export function isShamanTotemStack(
   catalog: ReferenceCatalog,
   stack: { unitId: number; qty: number },
@@ -572,5 +605,33 @@ export function isShamanTotemStack(
     return false
   }
   const name = unitById(catalog, stack.unitId)?.name ?? ''
-  return name === 'Fire Totem' || name === 'Lightning Totem'
+  return (
+    name === 'Fire Totem' ||
+    name === 'Lightning Totem' ||
+    name === 'Nature Totem'
+  )
+}
+
+export function isNatureTotemStack(
+  catalog: ReferenceCatalog,
+  stack: { unitId: number; qty: number },
+): boolean {
+  if (stack.qty <= 0) {
+    return false
+  }
+  return unitById(catalog, stack.unitId)?.name === 'Nature Totem'
+}
+
+/** How many totems to spawn this round when below max (default 1). */
+export function shamanTotemSpawnPerRound(
+  catalog: ReferenceCatalog,
+  hero: Hero,
+): number {
+  const stats = requirePassiveStats(catalog, hero, 'Shaman totems')
+  const n = passiveStatNumber(stats, 'totem_spawn_per_round')
+  if (n == null || n < 0) {
+    missingPassiveStatKey(catalog, hero, 'totem_spawn_per_round', 'Shaman totems')
+    return 1
+  }
+  return Math.floor(n)
 }

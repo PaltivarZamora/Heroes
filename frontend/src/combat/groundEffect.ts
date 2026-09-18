@@ -31,6 +31,7 @@ import { hexKey, moveKindForUnit, type MoveKind } from './movement'
 import { syncTombstonesFromWipes } from './tombstone'
 import { applySelfRezThenTombstones } from './confluence'
 import { isSiegeEngineUnit, isWallSegmentUnit } from './siege'
+import { smokeBombEvasionPct } from './abilityStatMath'
 
 export { zoneEvasionPctForStack, visibleGroundEffects } from './groundEvasion'
 
@@ -440,7 +441,6 @@ export function buildGroundEffectFromAbility(
       ? [occupancyKey(aim.q, aim.r)]
       : diskKeys(aim, placementRadius, tiles)
 
-  const evasionMult = asFinite(stats.evasion_pct_flat_stat)
   const dmgMult = asFinite(stats.flat_dmg_flat_stat)
   const chanceMult = asFinite(stats.chance_pct_flat_stat)
   const flatChancePct = asFinite(stats.chance_pct)
@@ -496,8 +496,7 @@ export function buildGroundEffectFromAbility(
     mechanicType,
     effect,
     triggerMoveTypes,
-    evasionPct:
-      evasionMult != null ? Math.max(0, Math.floor(strength * evasionMult)) : 0,
+    evasionPct: smokeBombEvasionPct(strength, stats) ?? 0,
     flatDmg,
     explodeRadius:
       explodeDiv != null && explodeDiv > 0

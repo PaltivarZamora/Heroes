@@ -16,8 +16,10 @@ import {
 } from '../town/catalog'
 import {
   addStatFlat,
+  clearStatDebuffs,
   combatSpeedChangedSides,
   forceEndRound,
+  hasDebuffImmunity,
   isHeroStack,
   noteUnitDeaths,
   resortRemainingInitiativeForSides,
@@ -31,6 +33,17 @@ import {
   type CombatStack,
   type CombatTile,
 } from './battle'
+import {
+  ENERGY_RESOURCE_ID,
+  MANA_RESOURCE_ID,
+  STR_OVER_BASE,
+  barrageSecondAttackPct,
+  fervorChainChancePct,
+  formatStatBonus,
+  multiBoltCount,
+  scaledResourceStat,
+  statDiv,
+} from './abilityStatMath'
 import { chanceRollLog, formatChancePct, rollChancePct } from './combatLog'
 import { hexDistance } from '../hex/pathfinding'
 import { relocateAwayFrom, relocateRandom, relocateToHex, landableHexes } from './relocate'
@@ -110,9 +123,6 @@ import type { Axial } from '../hex/hero'
 
 export const ABILITY_TYPE_BUFF = 2
 export const ABILITY_TYPE_DEBUFF = 3
-
-const ENERGY_RESOURCE_ID = 1
-const MANA_RESOURCE_ID = 2
 
 const OUTPUT_KEY =
   /^(physical|magic)_dmg_(total|min|max)_(stat|flat)$/
@@ -311,14 +321,6 @@ function isInstantPulse(stats: Record<string, unknown>): boolean {
     stats.guaranteed_max_dmg === true &&
     !isChargeStats(stats)
   )
-}
-
-function statDiv(stats: Record<string, unknown>, key: string): number | null {
-  const div = asFinite(stats[key])
-  if (div == null || div <= 0) {
-    return null
-  }
-  return div
 }
 
 /** `_stat_div` = raw stat / div. Distinct from `_stat` multiply keys. */
@@ -1137,6 +1139,7 @@ function applyOutputAndMitigationKeys(
 ): { stack: CombatStack; notes: string[] } {
   let stack = target
   const notes: string[] = []
+  const immune = hasDebuffImmunity(target)
   for (const key of Object.keys(stats)) {
     const output = OUTPUT_KEY.exec(key)
     if (output) {
@@ -1145,6 +1148,12 @@ function applyOutputAndMitigationKeys(
       const mode = output[3] as 'stat' | 'flat'
       const signed = scaledN(stats, key, catalog, caster, ability, mode)
       if (signed == null || signed === 0) {
+        continue
+      }
+      if (immune && signed < 0) {
+        notes.push(
+          `${stackName(catalog, target)} immune to damage debuff (Iron Will)`,
+        )
         continue
       }
       const field =
@@ -1175,6 +1184,12 @@ function applyOutputAndMitigationKeys(
       const mode = mit[2] as 'stat' | 'flat'
       const signed = scaledN(stats, key, catalog, caster, ability, mode)
       if (signed == null || signed === 0) {
+        continue
+      }
+      if (immune && signed < 0) {
+        notes.push(
+          `${stackName(catalog, target)} immune to ${stat} debuff (Iron Will)`,
+        )
         continue
       }
       const pct = signed
@@ -1214,6 +1229,7 @@ function applyRollAndSpeedKeys(
 ): { stack: CombatStack; notes: string[] } {
   let stack = target
   const notes: string[] = []
+  const immune = hasDebuffImmunity(target)
   const intel = casterStat(catalog, caster, MANA_RESOURCE_ID)
   for (const key of Object.keys(stats)) {
     const rollMin = ROLL_MIN_KEY.exec(key)
@@ -1227,6 +1243,12 @@ function applyRollAndSpeedKeys(
       const rolled = lo + Math.floor(random() * (span + 1))
       const signed = signedMagnitude(ability, rolled)
       if (signed === 0) {
+        continue
+      }
+      if (immune && signed < 0) {
+        notes.push(
+          `${stackName(catalog, target)} immune to damage debuff (Iron Will)`,
+        )
         continue
       }
       const field = outputField(kind, part)
@@ -1251,6 +1273,12 @@ function applyRollAndSpeedKeys(
         continue
       }
       const signed = speedDiv[1] === 'debuff' ? -amt : amt
+      if (immune && signed < 0) {
+        notes.push(
+          `${stackName(catalog, target)} immune to speed debuff (Iron Will)`,
+        )
+        continue
+      }
       const uses = Math.max(0, Math.floor(asFinite(stats.uses) ?? 0))
       if (uses > 0) {
         stack = {
@@ -1288,6 +1316,12 @@ function applyRollAndSpeedKeys(
         continue
       }
       const signed = speedPct[1] === 'debuff' ? -cut : cut
+      if (immune && signed < 0) {
+        notes.push(
+          `${stackName(catalog, target)} immune to speed debuff (Iron Will)`,
+        )
+        continue
+      }
       stack = { ...stack, speedMod: (stack.speedMod ?? 0) + signed }
       notes.push(
         `${stackName(catalog, target)} speed ${signed > 0 ? '+' : ''}${signed} (${pct}% of ${live})`,
@@ -1317,6 +1351,14 @@ function applyDeltaAllStats(
     return { stack: target, notes: [] }
   }
   const signed = target.side === casterSide ? mag : -mag
+  if (hasDebuffImmunity(target) && signed < 0) {
+    return {
+      stack: target,
+      notes: [
+        `${stackName(catalog, target)} immune to stat debuff (Iron Will)`,
+      ],
+    }
+  }
   return {
     stack: { ...target, statFlat: addStatFlat(target.statFlat, signed) },
     notes: [
@@ -1325,8 +1367,6 @@ function applyDeltaAllStats(
   }
 }
 
-const STR_OVER_BASE = 10
-
 /** Default: max(0, stat-10). `no_stat_threshold` is a per-ability exception. */
 function scaledCasterStat(
   catalog: ReferenceCatalog,
@@ -1334,15 +1374,10 @@ function scaledCasterStat(
   ability: AbilityRow,
   stats: Record<string, unknown>,
 ): number {
-  const raw = casterStat(catalog, caster, ability.resource_id)
-  if (stats.no_stat_threshold === true) {
-    return Math.max(0, raw)
-  }
-  return Math.max(0, raw - STR_OVER_BASE)
-}
-
-function formatStatBonus(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10)
+  return scaledResourceStat(
+    casterStat(catalog, caster, ability.resource_id),
+    stats,
+  )
 }
 
 function applyCritBonuses(
@@ -1461,11 +1496,12 @@ function applyPrecisionTraits(
       `${stackName(catalog, target)} Hyper Focus (${uses} condition block${uses === 1 ? '' : 's'})`,
     )
   }
-  const barrage = asFinite(stats.grants_second_attack_pct)
-  if (barrage != null && barrage > 0) {
-    const raw = scaledCasterStat(catalog, caster, ability, stats)
-    const flat = asFinite(stats.second_attack_pct_flat_stat) ?? 0
-    const pct = Math.max(0, Math.floor(barrage + raw * flat))
+  const barragePct = barrageSecondAttackPct(
+    scaledCasterStat(catalog, caster, ability, stats),
+    stats,
+  )
+  if (barragePct != null && barragePct > 0) {
+    const pct = barragePct
     const usesDiv = statDiv(stats, 'uses_stat_div')
     const uses =
       usesDiv != null
@@ -1498,49 +1534,78 @@ function applyPrecisionTraits(
     }
   }
   if (stats.forces_max_dmg_on_target === true) {
-    const hitDiv = statDiv(stats, 'hit_count_stat_div')
-    if (hitDiv != null) {
-      const hits = Math.floor(
-        casterStat(catalog, caster, ability.resource_id) / hitDiv,
-      )
-      if (hits > 0) {
-        stack = { ...stack, markHitsLeft: hits }
-        notes.push(
-          `${stackName(catalog, target)} marked (${hits} max-dmg hit${hits === 1 ? '' : 's'})`,
+    if (hasDebuffImmunity(stack)) {
+      notes.push(`${stackName(catalog, target)} immune to mark (Iron Will)`)
+    } else {
+      const hitDiv = statDiv(stats, 'hit_count_stat_div')
+      if (hitDiv != null) {
+        const hits = Math.floor(
+          casterStat(catalog, caster, ability.resource_id) / hitDiv,
         )
+        if (hits > 0) {
+          stack = { ...stack, markHitsLeft: hits }
+          notes.push(
+            `${stackName(catalog, target)} marked (${hits} max-dmg hit${hits === 1 ? '' : 's'})`,
+          )
+        }
       }
     }
   }
-  if (stats.forces_min_dmg_on_target === true) {
-    const durationDiv = statDiv(stats, 'duration_stat_div')
-    if (durationDiv != null) {
-      const rounds = Math.floor(
-        casterStat(catalog, caster, ability.resource_id) / durationDiv,
+  if (stats.forces_min_dmg_on_target === true || stats.prevents_critical === true) {
+    if (hasDebuffImmunity(stack)) {
+      notes.push(
+        `${stackName(catalog, target)} immune to disarm/crit-lock (Iron Will)`,
       )
-      if (rounds > 0) {
-        const physicalOnly =
-          typeof stats.requires_dmg_type === 'string' &&
-          stats.requires_dmg_type.toLowerCase() === 'physical'
-        stack = {
-          ...stack,
-          disarm: { roundsLeft: rounds, physicalOnly },
-        }
-        notes.push(
-          `${stackName(catalog, target)} disarmed (${rounds} round${rounds === 1 ? '' : 's'}${physicalOnly ? ', Physical only' : ''})`,
+    } else {
+      const durationDiv = statDiv(stats, 'duration_stat_div')
+      if (durationDiv != null) {
+        const rounds = Math.floor(
+          casterStat(catalog, caster, ability.resource_id) / durationDiv,
         )
+        if (rounds > 0) {
+          if (stats.forces_min_dmg_on_target === true) {
+            const physicalOnly =
+              typeof stats.requires_dmg_type === 'string' &&
+              stats.requires_dmg_type.toLowerCase() === 'physical'
+            stack = {
+              ...stack,
+              disarm: { roundsLeft: rounds, physicalOnly },
+            }
+            notes.push(
+              `${stackName(catalog, target)} disarmed (${rounds} round${rounds === 1 ? '' : 's'}${physicalOnly ? ', Physical only' : ''})`,
+            )
+          }
+          if (stats.prevents_critical === true) {
+            stack = {
+              ...stack,
+              preventsCriticalRoundsLeft: rounds,
+            }
+            notes.push(
+              `${stackName(catalog, target)} cannot crit (${rounds} round${rounds === 1 ? '' : 's'})`,
+            )
+          }
+        }
       }
     }
   }
   if (stats.grants_ignore_target_armor === true) {
+    const durationDiv = statDiv(stats, 'duration_stat_div')
+    const rounds =
+      durationDiv != null
+        ? Math.floor(
+            casterStat(catalog, caster, ability.resource_id) / durationDiv,
+          )
+        : Math.max(0, Math.floor(asFinite(stats.duration) ?? 0))
     stack = {
       ...stack,
       ignoreTargetArmor: true,
       ignoreTargetArmorPhysicalOnly: stats.physical_only === true,
+      ignoreTargetArmorRoundsLeft: rounds > 0 ? rounds : undefined,
     }
     notes.push(
       `${stackName(catalog, target)} ignores target armor${
         stats.physical_only === true ? ' (Physical)' : ''
-      }`,
+      }${rounds > 0 ? ` (${rounds} round${rounds === 1 ? '' : 's'})` : ''}`,
     )
   }
   const reflectPct = asFinite(stats.reflect_pct)
@@ -1593,32 +1658,35 @@ function applyPrecisionTraits(
     notes.push(`${stackName(catalog, target)} exposed`)
   }
   if (stats.forces_return_to_start === true) {
-    stack = { ...stack, forcedRetreatPending: true }
-    notes.push(
-      `${stackName(catalog, target)} will retreat to their starting hex next turn`,
-    )
+    if (hasDebuffImmunity(stack)) {
+      notes.push(
+        `${stackName(catalog, target)} immune to forced retreat (Iron Will)`,
+      )
+    } else {
+      stack = { ...stack, forcedRetreatPending: true }
+      notes.push(
+        `${stackName(catalog, target)} will retreat to their starting hex next turn`,
+      )
+    }
   }
-  const chainPctStat = asFinite(stats.chain_trigger_pct_stat)
-  if (chainPctStat != null && chainPctStat > 0) {
-    const strength = heroEffectiveStats(
-      catalog,
-      caster.class_id,
-      caster.current_level,
-    ).strength
-    const chancePct = Math.max(0, Math.floor(strength * chainPctStat))
+  const chancePct =
+    fervorChainChancePct(
+      heroEffectiveStats(catalog, caster.class_id, caster.current_level)
+        .strength,
+      stats,
+    ) ?? 0
+  if (chancePct > 0) {
     const rounds = Math.max(
       1,
       Math.floor(asFinite(stats.duration) ?? 3),
     )
-    if (chancePct > 0) {
-      stack = {
-        ...stack,
-        fervor: { chancePct, roundsLeft: rounds },
-      }
-      notes.push(
-        `${stackName(catalog, target)} fervor ${chancePct}% (${rounds} round${rounds === 1 ? '' : 's'})`,
-      )
+    stack = {
+      ...stack,
+      fervor: { chancePct, roundsLeft: rounds },
     }
+    notes.push(
+      `${stackName(catalog, target)} fervor ${chancePct}% (${rounds} round${rounds === 1 ? '' : 's'})`,
+    )
   }
   const retalPct = asFinite(stats.retaliation_dmg_pct)
   if (retalPct != null && retalPct > 0) {
@@ -1726,6 +1794,46 @@ function applyPrecisionTraits(
       )
     }
   }
+  // Guard S7-10: flat Def += casterStat / def_bonus_stat_div for duration_stat_div rounds.
+  const defBonusDiv = statDiv(stats, 'def_bonus_stat_div')
+  if (defBonusDiv != null && defBonusDiv > 0) {
+    const scale = casterStat(catalog, caster, ability.resource_id)
+    const amount = Math.max(0, Math.floor(scale / defBonusDiv))
+    const durationDiv = statDiv(stats, 'duration_stat_div')
+    const rounds =
+      durationDiv != null
+        ? Math.max(0, Math.floor(scale / durationDiv))
+        : Math.max(1, Math.floor(asFinite(stats.duration) ?? 1))
+    if (amount > 0 && rounds > 0) {
+      stack = {
+        ...stack,
+        defenseBonus: { amount, roundsLeft: rounds },
+      }
+      notes.push(
+        `${stackName(catalog, target)} defense +${amount} (${rounds} round${rounds === 1 ? '' : 's'})`,
+      )
+    }
+  }
+  // Stoneskin S7-10: flat Res += casterStat / res_bonus_stat_div for duration_stat_div rounds.
+  const resBonusDiv = statDiv(stats, 'res_bonus_stat_div')
+  if (resBonusDiv != null && resBonusDiv > 0) {
+    const scale = casterStat(catalog, caster, ability.resource_id)
+    const amount = Math.max(0, Math.floor(scale / resBonusDiv))
+    const durationDiv = statDiv(stats, 'duration_stat_div')
+    const rounds =
+      durationDiv != null
+        ? Math.max(0, Math.floor(scale / durationDiv))
+        : Math.max(1, Math.floor(asFinite(stats.duration) ?? 1))
+    if (amount > 0 && rounds > 0) {
+      stack = {
+        ...stack,
+        resistanceBonus: { amount, roundsLeft: rounds },
+      }
+      notes.push(
+        `${stackName(catalog, target)} resistance +${amount} (${rounds} round${rounds === 1 ? '' : 's'})`,
+      )
+    }
+  }
   // Shield Wall: STR-scaled Defense + Resistance multipliers (not Guard's flat def_mult).
   const defMultDiv = statDiv(stats, 'def_mult_stat_div')
   const resMultDiv = statDiv(stats, 'res_mult_stat_div')
@@ -1802,7 +1910,8 @@ function applyStrengthSwing(
 ): { stack: CombatStack; notes: string[] } {
   const dmgStat = asFinite(stats.dmg_buff_pct_stat)
   const defStat = asFinite(stats.def_debuff_pct_stat)
-  if (dmgStat == null && defStat == null) {
+  const defDivisor = asFinite(stats.def_divisor)
+  if (dmgStat == null && defStat == null && defDivisor == null) {
     return { stack: target, notes: [] }
   }
   const strength = heroEffectiveStats(
@@ -1811,6 +1920,13 @@ function applyStrengthSwing(
     caster.current_level,
   ).strength
   const over = Math.max(0, strength - STR_OVER_BASE)
+  const durationDiv = statDiv(stats, 'duration_stat_div')
+  const rounds =
+    durationDiv != null
+      ? Math.max(0, Math.floor(strength / durationDiv))
+      : asFinite(stats.duration) != null
+        ? Math.max(1, Math.floor(asFinite(stats.duration)!))
+        : 0
   let stack = target
   const notes: string[] = []
   if (dmgStat != null) {
@@ -1821,17 +1937,38 @@ function applyStrengthSwing(
       pct = 1
     }
     if (pct > 0) {
-      stack = {
-        ...stack,
-        outputMods: addOutput(stack.outputMods, {
-          physicalTotal: pct,
-          magicTotal: pct,
-        }),
+      if (rounds > 0) {
+        stack = {
+          ...stack,
+          timedDamagePct: { pct, roundsLeft: rounds },
+        }
+        notes.push(
+          `${stackName(catalog, target)} buff: +${pct}% damage (${rounds} round${rounds === 1 ? '' : 's'})`,
+        )
+      } else {
+        stack = {
+          ...stack,
+          outputMods: addOutput(stack.outputMods, {
+            physicalTotal: pct,
+            magicTotal: pct,
+          }),
+        }
+        notes.push(`${stackName(catalog, target)} buff: +${pct}% damage`)
       }
-      notes.push(`${stackName(catalog, target)} buff: +${pct}% damage`)
     }
   }
-  if (defStat != null) {
+  // S7-10 Blood Lust: flat Def / def_divisor with floor (replaces % decay).
+  if (defDivisor != null && defDivisor > 0) {
+    const floor = Math.max(0, Math.floor(asFinite(stats.def_floor) ?? 1))
+    const left = rounds > 0 ? rounds : 1
+    stack = {
+      ...stack,
+      defenseDiv: { divisor: defDivisor, floor, roundsLeft: left },
+    }
+    notes.push(
+      `${stackName(catalog, target)} defense ÷${defDivisor} (floor ${floor}, ${left} round${left === 1 ? '' : 's'})`,
+    )
+  } else if (defStat != null) {
     const raw = over * defStat
     let cut = Math.max(0, Math.floor(raw))
     if (cut === 0 && raw > 0) {
@@ -1869,10 +2006,14 @@ function hasEffectKeys(stats: Record<string, unknown>): boolean {
     stats.grants_extra_turn === true ||
     stats.grants_kill_on_overflow === true ||
     stats.set_defense != null ||
+    stats.set_resistance != null ||
     stats.max_dmg_mult != null ||
     stats.min_dmg_mult != null ||
     stats.dmg_buff_pct_stat != null ||
     stats.def_debuff_pct_stat != null ||
+    stats.def_divisor != null ||
+    stats.def_bonus_stat_div != null ||
+    stats.res_bonus_stat_div != null ||
     stats.crit_pct_flat_stat != null ||
     stats.crit_amt_flat_stat != null ||
     stats.guaranteed_max_dmg === true ||
@@ -1887,6 +2028,7 @@ function hasEffectKeys(stats: Record<string, unknown>): boolean {
     stats.evasion_pct != null ||
     stats.forces_max_dmg_on_target === true ||
     stats.forces_min_dmg_on_target === true ||
+    stats.prevents_critical === true ||
     stats.grants_ignore_target_armor === true ||
     stats.reflect_pct != null ||
     stats.reveals_enemy_stats === true ||
@@ -1906,6 +2048,8 @@ function hasEffectKeys(stats: Record<string, unknown>): boolean {
     stats.delta_all_stats_stat != null ||
     stats.direction_by_target_side === true ||
     stats.clears_conditions === true ||
+    stats.clears_stat_debuffs === true ||
+    stats.grants_condition_immunity === true ||
     stats.clears_terrain === true ||
     stats.clears_los_blockers === true ||
     stats.ground_effect_id != null ||
@@ -1932,6 +2076,7 @@ function hasEffectKeys(stats: Record<string, unknown>): boolean {
     stats.prevents_death_once === true ||
     stats.move_type === 'random' ||
     stats.bolts_stat != null ||
+    stats.bolts_stat_div != null ||
     stats.targets_hexes === true ||
     stats.friendly_takes_dmg === false ||
     stats.recurring_trigger === 'end_of_round' ||
@@ -2529,17 +2674,10 @@ const hitOne = (target: CombatStack, raw: number) => {
       )
     }
     if (shape === 'multi') {
-      const boltsStat = asFinite(stats.bolts_stat)
-      const bolts =
-        boltsStat != null
-          ? Math.max(
-              1,
-              Math.floor(casterStat(catalog, caster, MANA_RESOURCE_ID) * boltsStat),
-            )
-          : Math.max(
-              1,
-              Math.floor(asFinite(stats.bolts) ?? asFinite(stats.targets) ?? 1),
-            )
+      const bolts = multiBoltCount(
+        casterStat(catalog, caster, MANA_RESOURCE_ID),
+        stats,
+      )
       const targetHexes = stats.targets_hexes === true
       const radius = Math.max(0, Math.floor(asFinite(stats.radius) ?? 0))
       const spikeUnitId = Math.floor(asFinite(stats.summon_unit_id) ?? 0)
@@ -3041,6 +3179,16 @@ const hitOne = (target: CombatStack, raw: number) => {
     if (!live) {
       continue
     }
+    // Iron Will round immunity: block incoming stat debuffs (not friendly buffs).
+    if (
+      hasDebuffImmunity(live) &&
+      ability.ability_type_id === ABILITY_TYPE_DEBUFF
+    ) {
+      lines.push(
+        `${ability.name}: ${stackName(catalog, live)} immune to debuffs (Iron Will).`,
+      )
+      continue
+    }
     const next = applyOutputAndMitigationKeys(
       stats,
       ability,
@@ -3275,7 +3423,7 @@ const hitOne = (target: CombatStack, raw: number) => {
     }
   }
 
-  if (stats.clears_conditions === true) {
+  if (stats.clears_conditions === true || stats.clears_stat_debuffs === true) {
     const primaryIds = new Set<string>()
     for (const target of liveTargets()) {
       const live = stacks.find((row) => row.id === target.id)
@@ -3283,11 +3431,22 @@ const hitOne = (target: CombatStack, raw: number) => {
         continue
       }
       primaryIds.add(live.id)
-      const cleared = clearNegativeConditions(live, catalog)
-      stacks = writeCombatStack(stacks, live.id, cleared.stack)
-      if (cleared.cleared.length > 0) {
+      let next = live
+      const clearedLabels: string[] = []
+      if (stats.clears_conditions === true) {
+        const cleared = clearNegativeConditions(next, catalog)
+        next = cleared.stack
+        clearedLabels.push(...cleared.cleared)
+      }
+      if (stats.clears_stat_debuffs === true) {
+        const cleared = clearStatDebuffs(next)
+        next = cleared.stack
+        clearedLabels.push(...cleared.cleared)
+      }
+      stacks = writeCombatStack(stacks, live.id, next)
+      if (clearedLabels.length > 0) {
         lines.push(
-          `${ability.name}: cleared ${cleared.cleared.join(', ')} from ${stackName(catalog, live)}.`,
+          `${ability.name}: cleared ${clearedLabels.join(', ')} from ${stackName(catalog, live)}.`,
         )
         buffKeys.push(occupancyKey(live.q, live.r))
       }
@@ -3318,16 +3477,50 @@ const hitOne = (target: CombatStack, raw: number) => {
           if (!live || live.qty <= 0) {
             continue
           }
-          const cleared = clearNegativeConditions(live, catalog)
-          stacks = writeCombatStack(stacks, live.id, cleared.stack)
-          if (cleared.cleared.length > 0) {
+          let next = live
+          const clearedLabels: string[] = []
+          if (stats.clears_conditions === true) {
+            const cleared = clearNegativeConditions(next, catalog)
+            next = cleared.stack
+            clearedLabels.push(...cleared.cleared)
+          }
+          if (stats.clears_stat_debuffs === true) {
+            const cleared = clearStatDebuffs(next)
+            next = cleared.stack
+            clearedLabels.push(...cleared.cleared)
+          }
+          stacks = writeCombatStack(stacks, live.id, next)
+          if (clearedLabels.length > 0) {
             lines.push(
-              `${ability.name}: also cleared ${cleared.cleared.join(', ')} from ${stackName(catalog, live)}.`,
+              `${ability.name}: also cleared ${clearedLabels.join(', ')} from ${stackName(catalog, live)}.`,
             )
             buffKeys.push(occupancyKey(live.q, live.r))
           }
         }
       }
+    }
+  }
+
+  // Iron Will: round-based immunity to conditions + stat debuffs after the cleanse.
+  // Distinct from Hyper Focus (condition_immunity + uses — conditions only).
+  if (asFlag(stats.grants_condition_immunity)) {
+    const rounds = Math.max(1, Math.floor(asFinite(stats.duration) ?? 1))
+    for (const target of liveTargets()) {
+      const live = stacks.find((row) => row.id === target.id)
+      if (!live || live.qty <= 0) {
+        continue
+      }
+      stacks = writeCombatStack(stacks, live.id, {
+        ...live,
+        debuffImmunityRoundsLeft: Math.max(
+          live.debuffImmunityRoundsLeft ?? 0,
+          rounds,
+        ),
+      })
+      lines.push(
+        `${ability.name}: ${stackName(catalog, live)} immune to debuffs (${rounds} round${rounds === 1 ? '' : 's'}).`,
+      )
+      buffKeys.push(occupancyKey(live.q, live.r))
     }
   }
 
@@ -3442,13 +3635,25 @@ const hitOne = (target: CombatStack, raw: number) => {
   }
 
   const setDefense = asFinite(stats.set_defense)
+  const setResistance = asFinite(stats.set_resistance)
   const maxDmgMult = asFinite(stats.max_dmg_mult)
   const minDmgMult = asFinite(stats.min_dmg_mult)
   if (
     setDefense != null ||
+    setResistance != null ||
     (maxDmgMult != null && maxDmgMult > 0) ||
     (minDmgMult != null && minDmgMult > 0)
   ) {
+    const durationDiv = statDiv(stats, 'duration_stat_div')
+    const rounds =
+      durationDiv != null
+        ? Math.max(
+            0,
+            Math.floor(
+              casterStat(catalog, caster, ability.resource_id) / durationDiv,
+            ),
+          )
+        : Math.max(0, Math.floor(asFinite(stats.duration) ?? 0))
     for (const target of liveTargets()) {
       const live = stacks.find((row) => row.id === target.id)
       if (!live || live.qty <= 0) {
@@ -3464,9 +3669,29 @@ const hitOne = (target: CombatStack, raw: number) => {
         next.maxDmgMult = maxDmgMult
         bits.push(`max damage ×${maxDmgMult}`)
       }
+      if (
+        rounds > 0 &&
+        ((minDmgMult != null && minDmgMult > 0) ||
+          (maxDmgMult != null && maxDmgMult > 0))
+      ) {
+        next.dmgMultRoundsLeft = rounds
+      }
       if (setDefense != null) {
         next.defenseSet = Math.max(0, Math.floor(setDefense))
+        if (rounds > 0) {
+          next.defenseSetRoundsLeft = rounds
+        }
         bits.push(`defense ${next.defenseSet}`)
+      }
+      if (setResistance != null) {
+        next.resistanceSet = Math.max(0, Math.floor(setResistance))
+        if (rounds > 0) {
+          next.resistanceSetRoundsLeft = rounds
+        }
+        bits.push(`resistance ${next.resistanceSet}`)
+      }
+      if (rounds > 0) {
+        bits.push(`${rounds} round${rounds === 1 ? '' : 's'}`)
       }
       stacks = writeCombatStack(stacks, live.id, next)
       lines.push(

@@ -12,7 +12,8 @@ import {
   walletFromSession,
 } from '../session/accessors'
 import { getSession, subscribe, updateSession } from '../session/store'
-import { getCachedCatalog, abilityTooltip, libraryGoldCost, subscribeCatalog } from './catalog'
+import { getCachedCatalog, libraryGoldCost, subscribeCatalog } from './catalog'
+import { abilityTooltip } from './abilityTooltip'
 import { AbilityTip } from './AbilityTip'
 import {
   LIBRARY_TIERS,
@@ -192,7 +193,13 @@ export function Library({ townId, slotNum, onClose }: LibraryProps) {
                             }}
                           >
                             {ability && !lockedTier ? (
-                              <AbilityTip description={abilityTooltip(catalog, ability)}>
+                              <AbilityTip
+                                description={abilityTooltip(
+                                  catalog,
+                                  ability,
+                                  visiting,
+                                )}
+                              >
                                 {label}
                                 {kind === 'buyable' ? (
                                   <span className="library-slot-cost">

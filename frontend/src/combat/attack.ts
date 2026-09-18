@@ -62,6 +62,7 @@ import { poolMax } from './heroCast'
 import { zoneEvasionPctForStack } from './groundEvasion'
 import {
   necromancerShadowDamageBonusPct,
+  deathKnightShadowDamageBonusPct,
 } from './shadow'
 import {
   tryLeaveGroundEffectOnAttackPath,
@@ -84,9 +85,8 @@ import {
   auraExtraQty,
 } from './templePassive'
 import {
-  citadelUnitGetsPassives,
-  knightBonusChancePct,
-  monkSuppressChancePct,
+  knightDoubleRetaliationChancePct,
+  monkReflectRetaliationChancePct,
 } from './citadelPassive'
 import {
   fortressUnitGetsPassives,
@@ -156,10 +156,13 @@ function outputMaxPct(stack: CombatStack, kind: DmgKind): number {
 
 function outputTotalPct(stack: CombatStack, kind: DmgKind): number {
   const mods = stack.outputMods
-  if (!mods) {
-    return 0
-  }
-  return kind === 'magic' ? mods.magicTotal : mods.physicalTotal
+  const base = !mods
+    ? 0
+    : kind === 'magic'
+      ? mods.magicTotal
+      : mods.physicalTotal
+  const timed = stack.timedDamagePct?.pct ?? 0
+  return base + timed
 }
 
 /**
@@ -436,6 +439,8 @@ export type StrikeMods = {
   zoneEvasionPct?: number
   /** Necromancer Shadow passive: extra outgoing % while on Shadow. */
   outgoingPctAdd?: number
+  /** Death Knight Shadow: extra outgoing Physical % while on Shadow. */
+  outgoingPhysicalPctAdd?: number
   /** Living stacks for Spell Reflect redirect picks. */
   battleStacks?: CombatStack[]
   /** Hexes walked before this strike (CHARGE escalation). */
@@ -956,7 +961,10 @@ export function computeStrikeDamage(
   const maxDmg = scaleBySignedPct(maxBase, outputMaxPct(striker, kind))
   const pct =
     dmgPct === 'max' ? null : Math.min(100, Math.max(0, dmgPct))
-  const totalPct = outputTotalPct(striker, kind) + (mods?.outgoingPctAdd ?? 0)
+  const totalPct =
+    outputTotalPct(striker, kind) +
+    (mods?.outgoingPctAdd ?? 0) +
+    (kind === 'physical' ? (mods?.outgoingPhysicalPctAdd ?? 0) : 0)
   const crit = liveCritStats(
     striker,
     catalog,
@@ -1031,12 +1039,16 @@ export function computeStrikeDamage(
   let crits = 0
   // Crits still roll once per connecting creature against an equal share of
   // post-mitigation damage so multi-stack crit rate is unchanged.
+  // Curse (prevents_critical): skip all crit rolls for the duration.
+  const canCrit = (striker.preventsCriticalRoundsLeft ?? 0) <= 0
   const critBase = connects > 0 ? Math.floor(damage / connects) : damage
-  for (let i = 0; i < connects; i += 1) {
-    if (damage > 0 && crit.pct > 0 && random() * 100 < crit.pct) {
-      const base = critBase > 0 ? critBase : damage
-      damage += critBonusDamage(base, crit.amt, crit.minBonus)
-      crits += 1
+  if (canCrit) {
+    for (let i = 0; i < connects; i += 1) {
+      if (damage > 0 && crit.pct > 0 && random() * 100 < crit.pct) {
+        const base = critBase > 0 ? critBase : damage
+        damage += critBonusDamage(base, crit.amt, crit.minBonus)
+        crits += 1
+      }
     }
   }
   if (applyTagBonus && damage > 0) {
@@ -1854,27 +1866,8 @@ export function resolveAttack(
     if (!atk || blockedByAttacker) {
       return
     }
-    // Monk / Ranger: attack may suppress post-attack retaliation only.
+    // Ranger: may suppress post-attack retaliation entirely.
     if (!preemptivePass) {
-      if (citadelUnitGetsPassives(catalog, atk)) {
-        const chance = monkSuppressChancePct(
-          catalog,
-          heroForSide(atk.side, heroes),
-          { ...battle, stacks },
-          atk.side,
-        )
-        if (chance > 0) {
-          const triggered = rollChancePct(chance, random)
-          lines.push(
-            chanceRollLog('Monk', chance, triggered, {
-              action: 'to suppress retaliation',
-            }),
-          )
-          if (triggered) {
-            return
-          }
-        }
-      }
       if (groveUnitGetsPassives(catalog, atk)) {
         const chance = rangerSuppressChancePct(
           catalog,
@@ -1894,6 +1887,26 @@ export function resolveAttack(
           }
         }
       }
+    }
+    /** Monk S7-6: one roll per retaliation instance, attacker side only. */
+    const rollMonkReflectForInstance = (): boolean => {
+      if (preemptivePass || !atk) {
+        return false
+      }
+      const chance = monkReflectRetaliationChancePct(
+        catalog,
+        heroForSide(atk.side, heroes),
+      )
+      if (chance <= 0) {
+        return false
+      }
+      const triggered = rollChancePct(chance, random)
+      lines.push(
+        chanceRollLog('Monk', chance, triggered, {
+          action: 'to reflect retaliation damage',
+        }),
+      )
+      return triggered
     }
     for (const id of uniqueHitIds) {
       if (!atk) {
@@ -1929,7 +1942,10 @@ export function resolveAttack(
         continue
       }
 
-      const fireRetaliationStrike = (retaliator: CombatStack): CombatStack => {
+      const fireRetaliationStrike = (
+        retaliator: CombatStack,
+        monkReflect: boolean,
+      ): CombatStack => {
         if (!atk || atk.qty <= 0 || retaliator.qty <= 0) {
           return retaliator
         }
@@ -2001,8 +2017,53 @@ export function resolveAttack(
                 catalog,
                 heroes,
               ),
+              outgoingPhysicalPctAdd: deathKnightShadowDamageBonusPct(
+                nextRetaliator,
+                { ...battle, stacks },
+                catalog,
+                heroes,
+              ),
             },
           )
+          // Monk reflect: redirect computed retaliation dmg onto the retaliator.
+          // Final — does not create a new retaliation event (no recursive redirect).
+          if (
+            monkReflect &&
+            defLive.id === attackerId &&
+            !struck.spellRedirected &&
+            struck.damage > 0 &&
+            !struck.missed &&
+            !struck.parried
+          ) {
+            const retName =
+              unitById(catalog, nextRetaliator.unitId)?.name ?? 'Unknown'
+            const beforeRetQty = nextRetaliator.qty
+            const full = stackMaxHealth(nextRetaliator, catalog)
+            const applied = applyStackDamage(
+              nextRetaliator,
+              struck.damage,
+              full,
+              false,
+            )
+            const dealt =
+              applied.negated === true ? 0 : struck.damage
+            lines.push(
+              `Monk: reflected ${dealt} retaliation dmg onto ${beforeRetQty} ${retName} (attacker unharmed).`,
+            )
+            hitKeys.push(occupancyKey(nextRetaliator.q, nextRetaliator.r))
+            noteKill(nextRetaliator.unitId, applied.killed)
+            stacks = writeCombatStack(
+              stacks,
+              nextRetaliator.id,
+              applied.stack,
+            )
+            if (!applied.stack || applied.stack.qty <= 0) {
+              nextRetaliator = { ...nextRetaliator, qty: 0, topHealth: 0 }
+            } else {
+              nextRetaliator = applied.stack
+            }
+            continue
+          }
           const hitVictim = struck.spellRedirected
             ? struck.stack
             : before
@@ -2135,94 +2196,127 @@ export function resolveAttack(
         ...def,
         retaliationsLeft: spendRetaliationCharge(def.retaliationsLeft),
       }
-      retaliator = fireRetaliationStrike(retaliator)
+      const applyRetaliationSideEffects = () => {
+        // Rogue: Energy when a Fortress unit's attack is retaliated against.
+        if (
+          atk &&
+          fortressUnitGetsPassives(catalog, atk) &&
+          isRogueHero(catalog, heroForSide(atk.side, heroState))
+        ) {
+          const rogue = heroForSide(atk.side, heroState)
+          if (rogue) {
+            const amount = rogueEnergyPerTrigger(catalog, rogue)
+            const gained = grantHeroEnergy(catalog, rogue, amount)
+            if (gained.current_energy > rogue.current_energy) {
+              heroState =
+                atk.side === 'atk'
+                  ? { ...heroState, atk: gained }
+                  : { ...heroState, def: gained }
+              lines.push(
+                `Rogue: +${amount} Energy (${gained.current_energy}/${poolMax(catalog, gained, 1)}).`,
+              )
+            }
+          }
+        }
+        // Chronomancer: teleport is tied to the retaliation event, not damage landing.
+        if (
+          spec.teleportsAttacker === true &&
+          atk &&
+          atk.qty > 0 &&
+          !isHeroStack(atk)
+        ) {
+          const chance = Math.max(0, Math.floor(spec.teleportChancePct ?? 0))
+          const atkName = stackName(catalog, atk.unitId)
+          if (chance > 0) {
+            const triggered = rollChancePct(chance, random)
+            if (!triggered) {
+              lines.push(
+                chanceRollLog('Chronomancer', chance, false, {
+                  action: 'to displace the attacker',
+                }),
+              )
+            } else {
+              let resisted = false
+              if (spec.resistStat) {
+                const resistChance = Math.min(
+                  100,
+                  liveResistance(atk, catalog, spec.resistStat),
+                )
+                if (Math.floor(random() * 100) < resistChance) {
+                  resisted = true
+                  lines.push(
+                    chanceRollLog('Chronomancer', chance, true, {
+                      action: 'to displace the attacker',
+                      success: `resisted (${resistChance}% ${spec.resistStat}).`,
+                    }),
+                  )
+                }
+              }
+              if (!resisted) {
+                const goal = atk.startHex ?? { q: atk.q, r: atk.r }
+                const moved = relocateNearestTo(
+                  { ...battle, stacks },
+                  catalog,
+                  tiles,
+                  atk.id,
+                  goal,
+                )
+                stacks = moved.battle.stacks
+                atk = live(attackerId)
+                if (moved.moved && moved.to) {
+                  hitKeys.push(occupancyKey(moved.to.q, moved.to.r))
+                  lines.push(
+                    chanceRollLog('Chronomancer', chance, true, {
+                      action: 'to displace the attacker',
+                      success: `${atkName} flung to starting position!`,
+                    }),
+                  )
+                } else {
+                  lines.push(
+                    chanceRollLog('Chronomancer', chance, true, {
+                      action: 'to displace the attacker',
+                      success: 'triggered, but no open hex.',
+                    }),
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Instance 1 — Monk reflect rolls for this instance only (attacker side).
+      retaliator = fireRetaliationStrike(
+        retaliator,
+        rollMonkReflectForInstance(),
+      )
       didRetaliate = true
-      // Rogue: Energy when a Fortress unit's attack is retaliated against.
-      if (
-        atk &&
-        fortressUnitGetsPassives(catalog, atk) &&
-        isRogueHero(catalog, heroForSide(atk.side, heroState))
-      ) {
-        const rogue = heroForSide(atk.side, heroState)
-        if (rogue) {
-          const amount = rogueEnergyPerTrigger(catalog, rogue)
-          const gained = grantHeroEnergy(catalog, rogue, amount)
-          if (gained.current_energy > rogue.current_energy) {
-            heroState =
-              atk.side === 'atk'
-                ? { ...heroState, atk: gained }
-                : { ...heroState, def: gained }
-            lines.push(
-              `Rogue: +${amount} Energy (${gained.current_energy}/${poolMax(catalog, gained, 1)}).`,
+      applyRetaliationSideEffects()
+
+      // Knight S7-7: at most one extra retaliation instance (not a third).
+      // Each instance gets its own independent Monk reflect roll.
+      if (retaliator.qty > 0 && atk && atk.qty > 0) {
+        const knightChance = knightDoubleRetaliationChancePct(
+          catalog,
+          heroForSide(retaliator.side, heroes),
+        )
+        if (knightChance > 0) {
+          const triggered = rollChancePct(knightChance, random)
+          lines.push(
+            chanceRollLog('Knight', knightChance, triggered, {
+              action: 'to retaliate a second time',
+            }),
+          )
+          if (triggered) {
+            retaliator = fireRetaliationStrike(
+              retaliator,
+              rollMonkReflectForInstance(),
             )
+            applyRetaliationSideEffects()
           }
         }
       }
-      // Chronomancer: teleport is tied to the retaliation event, not damage landing.
-      if (
-        spec.teleportsAttacker === true &&
-        atk &&
-        atk.qty > 0 &&
-        !isHeroStack(atk)
-      ) {
-        const chance = Math.max(0, Math.floor(spec.teleportChancePct ?? 0))
-        const atkName = stackName(catalog, atk.unitId)
-        if (chance > 0) {
-          const triggered = rollChancePct(chance, random)
-          if (!triggered) {
-            lines.push(
-              chanceRollLog('Chronomancer', chance, false, {
-                action: 'to displace the attacker',
-              }),
-            )
-          } else {
-            let resisted = false
-            if (spec.resistStat) {
-              const resistChance = Math.min(
-                100,
-                liveResistance(atk, catalog, spec.resistStat),
-              )
-              if (Math.floor(random() * 100) < resistChance) {
-                resisted = true
-                lines.push(
-                  chanceRollLog('Chronomancer', chance, true, {
-                    action: 'to displace the attacker',
-                    success: `resisted (${resistChance}% ${spec.resistStat}).`,
-                  }),
-                )
-              }
-            }
-            if (!resisted) {
-              const goal = atk.startHex ?? { q: atk.q, r: atk.r }
-              const moved = relocateNearestTo(
-                { ...battle, stacks },
-                catalog,
-                tiles,
-                atk.id,
-                goal,
-              )
-              stacks = moved.battle.stacks
-              atk = live(attackerId)
-              if (moved.moved && moved.to) {
-                hitKeys.push(occupancyKey(moved.to.q, moved.to.r))
-                lines.push(
-                  chanceRollLog('Chronomancer', chance, true, {
-                    action: 'to displace the attacker',
-                    success: `${atkName} flung to starting position!`,
-                  }),
-                )
-              } else {
-                lines.push(
-                  chanceRollLog('Chronomancer', chance, true, {
-                    action: 'to displace the attacker',
-                    success: 'triggered, but no open hex.',
-                  }),
-                )
-              }
-            }
-          }
-        }
-      }
+
       let chains = 0
       while (atk && atk.qty > 0 && retaliator.qty > 0) {
         const fervor = tryFervorChain(retaliator, random)
@@ -2245,7 +2339,10 @@ export function resolveAttack(
             ? { ...buff, streak: (buff.streak ?? 0) + 1 }
             : undefined,
         }
-        retaliator = fireRetaliationStrike(retaliator)
+        retaliator = fireRetaliationStrike(
+          retaliator,
+          rollMonkReflectForInstance(),
+        )
       }
       if (retaliator.fervor && (retaliator.fervor.streak ?? 0) > 0) {
         retaliator = {
@@ -2312,6 +2409,14 @@ export function resolveAttack(
           outgoingPctAdd:
             (waveStrikeMods.outgoingPctAdd ?? 0) +
             necromancerShadowDamageBonusPct(
+              atk,
+              { ...battle, stacks },
+              catalog,
+              heroes,
+            ),
+          outgoingPhysicalPctAdd:
+            (waveStrikeMods.outgoingPhysicalPctAdd ?? 0) +
+            deathKnightShadowDamageBonusPct(
               atk,
               { ...battle, stacks },
               catalog,
@@ -2718,50 +2823,26 @@ export function resolveAttack(
       : row,
   )
 
-  // Double Tap / Knight: bonus attack only when a defender actually retaliated.
+  // Double Tap: bonus attack only when a defender actually retaliated.
   // Uncapped chain (like Fervor): each bonus that is itself retaliated may roll again.
+  // (Knight S7-7 double-retaliation is handled inside tryRetaliate, not here.)
   while (true) {
     atk = live(attackerId)
     if (!didRetaliate || !atk || atk.qty <= 0) {
       break
     }
     const doubleTapLeft = atk.doubleTapUsesLeft ?? 0
-    let label: string | null = null
-    let nextDoubleTap: number | undefined = atk.doubleTapUsesLeft
-    if (doubleTapLeft > 0) {
-      label = 'Double Tap'
-      const left = doubleTapLeft - 1
-      nextDoubleTap = left > 0 ? left : undefined
-    } else if (citadelUnitGetsPassives(catalog, atk)) {
-      const chance = knightBonusChancePct(
-        catalog,
-        heroForSide(atk.side, heroes),
-        { ...battle, stacks },
-        atk.side,
-      )
-      if (chance > 0) {
-        const triggered = rollChancePct(chance, random)
-        lines.push(
-          chanceRollLog('Knight', chance, triggered, {
-            action: 'to strike again after retaliation',
-          }),
-        )
-        if (triggered) {
-          label = 'Knight'
-        }
-      }
-    }
-    if (!label) {
+    if (doubleTapLeft <= 0) {
       break
     }
-    if (label === 'Double Tap') {
-      lines.push(
-        `Double Tap: ${atk.qty} ${stackName(catalog, atk.unitId)} strike again!`,
-      )
-    }
+    const left = doubleTapLeft - 1
+    const nextDoubleTap = left > 0 ? left : undefined
+    lines.push(
+      `Double Tap: ${atk.qty} ${stackName(catalog, atk.unitId)} strike again!`,
+    )
     fireOffensive((pct) => pct)
     atk = live(attackerId)
-    if (atk && atk.qty > 0 && doubleTapLeft > 0) {
+    if (atk && atk.qty > 0) {
       atk = {
         ...atk,
         doubleTapUsesLeft: nextDoubleTap,

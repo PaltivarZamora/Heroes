@@ -1,5 +1,5 @@
 import type { AbilityRow, DisciplineRow, ReferenceCatalog } from './catalog'
-import { abilityTooltip } from './catalog'
+import { abilityTooltip, type AbilityTooltipHero } from './abilityTooltip'
 import {
   LIBRARY_TIERS,
   learnedAbilitiesAtTier,
@@ -13,6 +13,8 @@ type HeroAbilitiesPanelProps = {
   disciplines: DisciplineRow[]
   disciplineId: number | null
   onDisciplineId: (id: number) => void
+  /** Caster for live bracket interpolation in tooltips. */
+  hero?: AbilityTooltipHero | null
   /** When set, learned names are click-to-cast buttons. */
   onSelectAbility?: (ability: AbilityRow) => void
   /** Unaffordable / cooldown-locked abilities are listed but cannot be selected. */
@@ -27,6 +29,7 @@ export function HeroAbilitiesPanel({
   disciplines,
   disciplineId,
   onDisciplineId,
+  hero = null,
   onSelectAbility,
   canSelectAbility,
   unavailableMessage,
@@ -85,7 +88,9 @@ export function HeroAbilitiesPanel({
                         : ability.name
                       return (
                         <li key={ability.id}>
-                          <AbilityTip description={abilityTooltip(catalog, ability)}>
+                          <AbilityTip
+                            description={abilityTooltip(catalog, ability, hero)}
+                          >
                             {onSelectAbility ? (
                               <button
                                 type="button"

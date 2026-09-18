@@ -10,7 +10,10 @@ import {
   stackResistance,
 } from './battle'
 import type { CombatHeroes } from './attack'
-import { necromancerShadowDamageBonusPct } from './shadow'
+import {
+  deathKnightShadowDamageBonusPct,
+  necromancerShadowDamageBonusPct,
+} from './shadow'
 import { visibleGroundEffects } from './groundEvasion'
 import { occupancyKey, stackFootprint } from './occupancy'
 import type { ReferenceCatalog, UnitCombatAbilities, UnitRetaliation } from '../town/catalog'
@@ -65,7 +68,7 @@ function effect(name: string, detail?: string | null): InspectRow {
   return { label: name, value: `(${detail})` }
 }
 
-/** Per-creature min/max after output mods + Necromancer Shadow passive. */
+/** Per-creature min/max after output mods + Shadow passives. */
 function inspectDamageRange(
   stack: CombatStack,
   catalog: ReferenceCatalog,
@@ -77,10 +80,15 @@ function inspectDamageRange(
   const out = stack.outputMods
   const minPct = magic ? (out?.magicMin ?? 0) : (out?.physicalMin ?? 0)
   const maxPct = magic ? (out?.magicMax ?? 0) : (out?.physicalMax ?? 0)
-  const shadowPct =
+  const necroPct =
     battle != null
       ? necromancerShadowDamageBonusPct(stack, battle, catalog, heroes)
       : 0
+  const dkPct =
+    !magic && battle != null
+      ? deathKnightShadowDamageBonusPct(stack, battle, catalog, heroes)
+      : 0
+  const shadowPct = necroPct + dkPct
   const totalPct =
     (magic ? (out?.magicTotal ?? 0) : (out?.physicalTotal ?? 0)) + shadowPct
   return {
@@ -246,7 +254,50 @@ export function inspectActiveEffects(
     rows.push(effect('Max dmg', `×${stack.maxDmgMult}`))
   }
   if (stack.defenseSet != null) {
-    rows.push(effect('Defense set', String(stack.defenseSet)))
+    const rounds =
+      stack.defenseSetRoundsLeft != null
+        ? `, ${countLabel(stack.defenseSetRoundsLeft, 'round')}`
+        : ''
+    rows.push(effect('Defense set', `${stack.defenseSet}${rounds}`))
+  }
+  if (stack.resistanceSet != null) {
+    const rounds =
+      stack.resistanceSetRoundsLeft != null
+        ? `, ${countLabel(stack.resistanceSetRoundsLeft, 'round')}`
+        : ''
+    rows.push(effect('Resistance set', `${stack.resistanceSet}${rounds}`))
+  }
+  if (stack.defenseBonus) {
+    rows.push(
+      effect(
+        'Guard',
+        `def +${stack.defenseBonus.amount}, ${countLabel(stack.defenseBonus.roundsLeft, 'round')}`,
+      ),
+    )
+  }
+  if (stack.resistanceBonus) {
+    rows.push(
+      effect(
+        'Stoneskin',
+        `res +${stack.resistanceBonus.amount}, ${countLabel(stack.resistanceBonus.roundsLeft, 'round')}`,
+      ),
+    )
+  }
+  if (stack.defenseDiv) {
+    rows.push(
+      effect(
+        'Defense',
+        `÷${stack.defenseDiv.divisor} (floor ${stack.defenseDiv.floor}, ${countLabel(stack.defenseDiv.roundsLeft, 'round')})`,
+      ),
+    )
+  }
+  if (stack.timedDamagePct) {
+    rows.push(
+      effect(
+        'Damage',
+        `+${stack.timedDamagePct.pct}%, ${countLabel(stack.timedDamagePct.roundsLeft, 'round')}`,
+      ),
+    )
   }
   if (stack.defensePct) {
     const floor =
@@ -334,6 +385,14 @@ export function inspectActiveEffects(
       effect(
         'Hyper Focus',
         countLabel(stack.conditionImmunityUsesLeft ?? 0, 'condition block'),
+      ),
+    )
+  }
+  if ((stack.debuffImmunityRoundsLeft ?? 0) > 0) {
+    rows.push(
+      effect(
+        'Iron Will',
+        countLabel(stack.debuffImmunityRoundsLeft ?? 0, 'round'),
       ),
     )
   }
@@ -459,13 +518,27 @@ export function inspectActiveEffects(
       ),
     )
   }
+  if ((stack.preventsCriticalRoundsLeft ?? 0) > 0) {
+    rows.push(
+      effect(
+        'No crits',
+        countLabel(stack.preventsCriticalRoundsLeft!, 'round'),
+      ),
+    )
+  }
   if (stack.ignoreTargetArmor) {
+    const rounds =
+      stack.ignoreTargetArmorRoundsLeft != null
+        ? `, ${countLabel(stack.ignoreTargetArmorRoundsLeft, 'round')}`
+        : ''
     rows.push(
       effect(
         'Sunder',
-        stack.ignoreTargetArmorPhysicalOnly
-          ? 'ignore armor (Physical)'
-          : 'ignore armor',
+        `${
+          stack.ignoreTargetArmorPhysicalOnly
+            ? 'ignore armor (Physical)'
+            : 'ignore armor'
+        }${rounds}`,
       ),
     )
   }

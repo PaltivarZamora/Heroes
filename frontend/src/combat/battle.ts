@@ -19,7 +19,10 @@ import {
   freezeArmyTownCounts,
 } from './heroArmyPassives'
 import { applyTempleEndOfRoundPassives } from './templePassive'
-import { applyShamanBattleStartTotems } from './summon'
+import {
+  applyShamanBattleStartTotems,
+  applyShamanEndOfRoundNatureHeals,
+} from './summon'
 
 export type CombatSide = 'atk' | 'def'
 
@@ -88,18 +91,35 @@ export type CombatStack = {
   conditionExtra?: Record<number, ConditionExtra>
   /** Hyper Focus: remaining condition-block attempts (any condition). */
   conditionImmunityUsesLeft?: number
+  /**
+   * Iron Will: round-based immunity to conditions + stat debuffs.
+   * Distinct from Hyper Focus (uses-based, conditions only).
+   */
+  debuffImmunityRoundsLeft?: number
   /** Flat speed change for the rest of the battle (Mass Slow). */
   speedMod?: number
   /** Multiplies catalog `max_dmg` before flat bonuses (Berserk). */
   maxDmgMult?: number
   /** Multiplies catalog `min_dmg` before flat bonuses (Berserk). */
   minDmgMult?: number
-  /** When set, unit Defense is this value (Berserk). Ignores base and flat deltas. */
+  /** When set, unit Defense is this value (Rend/Berserk). Ignores base and flat deltas. */
   defenseSet?: number
-  /** Signed % on live Defense after base/flat, before the floor (Blood Lust). */
+  /** Rounds left for defenseSet; omit = permanent (legacy). */
+  defenseSetRoundsLeft?: number
+  /** When set, unit Resistance is this value (Berserk). */
+  resistanceSet?: number
+  /** Rounds left for resistanceSet; omit = permanent. */
+  resistanceSetRoundsLeft?: number
+  /** Signed % on live Defense after base/flat, before the floor (legacy Blood Lust). */
   defensePct?: number
   /** Floor for live Defense after % (Blood Lust). */
   defenseFloor?: number
+  /** Blood Lust S7-10: divide live Defense by divisor, with floor, for N rounds. */
+  defenseDiv?: { divisor: number; floor: number; roundsLeft: number }
+  /** Timed +% to physical/magic total damage (Blood Lust duration). */
+  timedDamagePct?: { pct: number; roundsLeft: number }
+  /** Rounds left for minDmgMult/maxDmgMult; omit = permanent. */
+  dmgMultRoundsLeft?: number
   /** Signed % on live Resistance after base/flat (Druid Grove passive). */
   resistancePct?: number
   /** Added to the owning hero's crit_pct for this stack's attacks. */
@@ -139,8 +159,12 @@ export type CombatStack = {
   speedBoost?: { amount: number; roundsLeft: number }
   /** Guard: Defense multiplier for a number of rounds. */
   defenseMult?: { mult: number; roundsLeft: number }
+  /** Guard S7-10: flat Defense bonus for a number of rounds. */
+  defenseBonus?: { amount: number; roundsLeft: number }
   /** Shield Wall: Resistance multiplier for a number of rounds. */
   resistanceMult?: { mult: number; roundsLeft: number }
+  /** Stoneskin S7-10: flat Resistance bonus for a number of rounds. */
+  resistanceBonus?: { amount: number; roundsLeft: number }
   /** Immunity: remaining hits that deal zero damage (any source). */
   immunityHitsLeft?: number
   /** One-shot: this stack does not retaliate after the hit that just resolved. */
@@ -155,6 +179,8 @@ export type CombatStack = {
   ignoreTargetArmor?: boolean
   /** When true with ignoreTargetArmor, only Physical attacks bypass soak. */
   ignoreTargetArmorPhysicalOnly?: boolean
+  /** Sunder Armor duration; omit = permanent (legacy). */
+  ignoreTargetArmorRoundsLeft?: number
   /** Reflect: bounce a % of incoming damage for a hit budget. */
   reflect?: { pct: number; hitsLeft: number; physicalOnly: boolean }
   /**
@@ -200,6 +226,8 @@ export type CombatStack = {
   spawnedRound?: number
   /** Remaining attacks before this Rift goes silent. Independent per stack. */
   silenceShotsLeft?: number
+  /** Curse: outgoing attacks cannot crit for N rounds. */
+  preventsCriticalRoundsLeft?: number
 }
 
 export type CombatOutputMods = {
@@ -254,6 +282,115 @@ export function addStatFlat(
   }
 }
 
+/** True while Iron Will-style round immunity is active. */
+export function hasDebuffImmunity(stack: CombatStack): boolean {
+  return (stack.debuffImmunityRoundsLeft ?? 0) > 0
+}
+
+/**
+ * Strip stat-style combat debuffs (not catalog conditions).
+ * Keeps positive buffs on the same fields. Used by clears_stat_debuffs.
+ */
+export function clearStatDebuffs(
+  stack: CombatStack,
+): { stack: CombatStack; cleared: string[] } {
+  const cleared: string[] = []
+  let next: CombatStack = { ...stack }
+
+  if (next.outputMods) {
+    const keys = Object.keys(next.outputMods) as (keyof CombatOutputMods)[]
+    let changed = false
+    const out: CombatOutputMods = { ...next.outputMods }
+    for (const key of keys) {
+      if (out[key] < 0) {
+        out[key] = 0
+        changed = true
+      }
+    }
+    if (changed) {
+      cleared.push('damage debuffs')
+      const any = keys.some((key) => out[key] !== 0)
+      next = { ...next, outputMods: any ? out : undefined }
+    }
+  }
+
+  if (next.mitigationPct) {
+    let changed = false
+    const mit: CombatMitigationPct = { ...next.mitigationPct }
+    if (mit.defense < 0) {
+      mit.defense = 0
+      changed = true
+    }
+    if (mit.resistance < 0) {
+      mit.resistance = 0
+      changed = true
+    }
+    if (changed) {
+      cleared.push('mitigation debuffs')
+      next = {
+        ...next,
+        mitigationPct:
+          mit.defense !== 0 || mit.resistance !== 0 ? mit : undefined,
+      }
+    }
+  }
+
+  if ((next.speedMod ?? 0) < 0) {
+    cleared.push('speed debuff')
+    next = { ...next, speedMod: undefined }
+  }
+  if (next.speedUses && next.speedUses.amount < 0) {
+    cleared.push('speed debuff')
+    next = { ...next, speedUses: undefined }
+  }
+
+  if (next.statFlat) {
+    const flat = { ...next.statFlat }
+    let changed = false
+    for (const key of Object.keys(flat) as (keyof CombatStatFlat)[]) {
+      if (flat[key] < 0) {
+        flat[key] = 0
+        changed = true
+      }
+    }
+    if (changed) {
+      cleared.push('stat debuffs')
+      const any = (Object.keys(flat) as (keyof CombatStatFlat)[]).some(
+        (key) => flat[key] !== 0,
+      )
+      next = { ...next, statFlat: any ? flat : undefined }
+    }
+  }
+
+  if ((next.defensePct ?? 0) < 0) {
+    cleared.push('defense debuff')
+    next = { ...next, defensePct: undefined, defenseFloor: undefined }
+  }
+  if ((next.resistancePct ?? 0) < 0) {
+    cleared.push('resistance debuff')
+    next = { ...next, resistancePct: undefined }
+  }
+
+  if (next.disarm) {
+    cleared.push('disarm')
+    next = { ...next, disarm: undefined }
+  }
+  if ((next.preventsCriticalRoundsLeft ?? 0) > 0) {
+    cleared.push('crit lock')
+    next = { ...next, preventsCriticalRoundsLeft: undefined }
+  }
+  if ((next.markHitsLeft ?? 0) > 0) {
+    cleared.push('mark')
+    next = { ...next, markHitsLeft: undefined }
+  }
+  if (next.forcedRetreatPending) {
+    cleared.push('forced retreat')
+    next = { ...next, forcedRetreatPending: undefined }
+  }
+
+  return { stack: next, cleared }
+}
+
 export function stackMaxHealth(
   stack: CombatStack,
   catalog: ReferenceCatalog,
@@ -292,13 +429,22 @@ export function stackDefense(
   }
   const base = unitById(catalog, stack.unitId)?.defense ?? 0
   const flat = base + (stack.statFlat?.defense ?? 0)
+  const bonus = stack.defenseBonus?.amount ?? 0
+  const withBonus = flat + bonus
   const mult = stack.defenseMult?.mult
   const multiplied =
     mult != null && Number.isFinite(mult) && mult > 0
-      ? Math.max(0, Math.floor(flat * mult))
-      : flat
+      ? Math.max(0, Math.floor(withBonus * mult))
+      : withBonus
   const pct = stack.defensePct ?? 0
-  const scaled = scaleBySignedPct(multiplied, pct)
+  let scaled = scaleBySignedPct(multiplied, pct)
+  const div = stack.defenseDiv
+  if (div != null && div.divisor > 0) {
+    scaled = Math.max(
+      div.floor,
+      Math.floor(scaled / div.divisor),
+    )
+  }
   const floor = stack.defenseFloor ?? 0
   return Math.max(floor, scaled)
 }
@@ -307,8 +453,16 @@ export function stackResistance(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
+  if (stack.resistanceSet != null) {
+    return Math.max(0, stack.resistanceSet)
+  }
   const base = unitById(catalog, stack.unitId)?.resistance ?? 0
-  const flat = Math.max(0, base + (stack.statFlat?.resistance ?? 0))
+  const flat = Math.max(
+    0,
+    base +
+      (stack.statFlat?.resistance ?? 0) +
+      (stack.resistanceBonus?.amount ?? 0),
+  )
   const mult = stack.resistanceMult?.mult
   const multiplied =
     mult != null && Number.isFinite(mult) && mult > 0
@@ -478,7 +632,7 @@ export type CombatBattle = {
   terrainPatches?: CombatTerrainPatch[]
   /** Start-of-round condition logs (Polymorph break/expiry). */
   roundLog?: string[]
-  /** End-of-round splash keys (legacy Temple passives; Cleric heal is end-of-battle). */
+  /** End-of-round splash keys (Cleric heal / legacy Temple passives). */
   roundHitKeys?: string[]
   roundHealKeys?: string[]
   /** Brisk Renewal-style heals: tick at end of every round for the side. */
@@ -1051,6 +1205,18 @@ function tickDefenseMult(stack: CombatStack): CombatStack {
   return { ...stack, defenseMult: { ...buff, roundsLeft: left } }
 }
 
+function tickDefenseBonus(stack: CombatStack): CombatStack {
+  const buff = stack.defenseBonus
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, defenseBonus: undefined }
+  }
+  return { ...stack, defenseBonus: { ...buff, roundsLeft: left } }
+}
+
 function tickResistanceMult(stack: CombatStack): CombatStack {
   const buff = stack.resistanceMult
   if (!buff) {
@@ -1063,10 +1229,154 @@ function tickResistanceMult(stack: CombatStack): CombatStack {
   return { ...stack, resistanceMult: { ...buff, roundsLeft: left } }
 }
 
+function tickResistanceBonus(stack: CombatStack): CombatStack {
+  const buff = stack.resistanceBonus
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, resistanceBonus: undefined }
+  }
+  return { ...stack, resistanceBonus: { ...buff, roundsLeft: left } }
+}
+
+function tickDefenseSet(stack: CombatStack): CombatStack {
+  if (stack.defenseSetRoundsLeft == null) {
+    return stack
+  }
+  const left = stack.defenseSetRoundsLeft - 1
+  if (left <= 0) {
+    return {
+      ...stack,
+      defenseSet: undefined,
+      defenseSetRoundsLeft: undefined,
+    }
+  }
+  return { ...stack, defenseSetRoundsLeft: left }
+}
+
+function tickResistanceSet(stack: CombatStack): CombatStack {
+  if (stack.resistanceSetRoundsLeft == null) {
+    return stack
+  }
+  const left = stack.resistanceSetRoundsLeft - 1
+  if (left <= 0) {
+    return {
+      ...stack,
+      resistanceSet: undefined,
+      resistanceSetRoundsLeft: undefined,
+    }
+  }
+  return { ...stack, resistanceSetRoundsLeft: left }
+}
+
+function tickDmgMult(stack: CombatStack): CombatStack {
+  if (stack.dmgMultRoundsLeft == null) {
+    return stack
+  }
+  const left = stack.dmgMultRoundsLeft - 1
+  if (left <= 0) {
+    return {
+      ...stack,
+      minDmgMult: undefined,
+      maxDmgMult: undefined,
+      dmgMultRoundsLeft: undefined,
+    }
+  }
+  return { ...stack, dmgMultRoundsLeft: left }
+}
+
+function tickIgnoreTargetArmor(stack: CombatStack): CombatStack {
+  if (stack.ignoreTargetArmorRoundsLeft == null) {
+    return stack
+  }
+  const left = stack.ignoreTargetArmorRoundsLeft - 1
+  if (left <= 0) {
+    return {
+      ...stack,
+      ignoreTargetArmor: undefined,
+      ignoreTargetArmorPhysicalOnly: undefined,
+      ignoreTargetArmorRoundsLeft: undefined,
+    }
+  }
+  return { ...stack, ignoreTargetArmorRoundsLeft: left }
+}
+
+function tickDefenseDiv(stack: CombatStack): CombatStack {
+  const buff = stack.defenseDiv
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, defenseDiv: undefined }
+  }
+  return { ...stack, defenseDiv: { ...buff, roundsLeft: left } }
+}
+
+function tickTimedDamagePct(stack: CombatStack): CombatStack {
+  const buff = stack.timedDamagePct
+  if (!buff) {
+    return stack
+  }
+  const left = buff.roundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, timedDamagePct: undefined }
+  }
+  return { ...stack, timedDamagePct: { ...buff, roundsLeft: left } }
+}
+
+function tickPreventsCritical(stack: CombatStack): CombatStack {
+  if (stack.preventsCriticalRoundsLeft == null) {
+    return stack
+  }
+  const left = stack.preventsCriticalRoundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, preventsCriticalRoundsLeft: undefined }
+  }
+  return { ...stack, preventsCriticalRoundsLeft: left }
+}
+
+function tickDebuffImmunity(stack: CombatStack): CombatStack {
+  if (stack.debuffImmunityRoundsLeft == null) {
+    return stack
+  }
+  const left = stack.debuffImmunityRoundsLeft - 1
+  if (left <= 0) {
+    return { ...stack, debuffImmunityRoundsLeft: undefined }
+  }
+  return { ...stack, debuffImmunityRoundsLeft: left }
+}
+
 function tickDurationBuffs(stack: CombatStack): CombatStack {
-  return tickResistanceMult(
-    tickDefenseMult(
-      tickSpeedLock(tickSpeedBoost(tickFervor(tickDisarm(tickEvasion(stack))))),
+  return tickDebuffImmunity(
+    tickPreventsCritical(
+      tickTimedDamagePct(
+        tickDefenseDiv(
+          tickIgnoreTargetArmor(
+            tickDmgMult(
+              tickResistanceSet(
+                tickDefenseSet(
+                  tickResistanceBonus(
+                    tickDefenseBonus(
+                      tickResistanceMult(
+                        tickDefenseMult(
+                          tickSpeedLock(
+                            tickSpeedBoost(
+                              tickFervor(tickDisarm(tickEvasion(stack))),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     ),
   )
 }
@@ -1205,20 +1515,25 @@ export function forceEndRound(
     catalog,
     opts?.heroes,
   )
+  const nature = applyShamanEndOfRoundNatureHeals(
+    temple.battle,
+    catalog,
+    opts?.heroes,
+  )
   const grown =
     opts?.tiles && opts.tiles.length > 0
       ? tickShadowGrowth(
-          temple.battle,
+          nature.battle,
           catalog,
           opts.heroes,
           opts.tiles,
           random,
         )
-      : { battle: temple.battle, lines: [] as string[] }
+      : { battle: nature.battle, lines: [] as string[] }
   const started = startRound(grown.battle, catalog, random, {
     skipDurationTicks: opts?.skipDurationTicks,
   })
-  // Shaman: top up totems at the start of every round (battle-start also calls this).
+  // Shaman: gradual +1 totem spawn at the start of every round (also battle-start).
   const totems =
     opts?.tiles && opts.tiles.length > 0
       ? applyShamanBattleStartTotems(
@@ -1232,11 +1547,15 @@ export function forceEndRound(
   const prefix = [
     ...healed.lines,
     ...temple.lines,
+    ...nature.lines,
     ...grown.lines,
     ...totems.lines,
   ]
   const hitKeys = [...(temple.hitKeys ?? [])]
-  const healKeys = [...(temple.healKeys ?? [])]
+  const healKeys = [
+    ...(temple.healKeys ?? []),
+    ...(nature.healKeys ?? []),
+  ]
   if (prefix.length === 0 && hitKeys.length === 0 && healKeys.length === 0) {
     return totems.battle
   }

@@ -11,7 +11,12 @@ import {
   unitTakesTurns,
   unitsWithTag,
 } from '../town/catalog'
-import type { HitFlashColor } from './attack'
+import {
+  applyStackHeal,
+  heroForSide,
+  type CombatHeroes,
+  type HitFlashColor,
+} from './attack'
 import type {
   CombatBattle,
   CombatSide,
@@ -19,12 +24,29 @@ import type {
   CombatTile,
 } from './battle'
 import { insertIntoRemainingInitiative, isHeroStack, stackMaxHealth } from './battle'
+import { mirrorImageTopHealth } from './abilityStatMath'
 import {
+  isNatureTotemStack,
   isShamanTotemStack,
   shamanTotemCount,
+  shamanTotemSpawnPerRound,
   totemSpawnExtras,
+  totemTypeToUnitName,
   totemUnitByName,
+  type TotemUnitName,
 } from './heroArmyPassives'
+import {
+  missingPassiveStatKey,
+  passiveStatNumber,
+  passiveStatSourceValue,
+  passiveStatString,
+  passiveStatStringList,
+  requirePassiveStats,
+} from '../town/heroPassiveStats'
+import {
+  pickMostInjuredDamagedCreature,
+  frontDeficit,
+} from './templePassive'
 import { isHeroClass } from './shadow'
 import { combatCanLandOn, combatEnterCost, moveKindForUnit, stackOccupyingHex } from './movement'
 import {
@@ -108,7 +130,7 @@ export function isRandomPlacementSummon(
     return false
   }
   return (
-    asFinite(stats.summon_count) != null || Array.isArray(stats.silence_schedule)
+    asFinite(stats.summon_count) != null || Array.isArray(stats.bolt_schedule)
   )
 }
 
@@ -769,7 +791,7 @@ export function applySummonFromStats(
 
     if (isRandomPlacementSummon(stats)) {
       const count = Math.max(1, Math.floor(asFinite(stats.summon_count) ?? 1))
-      const schedule = asIntList(stats.silence_schedule)
+      const schedule = asIntList(stats.bolt_schedule)
       const extras: Partial<CombatStack> = {
         spawnedRound: battle.round,
         indestructible: true,
@@ -927,10 +949,10 @@ export function applyMirrorImage(
     caster.class_id,
     caster.current_level,
   )
-  const capMult = Math.max(0, asFinite(stats.duplicate_hp_cap_stat) ?? 1)
-  const intelCap = Math.max(1, Math.floor(heroStats.intel * capMult))
   const maxHp = stackMaxHealth(target, catalog)
-  const topHealth = Math.max(1, Math.min(intelCap, maxHp))
+  const topHealth =
+    mirrorImageTopHealth(heroStats.intel, stats, maxHp) ??
+    Math.max(1, maxHp)
   const persists = stats.persists_on_summon === true
   const insertQueue = stats.insert_into_current_round_queue === true
   const spawned = spawnSummonedStack(
@@ -1134,8 +1156,9 @@ export function applyRadiusBlockerPlacement(
 }
 
 /**
- * Shaman: top up Fire/Lightning Totems near map center to floor(INT/6) (min 1).
- * Spawns only the missing count — never heals, refreshes, or replaces survivors.
+ * Shaman S7-8: spawn up to `totem_spawn_per_round` (default 1) Fire/Lightning/Nature
+ * Totems near map center when below floor(INT/totem_int_divisor) (min totem_min).
+ * Gradual regrowth — never tops up the full gap in one call.
  * Called at battle start and at the start of every subsequent round.
  */
 export function applyShamanBattleStartTotems(
@@ -1148,11 +1171,6 @@ export function applyShamanBattleStartTotems(
   const sides: CombatSide[] = ['atk', 'def']
   let next = battle
   const lines: string[] = []
-  const fire = totemUnitByName(catalog, 'Fire Totem')
-  const lightning = totemUnitByName(catalog, 'Lightning Totem')
-  if (!fire && !lightning) {
-    return { battle, lines }
-  }
   const stubAbility = {
     id: 0,
     name: 'Shaman Totems',
@@ -1171,15 +1189,23 @@ export function applyShamanBattleStartTotems(
     if (missing <= 0) {
       continue
     }
+    const spawnCap = shamanTotemSpawnPerRound(catalog, hero)
+    const toSpawn = Math.min(missing, Math.max(0, spawnCap))
+    if (toSpawn <= 0) {
+      continue
+    }
+    const pool = shamanTotemUnitPool(catalog, hero)
+    if (pool.length === 0) {
+      continue
+    }
     const intel = heroEffectiveStats(
       catalog,
       hero.class_id,
       hero.current_level ?? 1,
     ).intel
     let spawned = 0
-    for (let i = 0; i < missing; i += 1) {
-      const pickFire = random() < 0.5
-      const unit = (pickFire ? fire : lightning) ?? fire ?? lightning
+    for (let i = 0; i < toSpawn; i += 1) {
+      const unit = pool[Math.floor(random() * pool.length)]
       if (!unit) {
         break
       }
@@ -1217,4 +1243,117 @@ export function applyShamanBattleStartTotems(
     }
   }
   return { battle: next, lines }
+}
+
+function shamanTotemUnitPool(
+  catalog: ReferenceCatalog,
+  hero: Hero,
+): UnitRow[] {
+  const stats = requirePassiveStats(catalog, hero, 'Shaman totems')
+  const rawTypes = passiveStatStringList(stats, 'totem_types')
+  const names: TotemUnitName[] =
+    rawTypes.length > 0
+      ? rawTypes
+          .map(totemTypeToUnitName)
+          .filter((name): name is TotemUnitName => name != null)
+      : ['Fire Totem', 'Lightning Totem', 'Nature Totem']
+  const unique = [...new Set(names)]
+  const pool: UnitRow[] = []
+  for (const name of unique) {
+    const unit = totemUnitByName(catalog, name)
+    if (unit) {
+      pool.push(unit)
+    }
+  }
+  return pool
+}
+
+/**
+ * Shaman S7-8: each surviving Nature totem heals the most-injured army stack
+ * for INT × nature_heal_multiplier (sequential; re-picks target after each heal).
+ * Destroyed mid-round totems do not contribute.
+ */
+export function applyShamanEndOfRoundNatureHeals(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  heroes: CombatHeroes | undefined,
+): { battle: CombatBattle; lines: string[]; healKeys: string[] } {
+  let next = battle
+  const lines: string[] = []
+  const healKeys: string[] = []
+  for (const side of ['atk', 'def'] as const) {
+    const hero = heroForSide(side, heroes)
+    if (!hero || !isHeroClass(catalog, hero, 'Shaman')) {
+      continue
+    }
+    const stats = requirePassiveStats(catalog, hero, 'Shaman Nature totems')
+    if (!stats) {
+      continue
+    }
+    const healSource =
+      passiveStatString(stats, 'nature_heal_stat_source') ?? 'INT'
+    const healMult = passiveStatNumber(stats, 'nature_heal_multiplier')
+    if (healMult == null) {
+      missingPassiveStatKey(
+        catalog,
+        hero,
+        'nature_heal_multiplier',
+        'Shaman Nature totems',
+      )
+      continue
+    }
+    const amount = Math.max(
+      0,
+      Math.floor(passiveStatSourceValue(catalog, hero, healSource) * healMult),
+    )
+    if (amount <= 0) {
+      continue
+    }
+    // Spawn-order: stacks array append order (stable across the round).
+    const natureTotems = next.stacks.filter(
+      (row) => row.side === side && isNatureTotemStack(catalog, row),
+    )
+    for (const totem of natureTotems) {
+      // Must still be alive at end-of-round resolution.
+      const liveTotem = next.stacks.find((row) => row.id === totem.id)
+      if (!liveTotem || liveTotem.qty <= 0) {
+        continue
+      }
+      const target = pickMostInjuredDamagedCreature(
+        next.stacks,
+        catalog,
+        side,
+      )
+      if (!target) {
+        break
+      }
+      const full = stackMaxHealth(target, catalog)
+      const need = frontDeficit(target, catalog)
+      const spend = Math.min(amount, need)
+      if (spend <= 0) {
+        continue
+      }
+      const live = next.stacks.find((row) => row.id === target.id) ?? target
+      const healed = applyStackHeal(live, spend, full)
+      if (healed.healed <= 0) {
+        continue
+      }
+      next = {
+        ...next,
+        stacks: next.stacks.map((row) =>
+          row.id === live.id ? healed.stack : row,
+        ),
+      }
+      healKeys.push(occupancyKey(live.q, live.r))
+      const name = unitById(catalog, healed.stack.unitId)?.name ?? 'unit'
+      lines.push(
+        `Nature Totem: healed ${healed.stack.qty} ${name} for ${healed.healed}.`,
+      )
+    }
+  }
+  return {
+    battle: next,
+    lines,
+    healKeys: [...new Set(healKeys)],
+  }
 }

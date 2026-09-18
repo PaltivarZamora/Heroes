@@ -484,6 +484,11 @@ function idempotentBuffPredicates(
       const want = Math.floor(setDef)
       preds.push((row) => row.defenseSet === want)
     }
+    const setRes = asFinite(layer.set_resistance)
+    if (setRes != null) {
+      const want = Math.floor(setRes)
+      preds.push((row) => row.resistanceSet === want)
+    }
     const maxMult = asFinite(layer.max_dmg_mult)
     if (maxMult != null && maxMult > 0) {
       preds.push((row) => row.maxDmgMult === maxMult)
@@ -491,6 +496,15 @@ function idempotentBuffPredicates(
     const minMult = asFinite(layer.min_dmg_mult)
     if (minMult != null && minMult > 0) {
       preds.push((row) => row.minDmgMult === minMult)
+    }
+    if (asFinite(layer.def_bonus_stat_div) != null) {
+      preds.push((row) => (row.defenseBonus?.amount ?? 0) > 0)
+    }
+    if (asFinite(layer.res_bonus_stat_div) != null) {
+      preds.push((row) => (row.resistanceBonus?.amount ?? 0) > 0)
+    }
+    if (asFinite(layer.def_divisor) != null) {
+      preds.push((row) => row.defenseDiv != null)
     }
   }
   return preds
@@ -546,6 +560,9 @@ function buffMagnitude(
   const div =
     asFinite(stats.dmg_buff_pct_stat) ??
     asFinite(stats.def_debuff_pct_stat) ??
+    asFinite(stats.def_divisor) ??
+    asFinite(stats.def_bonus_stat_div) ??
+    asFinite(stats.res_bonus_stat_div) ??
     asFinite(stats.unit_defense_pct_stat) ??
     asFinite(stats.unit_resistance_pct_stat)
   if (div != null && div > 0) {

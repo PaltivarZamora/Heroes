@@ -249,6 +249,7 @@ export function HeroScreen({
               disciplines={disciplines}
               disciplineId={disciplineId}
               onDisciplineId={setDisciplineId}
+              hero={hero}
             />
           ) : null}
         </section>

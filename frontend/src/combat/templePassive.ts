@@ -44,12 +44,15 @@ export type ClericOpeningStack = {
   qty: number
 }
 
-function frontDeficit(stack: CombatStack, catalog: ReferenceCatalog): number {
+export function frontDeficit(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
   const max = stackMaxHealth(stack, catalog)
   return Math.max(0, max - stack.topHealth)
 }
 
-function isDamagedCreature(
+export function isDamagedCreature(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): boolean {
@@ -60,6 +63,34 @@ function isDamagedCreature(
     isCreatureArmyUnit(unitById(catalog, stack.unitId)) &&
     frontDeficit(stack, catalog) > 0
   )
+}
+
+/**
+ * Most-injured damaged creature on `side` (front-HP deficit, then id).
+ * Shared by Cleric waterfall and Shaman Nature totem single-target heal.
+ */
+export function pickMostInjuredDamagedCreature(
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+  side: CombatSide,
+  matches?: (stack: CombatStack) => boolean,
+): CombatStack | null {
+  const candidates = stacks
+    .filter(
+      (row) =>
+        row.side === side &&
+        isDamagedCreature(row, catalog) &&
+        (matches?.(row) ?? true),
+    )
+    .sort((a, b) => {
+      const da = frontDeficit(a, catalog)
+      const db = frontDeficit(b, catalog)
+      if (db !== da) {
+        return db - da
+      }
+      return a.id.localeCompare(b.id)
+    })
+  return candidates[0] ?? null
 }
 
 function stackLabel(catalog: ReferenceCatalog, stack: CombatStack): string {
@@ -89,21 +120,36 @@ function templeStackCountForHeal(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   side: CombatSide,
-  opening: ClericOpeningStack[],
   filter: string | null,
+  opening?: ClericOpeningStack[],
 ): number {
   // Prefer battle-start frozen stack count (same as Barbarian/Paladin).
   if (battle.armyTownCounts?.temple != null) {
     return frozenTownCount(battle.armyTownCounts, 'temple', side)
   }
+  if (opening) {
+    let n = 0
+    for (const row of opening) {
+      if (row.side !== side || row.qty <= 0) {
+        continue
+      }
+      if (matchesTownFilter(catalog, row.unitId, filter)) {
+        n += 1
+      }
+    }
+    return n
+  }
   let n = 0
-  for (const row of opening) {
-    if (row.side !== side || row.qty <= 0) {
+  for (const row of battle.stacks) {
+    if (
+      row.side !== side ||
+      row.qty <= 0 ||
+      isHeroStack(row) ||
+      !matchesTownFilter(catalog, row.unitId, filter)
+    ) {
       continue
     }
-    if (matchesTownFilter(catalog, row.unitId, filter)) {
-      n += 1
-    }
+    n += 1
   }
   return n
 }
@@ -119,77 +165,35 @@ function liveQtyForOpening(
   return 0
 }
 
-/**
- * BR S7-3 Cleric end-of-battle passive:
- * 1) Optional full resurrect of one Temple stack that took casualties.
- * 2) Heal pool = INT × Temple stack count, most-hurt-first on living stacks.
- * Replaces the old end-of-round heal entirely.
- */
-export function applyClericEndOfBattlePassive(
+/** INT × Temple stack count, most-hurt-first front-HP heal (end of round). */
+function applyClericHealPool(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
-  hero: Hero | null | undefined,
+  hero: Hero,
   side: CombatSide,
-  opening: ClericOpeningStack[],
-  random: () => number = Math.random,
-): { battle: CombatBattle; lines: string[] } {
-  if (!isHeroClass(catalog, hero, 'Cleric') || !hero) {
-    return { battle, lines: [] }
-  }
-  const stats = requirePassiveStats(catalog, hero, 'Cleric end of battle')
+): { battle: CombatBattle; lines: string[]; healKeys: string[] } {
+  const stats = requirePassiveStats(catalog, hero, 'Cleric end of round heal')
   if (!stats) {
-    return { battle, lines: [] }
+    return { battle, lines: [], healKeys: [] }
   }
-
   const healTown = passiveStatString(stats, 'heal_town_filter')
-  const rezTown = passiveStatString(stats, 'rez_town_filter')
   const healStat = passiveStatString(stats, 'heal_stat_source')
-  const rezChance = passiveStatNumber(stats, 'rez_chance_pct')
-  const lines: string[] = []
-  let next = battle
-
-  // --- B: resurrect roll first (order assumption from BR S7-3) ---
-  if (rezChance == null) {
-    missingPassiveStatKey(catalog, hero, 'rez_chance_pct', 'Cleric rez')
-  } else if (rezChance > 0 && random() * 100 < rezChance) {
-    const eligible = opening.filter((row) => {
-      if (row.side !== side || row.qty <= 0) {
-        return false
-      }
-      if (!matchesTownFilter(catalog, row.unitId, rezTown ?? 'Temple')) {
-        return false
-      }
-      const live = liveQtyForOpening(next, row)
-      return live < row.qty
-    })
-    if (eligible.length > 0) {
-      const pick =
-        eligible[
-          Math.min(eligible.length - 1, Math.floor(random() * eligible.length))
-        ]!
-      const restored = fullResurrectTempleStack(next, catalog, pick)
-      next = restored.battle
-      lines.push(...restored.lines)
-    }
-  }
-
-  // --- A: heal pool ---
   const stackCount = templeStackCountForHeal(
-    next,
+    battle,
     catalog,
     side,
-    opening,
     healTown ?? 'Temple',
   )
   const statValue = passiveStatSourceValue(catalog, hero, healStat ?? 'INT')
   let pool = Math.max(0, Math.floor(statValue * stackCount))
   if (pool <= 0) {
-    return { battle: next, lines }
+    return { battle, lines: [], healKeys: [] }
   }
 
-  let stacks = [...next.stacks]
+  let stacks = [...battle.stacks]
   let totalHealed = 0
   const healLines: string[] = []
+  const healKeys: string[] = []
   while (pool > 0) {
     const candidates = stacks
       .filter(
@@ -224,17 +228,71 @@ export function applyClericEndOfBattlePassive(
     pool -= healed.healed
     totalHealed += healed.healed
     stacks = stacks.map((row) => (row.id === live.id ? healed.stack : row))
+    healKeys.push(occupancyKey(live.q, live.r))
     healLines.push(
       `Cleric: healed ${stackLabel(catalog, healed.stack)} for ${healed.healed}.`,
     )
   }
-  if (totalHealed > 0) {
-    lines.push(
+  if (totalHealed <= 0) {
+    return { battle, lines: [], healKeys: [] }
+  }
+  return {
+    battle: { ...battle, stacks },
+    lines: [
       `Cleric: Temple grace restores ${totalHealed} HP (pool ${Math.floor(statValue)}×${stackCount} stacks).`,
       ...healLines,
-    )
+    ],
+    healKeys: [...new Set(healKeys)],
   }
-  return { battle: { ...next, stacks }, lines }
+}
+
+/**
+ * Cleric end-of-battle: 1% chance to fully resurrect one Temple stack that
+ * took casualties. Heal pool runs at end of round instead.
+ */
+export function applyClericEndOfBattlePassive(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
+  side: CombatSide,
+  opening: ClericOpeningStack[],
+  random: () => number = Math.random,
+): { battle: CombatBattle; lines: string[] } {
+  if (!isHeroClass(catalog, hero, 'Cleric') || !hero) {
+    return { battle, lines: [] }
+  }
+  const stats = requirePassiveStats(catalog, hero, 'Cleric end of battle')
+  if (!stats) {
+    return { battle, lines: [] }
+  }
+
+  const rezTown = passiveStatString(stats, 'rez_town_filter')
+  const rezChance = passiveStatNumber(stats, 'rez_chance_pct')
+  if (rezChance == null) {
+    missingPassiveStatKey(catalog, hero, 'rez_chance_pct', 'Cleric rez')
+    return { battle, lines: [] }
+  }
+  if (rezChance <= 0 || random() * 100 >= rezChance) {
+    return { battle, lines: [] }
+  }
+
+  const eligible = opening.filter((row) => {
+    if (row.side !== side || row.qty <= 0) {
+      return false
+    }
+    if (!matchesTownFilter(catalog, row.unitId, rezTown ?? 'Temple')) {
+      return false
+    }
+    return liveQtyForOpening(battle, row) < row.qty
+  })
+  if (eligible.length === 0) {
+    return { battle, lines: [] }
+  }
+  const pick =
+    eligible[
+      Math.min(eligible.length - 1, Math.floor(random() * eligible.length))
+    ]!
+  return fullResurrectTempleStack(battle, catalog, pick)
 }
 
 function fullResurrectTempleStack(
@@ -403,18 +461,46 @@ export function applyPaladinPooledExecute(
   }
 }
 
-/** End-of-round Temple passives — Cleric heal removed (S7-3 end-of-battle). */
+/** End-of-round Temple: Cleric heal pool when heal_timing is end_of_round. */
 export function applyTempleEndOfRoundPassives(
   battle: CombatBattle,
-  _catalog: ReferenceCatalog,
-  _heroes: CombatHeroes | undefined,
+  catalog: ReferenceCatalog,
+  heroes: CombatHeroes | undefined,
 ): {
   battle: CombatBattle
   lines: string[]
   hitKeys: string[]
   healKeys: string[]
 } {
-  return { battle, lines: [], hitKeys: [], healKeys: [] }
+  let next = battle
+  const lines: string[] = []
+  const healKeys: string[] = []
+  for (const side of ['atk', 'def'] as const) {
+    const hero = heroForSide(side, heroes)
+    if (!isHeroClass(catalog, hero, 'Cleric') || !hero) {
+      continue
+    }
+    const stats = requirePassiveStats(catalog, hero, 'Cleric heal timing')
+    const timing = (
+      passiveStatString(stats, 'heal_timing') ?? 'end_of_round'
+    )
+      .trim()
+      .toLowerCase()
+    // heal_timing must be live-read — do not hardcode the call site alone.
+    if (timing !== 'end_of_round') {
+      continue
+    }
+    const healed = applyClericHealPool(next, catalog, hero, side)
+    next = healed.battle
+    lines.push(...healed.lines)
+    healKeys.push(...healed.healKeys)
+  }
+  return {
+    battle: next,
+    lines,
+    hitKeys: [],
+    healKeys: [...new Set(healKeys)],
+  }
 }
 
 /**

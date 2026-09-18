@@ -129,6 +129,7 @@ export function HeroAbilityPopup({
           disciplines={disciplines}
           disciplineId={disciplineId}
           onDisciplineId={setDisciplineId}
+          hero={hero}
           onSelectAbility={onChoose}
           canSelectAbility={(ability) =>
             canCast &&

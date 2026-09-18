@@ -11,6 +11,7 @@ import {
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
 import { isHeroStack, stackMoveSpeed, stackDefense, stackResistance, scaleBySignedPct } from './battle'
 import { chanceRollLog, rollChancePct } from './combatLog'
+import { polymorphBreakChancePct } from './abilityStatMath'
 import {
   combatReachable,
   footprintSpecFor,
@@ -398,6 +399,15 @@ export function tryInflictSpec(
       ],
     }
   }
+  // Iron Will: round-based immunity to conditions (does not consume on block).
+  if ((target.debuffImmunityRoundsLeft ?? 0) > 0) {
+    return {
+      stack: target,
+      lines: [
+        `${target.qty} ${name} shrug off ${label} (Iron Will).`,
+      ],
+    }
+  }
   if (spec.resistStat) {
     const chance = Math.min(100, liveResistance(target, catalog, spec.resistStat))
     if (Math.floor(random() * 100) < chance) {
@@ -555,10 +565,10 @@ export function tickRoundConditions(
       const name = unitById(catalog, live.unitId)?.name ?? 'Unknown'
       const label = conditionName(catalog, conditionId)
       if (spec.breakChancePctStat != null) {
-        const chance = Math.min(
-          100,
-          Math.floor(liveResistance(live, catalog, 'resistance') * spec.breakChancePctStat),
-        )
+        const chance =
+          polymorphBreakChancePct(liveResistance(live, catalog, 'resistance'), {
+            break_chance_pct_stat: spec.breakChancePctStat,
+          }) ?? 0
         if (chance > 0) {
           const triggered = Math.floor(random() * 100) < chance
           lines.push(

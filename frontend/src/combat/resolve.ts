@@ -419,8 +419,8 @@ export function applyCombatOutcome(
   if (!loser && !(siegeTown && loserSide === 'def') && !(mob && loserSide === 'def')) {
     return null
   }
-  // Cleric (S7-3): rez + heal pool before losses / army writeback so the
-  // summary and persisted qty reflect full-stack resurrects.
+  // Cleric: end-of-battle rez before losses / army writeback so persisted
+  // qty reflects a full-stack resurrect.
   let battleResolved = battle
   let clericLines: string[] = []
   if (winner) {

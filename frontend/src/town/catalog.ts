@@ -930,8 +930,7 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
       const livePassive = asJsonObject(rec.passive_ability)
       const lower = name.toLowerCase()
       // Warlock / Heretic (Pandemonium): keep DB payload, finalize display copy.
-      // Knight / Monk (Citadel): ensure Humanoid-scaled passive keys exist when DB
-      // still only has display text.
+      // Knight / Monk / Shaman: display fallbacks only — passive_stats come from DB as-is.
       let passive_ability = livePassive
       if (lower === 'warlock') {
         passive_ability = {
@@ -946,29 +945,24 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
             'Post-battle: converts Humanoid+Living kills into demon reinforcements. Max tier = floor(INT/4), capped by highest tier killed. Qty = INT.',
         }
       } else if (lower === 'knight') {
+        // Display from DB when present; fallback only if display text missing.
         passive_ability = {
           ...(livePassive ?? {}),
-          second_attack_after_retaliation: true,
-          trigger_chance_pct_per_humanoid_unit: 0.25,
-          cap_pct_stat: 2,
           display:
             livePassive?.display ??
-            '0.25% × Humanoid units (cap STR×2%): Citadel units may strike again after being retaliated against.',
+            'Chance to Retaliate Twice STR x2.5%',
         }
       } else if (lower === 'monk') {
         passive_ability = {
           ...(livePassive ?? {}),
-          trigger_chance_pct_per_humanoid_unit: 0.25,
-          cap_pct_stat: 3,
           display:
             livePassive?.display ??
-            '0.25% × Humanoid units (cap STR×3%): Citadel attacks may suppress enemy retaliation.',
+            'Chance to Reflect Retaliation Dmg STR x2.5%',
         }
       } else if (lower === 'wizard') {
         passive_ability = {
           ...(livePassive ?? {}),
           mana_on_tower_magic_attack: true,
-          mana_gain: 1,
           display:
             livePassive?.display ??
             'When a Tower unit deals Magic damage with an attack, gain +1 Mana (once per attack action, capped at max).',
@@ -977,17 +971,16 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         passive_ability = {
           ...(livePassive ?? {}),
           mana_on_tower_magic_taken: true,
-          mana_gain: 1,
           display:
             livePassive?.display ??
             'When a Tower unit takes Magic damage from an attack, gain +1 Mana (once per unit hit per attack action, capped at max).',
         }
       } else if (lower === 'cleric') {
-        // BR S7-3: end-of-battle rez + heal pool (replaces prior EOR heal copy).
+        // End-of-round heal pool + end-of-battle rez chance.
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            'End of battle: 1% chance to fully resurrect a random Temple stack that took casualties. Also heals damaged Temple stacks (most-hurt first) from a pool of INT x Temple stack count HP.',
+            'End of round: heals damaged Temple stacks (most-hurt first) from a pool of INT x Temple stack count HP. End of battle: 1% chance to fully resurrect a random Temple stack that took casualties.',
         }
       } else if (lower === 'paladin') {
         // BR S7-1: Temple stack dmg% bonuses replace the prior end-of-round execute copy.
@@ -1006,13 +999,15 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            'STR + (Grove stacks x3) chance to avoid enemy retaliation (min 1%, max 90%)',
+            livePassive?.display ??
+            'STR + (Grove stacks x5) chance to avoid enemy retaliation 1-90%',
         }
       } else if (lower === 'barbarian') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            'STR + (Fortress stacks x2) bonus Physical dmg%, army-wide',
+            livePassive?.display ??
+            'Bonus Physical Dmg STR + (Fortress Stacks)%',
         }
       } else if (lower === 'rogue') {
         passive_ability = {
@@ -1034,23 +1029,25 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
             'INT + (Non-Living Factory stacks x2) bonus Magic dmg%, applies only to Non-Living Factory units',
         }
       } else if (lower === 'shaman') {
+        // Display from DB when present; passive_stats are DB-only (no loader pin).
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            "Each round, ensures INT/6 (min 1) totems are up near map center, spawning only what's missing (random Fire or Lightning)",
+            livePassive?.display ??
+            'Each round, adds 1 totem (up to INT/4, min 1) if below max — random Fire, Lightning, or Nature. Nature totems heal the most injured stack INT x4 at end of round if they survive.',
         }
       } else if (lower === 'evoker') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
             livePassive?.display ??
-            '(INT × Confluence STACKS in army, not unit headcount)% bonus dmg on Hero own spell casts',
+            '(INT + Confluence STACKS in army)% bonus dmg on Hero own spell casts',
         }
       } else if (lower === 'death knight') {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            'Each step on Shadow costs (terrain move cost x (1 - STR x 2%)), capped at max 75% reduction',
+            'On Shadow: step cost × (1 - STR × 2%), max 75% reduction. While standing in Shadow, Ground/Submerge units deal STR% bonus Physical damage.',
         }
       }
       return {
@@ -1068,23 +1065,34 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         passive_ability,
         // Cleric S7-3: ensure engine keys exist when DB still has the old
         // 1%-rez-only payload. DB values override defaults when present.
+        // Knight / Monk / Shaman: no loader pin — passive_stats is DB-only.
         passive_stats:
           lower === 'cleric'
             ? {
                 heal_stat_source: 'INT',
-                heal_count_mode: 'stack_count',
                 heal_town_filter: 'Temple',
-                heal_timing: 'end_of_battle',
+                heal_timing: 'end_of_round',
                 heal_target_rule: 'most_hurt_first',
                 rez_chance_pct: 1,
                 rez_town_filter: 'Temple',
                 rez_condition: 'casualties_gt_0',
                 rez_selection: 'random',
                 rez_scope: 'full_stack',
-                rez_timing: 'end_of_battle',
                 ...(asJsonObject(rec.passive_stats) ?? {}),
               }
-            : asJsonObject(rec.passive_stats),
+            : lower === 'death knight'
+              ? {
+                  // Move reduction (existing) + S7-1 addendum Physical dmg on Shadow.
+                  stat_source: 'STR',
+                  pct_per_point: 2,
+                  max_reduction_pct: 75,
+                  condition: 'standing_in_shadow',
+                  dmg_stat_source: 'STR',
+                  dmg_multiplier_pct: 1,
+                  unit_filter: ['Ground', 'Submerge'],
+                  ...(asJsonObject(rec.passive_stats) ?? {}),
+                }
+              : asJsonObject(rec.passive_stats),
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
@@ -1206,6 +1214,7 @@ const ABILITY_BOOL_STAT_KEYS = [
   'no_turn_cost',
   'forces_max_dmg_on_target',
   'forces_min_dmg_on_target',
+  'prevents_critical',
   'grants_ignore_target_armor',
   'physical_only',
   'reflects_physical_only',
@@ -1213,6 +1222,8 @@ const ABILITY_BOOL_STAT_KEYS = [
   'skips_duration_tick',
   'direction_by_target_side',
   'clears_conditions',
+  'clears_stat_debuffs',
+  'grants_condition_immunity',
   'clears_terrain',
   'clears_los_blockers',
   'heals_to_full',
@@ -1353,15 +1364,22 @@ function fillDesignedAbilities(
     if (row.name === 'Unstable Rift') {
       const summonType =
         types.find((entry) => entry.value.trim().toLowerCase() === 'summon')?.id ?? 4
+      const rest = { ...(row.stats ?? {}) }
+      // S7-11: silence_schedule was a misnamed bolt-count schedule.
+      const schedule =
+        (Array.isArray(rest.bolt_schedule) ? rest.bolt_schedule : null) ??
+        (Array.isArray(rest.silence_schedule) ? rest.silence_schedule : null) ??
+        [3, 2, 1]
+      delete rest.silence_schedule
       return {
         ...row,
         ability_type_id: row.ability_type_id ?? summonType,
         stats: {
+          ...rest,
           summon_unit_id: 223,
           summon_count: 3,
           persists_on_summon: false,
-          silence_schedule: [3, 2, 1],
-          ...(row.stats ?? {}),
+          bolt_schedule: schedule,
         },
       }
     }
@@ -1569,15 +1587,20 @@ function fillDesignedAbilities(
       }
     }
     if (row.name === 'Berserk') {
+      const rest = { ...(row.stats ?? {}) }
+      // S7-10: strip legacy permanent-only payload; force duration + Res=0.
+      delete rest.def_mult
       return {
         ...row,
         target_id: row.target_id ?? friendSingle,
         ability_type_id: row.ability_type_id ?? buffType,
         stats: {
+          ...rest,
           min_dmg_mult: 2,
           max_dmg_mult: 2,
           set_defense: 0,
-          ...(row.stats ?? {}),
+          set_resistance: 0,
+          duration_stat_div: 9,
         },
       }
     }
@@ -1659,15 +1682,19 @@ function fillDesignedAbilities(
         )?.id ?? 3
       const utilityType =
         types.find((entry) => entry.value.trim().toLowerCase() === 'utility')?.id ?? 5
+      const rest = { ...(row.stats ?? {}) }
+      // S7-10: replace % Def decay with flat halving.
+      delete rest.def_debuff_pct_stat
       return {
         ...row,
         target_id: row.target_id ?? friendAll,
         ability_type_id: row.ability_type_id ?? utilityType,
         stats: {
+          ...rest,
           dmg_buff_pct_stat: 10,
-          def_debuff_pct_stat: 6.7,
-          def_floor: 0,
-          ...(row.stats ?? {}),
+          def_divisor: 2,
+          def_floor: 1,
+          duration: 1,
         },
       }
     }
@@ -1832,6 +1859,29 @@ function fillDesignedAbilities(
         },
       }
     }
+    if (row.name === 'Curse' || row.id === 2) {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'enemy_single',
+        )?.id ?? 4
+      const debuffType =
+        types.find((entry) => entry.value.trim().toLowerCase() === 'debuff')?.id ?? 3
+      const rest = { ...(row.stats ?? {}) }
+      // S7-11: replace obsolete flat_dmg attack payload.
+      delete rest.flat_dmg
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? debuffType,
+        stats: {
+          ...rest,
+          duration_stat_div: 10,
+          forces_min_dmg_on_target: true,
+          prevents_critical: true,
+        },
+      }
+    }
     if (row.name === 'Fervor') {
       const friendAll =
         targets.find(
@@ -1973,14 +2023,76 @@ function fillDesignedAbilities(
       }
     }
     if (row.name === 'Guard') {
+      const rest = { ...(row.stats ?? {}) }
+      // S7-10: additive Def (STR/3), not ×2 multiplier.
+      delete rest.def_mult
       return {
         ...row,
         target_id: row.target_id ?? friendSingle,
         ability_type_id: row.ability_type_id ?? buffType,
         stats: {
-          def_mult: 2,
+          ...rest,
+          def_bonus_stat_div: 3,
           duration_stat_div: 5,
-          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Rend') {
+      const enemySingle =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') ===
+            'enemy_single',
+        )?.id ?? 4
+      const rest = { ...(row.stats ?? {}) }
+      return {
+        ...row,
+        target_id: row.target_id ?? enemySingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          ...rest,
+          set_defense: 0,
+          duration_stat_div: 5,
+        },
+      }
+    }
+    if (row.name === 'Sunder Armor') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const rest = { ...(row.stats ?? {}) }
+      return {
+        ...row,
+        // S7-10: army-wide (DB may still say friend_single).
+        target_id: friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          ...rest,
+          physical_only: true,
+          grants_ignore_target_armor: true,
+          duration_stat_div: 9,
+        },
+      }
+    }
+    if (row.name === 'Stoneskin') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      const rest = { ...(row.stats ?? {}) }
+      // S7-10: flat Res bonus — strip old Def% key.
+      delete rest.unit_defense_pct_stat
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          ...rest,
+          res_bonus_stat_div: 7,
+          duration_stat_div: 5,
         },
       }
     }
@@ -2059,8 +2171,40 @@ function fillDesignedAbilities(
         ability_type_id: row.ability_type_id ?? buffType,
         stats: {
           clears_conditions: true,
+          clears_stat_debuffs: true,
           secondary_random_targets_stat_div: 5,
           secondary_pool: 'friend_with_negative_condition',
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Mass Dispel') {
+      const friendAll =
+        targets.find(
+          (entry) =>
+            entry.value.trim().toLowerCase().replaceAll(' ', '_') === 'friend_all',
+        )?.id ?? 3
+      return {
+        ...row,
+        target_id: row.target_id ?? friendAll,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          clears_conditions: true,
+          clears_stat_debuffs: true,
+          ...(row.stats ?? {}),
+        },
+      }
+    }
+    if (row.name === 'Iron Will') {
+      return {
+        ...row,
+        target_id: row.target_id ?? friendSingle,
+        ability_type_id: row.ability_type_id ?? buffType,
+        stats: {
+          clears_conditions: true,
+          clears_stat_debuffs: true,
+          grants_condition_immunity: true,
+          duration: 1,
           ...(row.stats ?? {}),
         },
       }
@@ -2463,7 +2607,41 @@ function fillDesignedAbilities(
       }
     }
     return row
-  }).map(applyS75AbilityNormalization)
+  })
+    .map(applyS75AbilityNormalization)
+    .map(applyS712StickyBattleDuration)
+}
+
+/**
+ * BR S7-12: sticky-for-battle lifecycle marker for tooltip `[duration]`.
+ * `duration: null` → "for the battle". No combat change — duration already omitted
+ * on these abilities means permanent until battle end.
+ */
+function applyS712StickyBattleDuration(row: AbilityRow): AbilityRow {
+  const stickyIds = new Set([3, 18, 34, 40, 51, 69, 76, 84, 86, 90])
+  const stickyNames = new Set([
+    'sap strength',
+    'bless',
+    'mutation',
+    'mass slow',
+    'expose',
+    'critical chance',
+    'last stand',
+    'execute',
+    'critical attacks',
+    'slow',
+  ])
+  const lower = row.name.trim().toLowerCase()
+  if (!stickyIds.has(row.id) && !stickyNames.has(lower)) {
+    return row
+  }
+  const stats: Record<string, unknown> = { ...(row.stats ?? {}) }
+  // Prefer duration_stat_div when present (round-scaled); do not clobber it.
+  if (Object.prototype.hasOwnProperty.call(stats, 'duration_stat_div')) {
+    return row
+  }
+  stats.duration = null
+  return { ...row, stats }
 }
 
 /**
@@ -2507,16 +2685,23 @@ function applyS75AbilityNormalization(row: AbilityRow): AbilityRow {
     stats.inflicts_condition = 4
     return { ...row, stats }
   }
+  // Mass Silence: Rod exception (then standing rule) — AOE total-action-denial
+  // conditions are resistable even as the ability's primary side effect.
   if (id === 27 || name === 'mass silence') {
-    stripResistAndLegacyChance()
+    delete stats.chance_pct_flat_stat
+    delete stats.no_stat_threshold
     stats.chance_pct = 25
+    stats.resist_stat = 'resistance'
     stats.duration = 1
     stats.inflicts_condition = 4
     return { ...row, stats }
   }
+  // Blizzard / Earthquake: damage always lands; riding Slow/Stun is resistable.
   if (id === 14 || name === 'blizzard') {
-    stripResistAndLegacyChance()
+    delete stats.chance_pct_flat_stat
+    delete stats.no_stat_threshold
     stats.chance_pct = 33
+    stats.resist_stat = 'resistance'
     stats.duration = 1
     stats.inflicts_condition = 12
     return { ...row, stats }
@@ -2529,8 +2714,10 @@ function applyS75AbilityNormalization(row: AbilityRow): AbilityRow {
     return { ...row, stats }
   }
   if (id === 15 || name === 'earthquake') {
-    stripResistAndLegacyChance()
+    delete stats.chance_pct_flat_stat
+    delete stats.no_stat_threshold
     stats.chance_pct = 50
+    stats.resist_stat = 'resistance'
     stats.duration = 1
     stats.inflicts_condition = 2
     return { ...row, stats }
@@ -3277,6 +3464,25 @@ function designedTotemUnits(catalogTowns: { id: number; name: string }[]): UnitR
         immuneToLightning: true,
       },
     },
+    {
+      ...blank,
+      id: 265,
+      name: 'Nature Totem',
+      image_path: 'Nature_Totem.png',
+      speed: 5,
+      stationary: true,
+      health: 1,
+      defense: 0,
+      resistance: 0,
+      // Heal-only (S7-8): no combat damage / auto-attack.
+      min_dmg: 0,
+      max_dmg: 0,
+      blocks_los: false,
+      abilities: {
+        ...DEFAULT_UNIT_ABILITIES,
+        shape: 'single',
+      },
+    },
   ]
 }
 
@@ -3745,6 +3951,11 @@ function designedConfluenceAbilities(
       shape: 'beam',
       autoTarget: 'random_enemy',
       immuneToLightning: true,
+    }
+  }
+  if (unitId === 265 || name === 'nature totem') {
+    return {
+      shape: 'single',
     }
   }
   return null
@@ -4292,6 +4503,13 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
               ...next,
               shape: 'beam',
               autoTarget: next.autoTarget ?? 'random_enemy',
+            }
+          }
+          if (unitId === 265 || lower === 'nature totem') {
+            // Heal-only — do not attach autoTarget / damage shapes.
+            next = {
+              ...next,
+              shape: next.shape ?? 'single',
             }
           }
           // S6-43 Tower: force blink / Chronomancer keys even if older DB omitted them.
@@ -5375,42 +5593,6 @@ export function heroResourcePools(
     current_energy: Math.max(0, stats.strength * mult),
     current_mana: Math.max(0, stats.intel * mult),
   }
-}
-
-export function abilityTooltip(
-  catalog: ReferenceCatalog | null | undefined,
-  ability: AbilityRow,
-): string {
-  const extra = abilityCastLine(catalog, ability)
-  if (!extra) {
-    return ability.description
-  }
-  if (!ability.description) {
-    return extra
-  }
-  return `${ability.description}\n${extra}`
-}
-
-function abilityCastLine(
-  catalog: ReferenceCatalog | null | undefined,
-  ability: AbilityRow,
-): string {
-  const resource = catalog?.ability_resource.find(
-    (row) => row.id === ability.resource_id,
-  )?.value
-  const cooldown = catalog?.ability_cooldown.find(
-    (row) => row.id === ability.cooldown_id,
-  )
-  const parts: string[] = []
-  if (resource) {
-    parts.push(`${ability.cost} ${resource}`)
-  } else if (ability.cost > 0) {
-    parts.push(String(ability.cost))
-  }
-  if (cooldown && cooldown.id !== 0) {
-    parts.push(cooldown.value)
-  }
-  return parts.join(' · ')
 }
 
 function buildingsInSlot(

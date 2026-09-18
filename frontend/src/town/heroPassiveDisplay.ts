@@ -1,8 +1,4 @@
 import {
-  citadelHumanoidChancePct,
-  HUMANOID_TAG,
-} from '../combat/armyTags'
-import {
   isConfluenceUnit,
   isFortressUnit,
   isGroveUnit,
@@ -16,8 +12,6 @@ import type { ReferenceCatalog } from './catalog'
 import {
   commandingHeroStats,
   heroTypeName,
-  unitById,
-  unitHasTag,
 } from './catalog'
 import {
   heroPassiveStats,
@@ -86,19 +80,6 @@ function countStacks(
   return n
 }
 
-function countHumanoidHeadcount(
-  stacks: UnitStack[],
-  catalog: ReferenceCatalog,
-): number {
-  let n = 0
-  for (const stack of stacks) {
-    if (unitHasTag(unitById(catalog, stack.unit_id), HUMANOID_TAG)) {
-      n += stack.qty
-    }
-  }
-  return n
-}
-
 /**
  * Live computed army-scaled passive lines when the hero has a known army.
  * Returns [] when composition is unknown or the passive is not army-scaled.
@@ -128,7 +109,7 @@ export function heroPassiveLiveLines(
   if (isHeroClass(catalog, hero, 'Ranger')) {
     const stats = heroPassiveStats(catalog, hero)
     const grove = countStacks(stacks, (id) => isGroveUnit(catalog, id))
-    const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 3
+    const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 5
     const minPct = passiveStatNumber(stats, 'min_pct') ?? 1
     const maxPct = passiveStatNumber(stats, 'max_pct') ?? 90
     const base = passiveStatSourceValue(
@@ -146,7 +127,7 @@ export function heroPassiveLiveLines(
     const fortress = countStacks(stacks, (id) =>
       isFortressUnit(catalog, id),
     )
-    const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 2
+    const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 1
     const base = passiveStatSourceValue(
       catalog,
       hero,
@@ -200,7 +181,7 @@ export function heroPassiveLiveLines(
     const pool = Math.max(0, Math.floor(base * temple))
     const rezPct = passiveStatNumber(stats, 'rez_chance_pct') ?? 1
     lines.push(
-      `End of battle: ${formatPct(rezPct)}% full Temple rez (casualties); heal pool ${pool} HP (${Math.floor(base)} INT × ${temple} stack${temple === 1 ? '' : 's'})`,
+      `End of round: heal pool ${pool} HP (${Math.floor(base)} INT × ${temple} stack${temple === 1 ? '' : 's'}); end of battle: ${formatPct(rezPct)}% full Temple rez (casualties)`,
     )
   }
   if (isHeroClass(catalog, hero, 'Paladin')) {
@@ -234,13 +215,19 @@ export function heroPassiveLiveLines(
     const count = countStacks(stacks, (id) =>
       isConfluenceUnit(catalog, id),
     )
-    const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 1
     const base = passiveStatSourceValue(
       catalog,
       hero,
       passiveStatString(stats, 'stat_source') ?? 'INT',
     )
-    const pct = Math.max(0, base * count * mult)
+    const op = (passiveStatString(stats, 'stack_operator') ?? 'add')
+      .trim()
+      .toLowerCase()
+    const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 1
+    const pct =
+      op === 'add'
+        ? Math.max(0, base + count * mult)
+        : Math.max(0, base * count * mult)
     lines.push(
       `Spell Damage Bonus: +${formatPct(pct)}% (${count} Confluence stack${count === 1 ? '' : 's'})`,
     )
@@ -248,9 +235,19 @@ export function heroPassiveLiveLines(
   if (isHeroClass(catalog, hero, 'Shaman')) {
     const totems = shamanTotemCount(catalog, hero)
     const stats = heroPassiveStats(catalog, hero)
-    const div = passiveStatNumber(stats, 'totem_int_divisor') ?? 6
+    const div = passiveStatNumber(stats, 'totem_int_divisor') ?? 4
+    const spawn = passiveStatNumber(stats, 'totem_spawn_per_round') ?? 1
+    const healMult = passiveStatNumber(stats, 'nature_heal_multiplier') ?? 4
+    const healBase = passiveStatSourceValue(
+      catalog,
+      hero,
+      passiveStatString(stats, 'nature_heal_stat_source') ?? 'INT',
+    )
     lines.push(
-      `Totems each round: ${totems} (INT ${intel}, floor(INT/${div}) min ${passiveStatNumber(stats, 'totem_min') ?? 1})`,
+      `Totems: +${spawn}/round up to ${totems} (INT ${intel}, floor(INT/${div}) min ${passiveStatNumber(stats, 'totem_min') ?? 1})`,
+    )
+    lines.push(
+      `Nature heal: ${Math.max(0, Math.floor(healBase * healMult))} (INT × ${healMult}) to most injured`,
     )
   }
   if (isHeroClass(catalog, hero, 'Heretic') || isHeroClass(catalog, hero, 'Warlock')) {
@@ -272,23 +269,43 @@ export function heroPassiveLiveLines(
       passiveStatString(stats, 'stat_source') ?? 'STR',
     )
     const reduction = Math.min((base * pctPer) / 100, maxPct / 100)
+    const dmgMult = passiveStatNumber(stats, 'dmg_multiplier_pct') ?? 1
+    const dmgBase = passiveStatSourceValue(
+      catalog,
+      hero,
+      passiveStatString(stats, 'dmg_stat_source') ??
+        passiveStatString(stats, 'stat_source') ??
+        'STR',
+    )
+    const physBonus = Math.max(0, dmgBase * dmgMult)
     lines.push(
       `Shadow step cost ×${formatPct((1 - reduction) * 100)}% (${formatPct(reduction * 100)}% reduction)`,
     )
+    lines.push(
+      `On Shadow: +${formatPct(physBonus)}% Physical dmg (Ground/Submerge)`,
+    )
   }
   if (isHeroClass(catalog, hero, 'Knight')) {
-    const humanoids = countHumanoidHeadcount(stacks, catalog)
-    const chance = citadelHumanoidChancePct(catalog, hero, humanoids)
-    lines.push(
-      `Bonus Strike Chance: ${formatPct(chance)}% (${humanoids} Humanoid${humanoids === 1 ? '' : 's'})`,
+    const stats = heroPassiveStats(catalog, hero)
+    const mult = passiveStatNumber(stats, 'stat_multiplier') ?? 2.5
+    const base = passiveStatSourceValue(
+      catalog,
+      hero,
+      passiveStatString(stats, 'stat_source') ?? 'STR',
     )
+    const chance = Math.max(0, base * mult)
+    lines.push(`Retaliate twice: ${formatPct(chance)}% (STR × ${mult})`)
   }
   if (isHeroClass(catalog, hero, 'Monk')) {
-    const humanoids = countHumanoidHeadcount(stacks, catalog)
-    const chance = citadelHumanoidChancePct(catalog, hero, humanoids)
-    lines.push(
-      `Suppress Retaliation: ${formatPct(chance)}% (${humanoids} Humanoid${humanoids === 1 ? '' : 's'})`,
+    const stats = heroPassiveStats(catalog, hero)
+    const mult = passiveStatNumber(stats, 'stat_multiplier') ?? 2.5
+    const base = passiveStatSourceValue(
+      catalog,
+      hero,
+      passiveStatString(stats, 'stat_source') ?? 'STR',
     )
+    const chance = Math.max(0, base * mult)
+    lines.push(`Reflect retaliation: ${formatPct(chance)}% (STR × ${mult})`)
   }
 
   return lines

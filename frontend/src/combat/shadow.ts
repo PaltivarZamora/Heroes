@@ -429,14 +429,67 @@ export function necromancerShadowDamageBonusPct(
   if (!necromancerMoveTypeAllowed(kind, filters)) {
     return 0
   }
-  const onShadow = stackFootprint(striker, catalog).some((hex) =>
-    isShadowHex(battle, hex.q, hex.r),
-  )
-  if (!onShadow) {
+  if (!stackStandingInShadow(striker, battle, catalog)) {
     return 0
   }
   const base = passiveStatSourceValue(catalog, hero, statSource ?? 'INT')
   return Math.max(0, base * multPct)
+}
+
+/**
+ * Death Knight S7-1 addendum: eligible units on Shadow deal
+ * +(stat × dmg_multiplier_pct)% Physical damage. Same standing_in_shadow
+ * gate as Necromancer; move-cost reduction is separate (unchanged).
+ */
+export function deathKnightShadowDamageBonusPct(
+  striker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  heroes: CombatHeroes | undefined,
+): number {
+  if (isHeroStack(striker) || striker.qty <= 0) {
+    return 0
+  }
+  const hero = heroForSide(striker.side, heroes ?? {})
+  if (!isHeroClass(catalog, hero, 'Death Knight') || !hero) {
+    return 0
+  }
+  const stats = requirePassiveStats(catalog, hero, 'Death Knight shadow dmg')
+  if (!stats) {
+    return 0
+  }
+  // Prefer dedicated dmg keys; fall back so older DB rows still work once
+  // dmg_multiplier_pct is present (defaults applied in catalog).
+  const multPct = passiveStatNumber(stats, 'dmg_multiplier_pct')
+  if (multPct == null) {
+    missingPassiveStatKey(catalog, hero, 'dmg_multiplier_pct', 'Death Knight')
+    return 0
+  }
+  const filters = passiveStatStringList(stats, 'unit_filter')
+  const unit = unitById(catalog, striker.unitId)
+  const kind = moveKindForUnit(unit, catalog)
+  if (!necromancerMoveTypeAllowed(kind, filters)) {
+    return 0
+  }
+  if (!stackStandingInShadow(striker, battle, catalog)) {
+    return 0
+  }
+  const statSource =
+    passiveStatString(stats, 'dmg_stat_source') ??
+    passiveStatString(stats, 'stat_source') ??
+    'STR'
+  const base = passiveStatSourceValue(catalog, hero, statSource)
+  return Math.max(0, base * multPct)
+}
+
+function stackStandingInShadow(
+  stack: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+): boolean {
+  return stackFootprint(stack, catalog).some((hex) =>
+    isShadowHex(battle, hex.q, hex.r),
+  )
 }
 
 function necromancerMoveTypeAllowed(
