@@ -103,6 +103,7 @@ export function applySpiralFireFromAttacker(
   }
   const decay = Math.max(1, spec.spiralChanceDecayPct ?? 10)
   const radius = Math.max(0, spec.radius ?? 2)
+  const fizzleTerrainIds = spec.fizzleTerrainIds
   const board = new Set(tiles.map((tile) => occupancyKey(tile.q, tile.r)))
   const order = spiralHexOrder(
     targetHex,
@@ -119,7 +120,12 @@ export function applySpiralFireFromAttacker(
   for (let i = 0; i < order.length; i += 1) {
     const hex = order[i]!
     const key = occupancyKey(hex.q, hex.r)
-    const placeable = filterFirePlaceableHexKeys([key], nextTiles, catalog)
+    const placeable = filterFirePlaceableHexKeys(
+      [key],
+      nextTiles,
+      catalog,
+      fizzleTerrainIds,
+    )
     if (placeable.length === 0) {
       lines.push(
         chanceRollLog(label, chance, false, {
@@ -149,6 +155,8 @@ export function applySpiralFireFromAttacker(
       attacker.side,
       [key],
       nextTiles,
+      null,
+      fizzleTerrainIds,
     )
     next = fire.battle
     if (fire.tiles) {

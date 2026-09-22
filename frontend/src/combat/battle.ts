@@ -47,8 +47,18 @@ export type CombatTile = {
   terrain: string
   movementCostMultiplier: number | null
   blocked: boolean
-  /** From terrain_type.blocks_los. Units never set this. */
+  /** From hex terrain is_blocker / blocks_los. */
   blocksLos: boolean
+  /** Generation chunk id for continuous hex-terrain texturing. */
+  chunkId?: number | null
+  /** Battle prop from world sample (`prop` table id). */
+  propId?: number | null
+  /** 1-based prop art variant. */
+  propVariant?: number | null
+  /** Base prop file name under `/assets/props/` (no extension). */
+  propFile?: string | null
+  /** Battle-only footprint shape; only set on the anchor hex. */
+  propFootprint?: string | null
 }
 
 export type CombatStack = {
@@ -577,22 +587,6 @@ export type CombatGroundEffect = {
   }>
 }
 
-/** Mid-battle terrain stamp (Void leave-behind). */
-export type CombatTerrainPatch = {
-  q: number
-  r: number
-  terrainTypeId: number
-  name: string
-  imagePath: string | null
-  /** Snapshot of the hex before the stamp (for Sanctify / Gaia clear). */
-  previous?: {
-    terrain: string
-    blocked: boolean
-    blocksLos: boolean
-    movementCostMultiplier: number | null
-  }
-}
-
 export type CombatBattle = {
   round: number
   stacks: CombatStack[]
@@ -628,8 +622,6 @@ export type CombatBattle = {
    * Non-Living Factory) for S6-46 army passives.
    */
   armyTownCounts?: ArmyTownCounts
-  /** Void leave-behind: terrain_type stamps on vacated hexes. */
-  terrainPatches?: CombatTerrainPatch[]
   /** Start-of-round condition logs (Polymorph break/expiry). */
   roundLog?: string[]
   /** End-of-round splash keys (Cleric heal / legacy Temple passives). */
@@ -1533,7 +1525,8 @@ export function forceEndRound(
   const started = startRound(grown.battle, catalog, random, {
     skipDurationTicks: opts?.skipDurationTicks,
   })
-  // Shaman: gradual +1 totem spawn at the start of every round (also battle-start).
+  // Shaman: +totem_spawn_per_round at the start of each new round (battle-start
+  // fill is handled separately with fillToCap in CombatScreen).
   const totems =
     opts?.tiles && opts.tiles.length > 0
       ? applyShamanBattleStartTotems(

@@ -3,7 +3,7 @@ import {
   armyBuildOptions,
   buildingById,
   buildingGrowth,
-  constructionCost,
+  buildingHasProduces,
   genericRoot,
   genericSlotBuildings,
   hasPrerequisite,
@@ -27,6 +27,10 @@ import {
   type CostMap,
   type ReferenceCatalog,
 } from '../town/catalog'
+import {
+  townConstructionCost,
+  townRecruitUnitCost,
+} from '../town/townUniques'
 import {
   ensureLibraryOffers,
   hasTownBuiltToday,
@@ -147,6 +151,7 @@ function factorForBuilding(
     isMarketplaceBuilding(building) ||
     isTavernBuilding(building) ||
     isLibraryBuilding(building) ||
+    buildingHasProduces(building) ||
     building.effect_type === 'resource_yield' ||
     building.effect_type === 'gold_income' ||
     name.includes('market') ||
@@ -209,7 +214,7 @@ function armySlotNotes(
   const parts: string[] = []
   for (const town of towns) {
     const builtIds = builtIdsForTown(session, town.id)
-    for (let slotNum = 4; slotNum <= 9; slotNum += 1) {
+    for (let slotNum = 11; slotNum <= 16; slotNum += 1) {
       if (isUndesignedSlot(catalog, slotNum, town.town_type_id)) {
         continue
       }
@@ -244,7 +249,11 @@ function armySlotNotes(
         continue
       }
       const affordable = options.filter(
-        (building) => !canAfford(wallet, constructionCost(catalog, building)),
+        (building) =>
+          !canAfford(
+            wallet,
+            townConstructionCost(session, catalog, town.id, building),
+          ),
       )
       if (affordable.length === 0) {
         const names = options.map((row) => row.name).join('/')
@@ -607,7 +616,7 @@ function executeRecruit(
   }
   const maxQty = maxAffordableQty(
     wallet,
-    unitCost(unit),
+    townRecruitUnitCost(session, catalog, intent.townId, unitCost(unit)),
     state.recruit_qty,
   )
   const pick = pickRecruitQty(maxQty)
@@ -771,7 +780,7 @@ function applyOneTownAction(
   const skipped: string[] = []
   for (const town of towns) {
     for (const action of collectTownActions(session, catalog, town)) {
-      const cost = constructionCost(catalog, action.building)
+      const cost = townConstructionCost(session, catalog, town.id, action.building)
       const intent: BuildIntent = { ...action, cost }
       const label = actionLabel(intent)
       const affordError = canAfford(wallet, cost)
@@ -801,7 +810,11 @@ function applyOneTownAction(
         skipped.push(`  skip (garrison full) ${label}`)
         continue
       }
-      const maxQty = maxAffordableQty(wallet, unitCost(unit), intent.available)
+      const maxQty = maxAffordableQty(
+        wallet,
+        townRecruitUnitCost(session, catalog, town.id, unitCost(unit)),
+        intent.available,
+      )
       if (maxQty < 1) {
         skipped.push(`  skip (cannot afford 1) ${label}`)
         continue

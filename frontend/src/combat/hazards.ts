@@ -16,7 +16,8 @@ export type HazardTick = MoatTick & {
 /**
  * Moat + Fire/Storm. Call at turn-start, walk entry, and turn-end
  * (skip turn-end when walk entry already applied hazards this action).
- * Mud Sprite terrain growth is turn-start only — see applyTerrainGrowth.
+ * Moat damage comes from ground_effect (siege stamp); Fire/Storm from zones.
+ * Mud Sprite absorb growth is turn-start only — see applyTerrainGrowth.
  */
 export function applyStandingHazards(
   battle: CombatBattle,

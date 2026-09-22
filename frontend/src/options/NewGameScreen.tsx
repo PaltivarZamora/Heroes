@@ -136,6 +136,8 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     onStartGame(config)
   }
 
+  // Intentionally sorted by hero_type.id (alphabetical renumber order).
+  // Library tabs use hero_type.sort_order instead — do not unify these.
   const heroTypes = [...(catalog?.hero_type ?? [])].sort((a, b) => a.id - b.id)
 
   return (

@@ -1,11 +1,10 @@
 import { defineHex, Grid, Orientation, rectangle, type Hex } from 'honeycomb-grid'
 import type { Axial } from '../hex/hero'
-import { neighborHexes } from '../hex/pathfinding'
 import { HEX_SCALES } from '../hex/hexScale'
-import { pickTerrainVariantIndex } from '../hex/terrainTextures'
-import type { ReferenceCatalog } from '../town/catalog'
-import { terrainByName, terrainIsRandomEligible } from '../town/catalog'
 import { getTile } from '../hex/world'
+import type { ReferenceCatalog } from '../town/catalog'
+import { hexTerrainByName } from '../town/catalog'
+import type { CombatTile } from './battle'
 
 export const COMBAT_COLUMNS = 15
 export const COMBAT_ROWS = 11
@@ -27,9 +26,11 @@ export const SIEGE_WALL_COL = 11
 export const SIEGE_INTERIOR_COL_START = 12
 export const SIEGE_CATAPULT_COL = 0
 export const SIEGE_CATAPULT_ROW = COMBAT_ROWS - 1
-const SIEGE_STONE_FLOOR = 'Stone_Path'
-
+const SIEGE_FLOOR_TERRAIN = 'Siege Floor'
 const SIEGE_MOAT_TERRAIN = 'Moat'
+
+/** Reserved for future battle-prop sampling (larger than terrain halves). */
+export const WORLD_PROP_SAMPLE_RADIUS = 2
 
 /** 0-based row → column delta from SIEGE_WALL_COL. +1 right, −1 left. */
 const WALL_COL_OFFSET_BY_ROW = [1, 0, 0, -1, -1, -2, -1, -1, 0, 0, 1]
@@ -57,7 +58,7 @@ export function siegeTileTerrain(
   // Interior follows the per-row wall column — a fixed SIEGE_WALL_COL left a
   // standable gap on bowed rows (and wrong attack stands at the tapered ends).
   if (col >= siegeWallColForRow(row)) {
-    return SIEGE_STONE_FLOOR
+    return SIEGE_FLOOR_TERRAIN
   }
   return sampled
 }
@@ -95,7 +96,7 @@ function measureCombatGrid(grid: Grid<Hex>) {
   }
 }
 
-/** Combat-only pointy hexes. World map keeps its own flat-top factory. */
+/** Combat battlefield — pointy-top (matches world map). */
 export function createCombatHexGrid(width: number, height: number, hexSize: number) {
   const Hex = defineHex({
     dimensions: hexSize,
@@ -120,68 +121,220 @@ export function hexFloorAnchor(hex: Hex, offsetX: number, offsetY: number) {
   return { x: x / corners.length + offsetX, y: bottom + offsetY }
 }
 
-export function neighborhoodTerrains(a: Axial, b: Axial): string[] {
-  const seen = new Set<string>()
-  const addAt = (pos: Axial) => {
-    const tile = getTile(pos.q, pos.r)
-    if (tile) {
-      seen.add(tile.terrain)
-    }
-    for (const n of neighborHexes(pos)) {
-      const around = getTile(n.q, n.r)
-      if (around) {
-        seen.add(around.terrain)
-      }
+function worldTerrainAt(pos: Axial): string | null {
+  const name = getTile(pos.q, pos.r)?.terrain?.trim()
+  return name && name.length > 0 ? name : null
+}
+
+function u32(n: number): number {
+  return n >>> 0
+}
+
+function unit01(seed: number, a: number, b: number): number {
+  let h = u32(
+    Math.imul(seed, 0x9e3779b1) ^
+      Math.imul(a + 0x7f4a7c15, 0x85ebca6b) ^
+      Math.imul(b + 0x165667b1, 0xc2b2ae35),
+  )
+  h = u32((h ^ (h >>> 16)) * 0x7feb352d)
+  h = u32((h ^ (h >>> 15)) * 0x846ca68b)
+  h = u32(h ^ (h >>> 16))
+  return h / 4294967296
+}
+
+const AXIAL_NEIGHBORS = [
+  { q: 1, r: 0 },
+  { q: 1, r: -1 },
+  { q: 0, r: -1 },
+  { q: -1, r: 0 },
+  { q: -1, r: 1 },
+  { q: 0, r: 1 },
+] as const
+
+/**
+ * Terrain for one combat side = the world hex that fighter occupies.
+ * Adjacent fallback only if that hex has no tile — never radius-random.
+ */
+function sideTerrainFromWorld(
+  origin: Axial,
+  catalog: ReferenceCatalog,
+): string {
+  const exact = worldTerrainAt(origin)
+  if (exact) {
+    return exact
+  }
+  for (const d of AXIAL_NEIGHBORS) {
+    const near = worldTerrainAt({ q: origin.q + d.q, r: origin.r + d.r })
+    if (near) {
+      return near
     }
   }
-  addAt(a)
-  addAt(b)
-  return [...seen]
-}
-
-/** Blocked hexes (Water, Trees, Mountains, …) sample less often than open ground.
- * 0.49 = prior 0.7 cut, then another ~30% (units were locking when all three mixed). */
-const BLOCKED_TERRAIN_WEIGHT = 0.49
-
-function isBarrierTerrainName(name: string): boolean {
-  return name.replaceAll(' ', '_').toLowerCase() === 'barrier'
-}
-
-export function pickCombatTerrain(
-  pool: readonly string[],
-  seed: number,
-  q: number,
-  r: number,
-  catalog?: ReferenceCatalog | null,
-): string {
-  const eligible = pool.filter((name) => {
-    if (isBarrierTerrainName(name)) {
-      return false
-    }
-    return terrainIsRandomEligible(terrainByName(catalog, name))
-  })
-  const fallback = (catalog?.terrain_type ?? [])
-    .filter(
-      (row) =>
-        !isBarrierTerrainName(row.name) && terrainIsRandomEligible(row),
-    )
-    .map((row) => row.name)
-  const list =
-    eligible.length > 0
-      ? eligible
-      : fallback.length > 0
-        ? fallback
-        : (['Grass'] as const)
-  const index = pickTerrainVariantIndex(
-    seed,
-    q,
-    r,
-    list.map((name) => {
-      const blocked = terrainByName(catalog, name)?.is_blocked === true
-      return { weight: blocked ? BLOCKED_TERRAIN_WEIGHT : 1 }
-    }),
+  return (
+    catalog.terrain.find((t) => t.is_seedable)?.name ??
+    'Grass'
   )
-  return list[index] ?? 'Grass'
+}
+
+/**
+ * Irregular left/right battlefield from each fighter's world hex terrain
+ * (attacker hex → left, defender hex → right). Transition uses a seed-varying
+ * slope + multi-frequency wave. Same atk/def terrain is fine. Absorb after.
+ */
+export function generateCombatHexTerrainField(
+  grid: Grid<Hex>,
+  attacker: Axial,
+  defender: Axial,
+  seed: number,
+  catalog: ReferenceCatalog,
+): Array<{
+  q: number
+  r: number
+  col: number
+  row: number
+  terrain: string
+  chunkId: number
+}> {
+  const atk = sideTerrainFromWorld(attacker, catalog)
+  const def = sideTerrainFromWorld(defender, catalog)
+
+  const centerCol = Math.floor(COMBAT_COLUMNS / 2)
+  const midRow = (COMBAT_ROWS - 1) / 2
+  // Lateral shift and diagonal slope both vary fight-to-fight.
+  const baseOffset = (unit01(seed, 11, 22) - 0.5) * 5 // ~-2.5..+2.5
+  const slope = (unit01(seed, 33, 44) - 0.5) * 0.85 // cols per row from mid
+  const amp1 = 1.6 + unit01(seed, 55, 66) * 2.4 // 1.6..4.0
+  const amp2 = 0.7 + unit01(seed, 77, 88) * 1.6 // 0.7..2.3
+  const freq1 = 0.45 + unit01(seed, 91, 17) * 0.55
+  const freq2 = 1.1 + unit01(seed, 19, 23) * 1.2
+  const phase1 = unit01(seed, 29, 31) * Math.PI * 2
+  const phase2 = unit01(seed, 37, 43) * Math.PI * 2
+
+  type Cell = {
+    q: number
+    r: number
+    col: number
+    row: number
+    terrain: string
+    chunkId: number
+  }
+  const cells: Cell[] = []
+  const byKey = new Map<string, Cell>()
+
+  grid.forEach((hex) => {
+    const rowFromMid = hex.row - midRow
+    const wave =
+      amp1 * Math.sin(hex.row * freq1 + phase1) +
+      amp2 * Math.sin(hex.row * freq2 + phase2) +
+      (unit01(seed, hex.row, 99) - 0.5) * 1.4
+    const thresh = centerCol + baseOffset + slope * rowFromMid + wave
+    const useAtk = def === atk || hex.col + 0.5 < thresh
+    const terrain = useAtk ? atk : def
+    const chunkId = useAtk ? 1 : 2
+    const cell: Cell = {
+      q: hex.q,
+      r: hex.r,
+      col: hex.col,
+      row: hex.row,
+      terrain,
+      chunkId,
+    }
+    cells.push(cell)
+    byKey.set(`${hex.q},${hex.r}`, cell)
+  })
+
+  absorbCombatField(byKey, catalog)
+  return cells
+}
+
+/** Same family as world TerrainChunks absorb (tips / thin corridors). */
+function absorbCombatField(
+  byKey: Map<string, { terrain: string; chunkId: number; q: number; r: number }>,
+  catalog: ReferenceCatalog,
+): void {
+  const guard = byKey.size
+  for (let i = 0; i < guard; i++) {
+    let changed = false
+    for (const cell of byKey.values()) {
+      const tallies = new Map<string, number>()
+      const chunkByTerrain = new Map<string, number>()
+      for (const d of AXIAL_NEIGHBORS) {
+        const n = byKey.get(`${cell.q + d.q},${cell.r + d.r}`)
+        if (!n) {
+          continue
+        }
+        tallies.set(n.terrain, (tallies.get(n.terrain) ?? 0) + 1)
+        if (!chunkByTerrain.has(n.terrain)) {
+          chunkByTerrain.set(n.terrain, n.chunkId)
+        }
+      }
+      const same = tallies.get(cell.terrain) ?? 0
+      let bestForeign = 0
+      let bestName: string | null = null
+      for (const [name, count] of tallies) {
+        if (name === cell.terrain) {
+          continue
+        }
+        if (count > bestForeign) {
+          bestForeign = count
+          bestName = name
+        }
+      }
+      const weak = same === 0 || (same <= 2 && bestForeign >= 3)
+      if (!weak || !bestName) {
+        continue
+      }
+      if (!hexTerrainByName(catalog, bestName)) {
+        continue
+      }
+      cell.terrain = bestName
+      cell.chunkId = chunkByTerrain.get(bestName) ?? cell.chunkId
+      changed = true
+    }
+    if (!changed) {
+      return
+    }
+  }
+}
+
+/** Build CombatTiles from the hex-terrain field (+ optional siege overlays). */
+export function combatTilesFromHexField(
+  field: ReturnType<typeof generateCombatHexTerrainField>,
+  catalog: ReferenceCatalog,
+  siege: boolean,
+): CombatTile[] {
+  return field.map((cell) => {
+    const sampled = cell.terrain
+    const terrain = siege
+      ? siegeTileTerrain(cell.col, cell.row, sampled)
+      : sampled
+    const hexRow = hexTerrainByName(catalog, terrain)
+    if (hexRow) {
+      const blocked = hexRow.is_blocker || hexRow.move_cost == null
+      return {
+        q: cell.q,
+        r: cell.r,
+        col: cell.col,
+        row: cell.row,
+        terrain,
+        movementCostMultiplier: hexRow.move_cost,
+        blocked,
+        blocksLos: hexRow.is_blocker,
+        chunkId: cell.chunkId,
+      }
+    }
+    // Unknown name (should not happen once all combat terrains are in `terrain`).
+    return {
+      q: cell.q,
+      r: cell.r,
+      col: cell.col,
+      row: cell.row,
+      terrain,
+      movementCostMultiplier: null,
+      blocked: true,
+      blocksLos: false,
+      chunkId: cell.chunkId,
+    }
+  })
 }
 
 export function combatEncounterSeed(

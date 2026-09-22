@@ -3,7 +3,7 @@ import { hexDistance } from '../hex/pathfinding'
 import type { AbilityRow, GroundEffectRow, ReferenceCatalog } from '../town/catalog'
 import {
   commandingHeroStats,
-  terrainByName,
+  hexTerrainByName,
   unitAttackShape,
   unitById,
 } from '../town/catalog'
@@ -72,20 +72,40 @@ function casterIntel(
   return commandingHeroStats(catalog, caster).intel
 }
 
-/** Fire (id 6) — not Storm; Storm shares timing but is a separate template. */
+export const FIRE_GROUND_EFFECT_ID = 6
+export const STORM_GROUND_EFFECT_ID = 7
+/** Siege Moat hazard — flat entry/turn-start damage (not Fire). */
+export const MOAT_GROUND_EFFECT_ID = 8
+/**
+ * Default Fire fizzle list — `terrain` table ids for Water / Shallow / Swamp.
+ * Prefer ability.stats.fizzle_terrain_ids when present.
+ */
+export const DEFAULT_FIRE_FIZZLE_TERRAIN_IDS = [3, 20, 21] as const
+const DEFAULT_STORM_DMG_MULT = 1.5
+const DEFAULT_STORM_EXPIRES_ROUNDS = 2
+/** Matches former terrain_type.Moat.entry_damage. */
+const DEFAULT_MOAT_FLAT_DMG = 15
+
+/** Fire (id 6) — not Storm or Moat; those share timing but are separate templates. */
 function isFireMechanic(
   mechanicType: string,
   effect: string,
   templateId: number,
 ): boolean {
-  if (templateId === STORM_GROUND_EFFECT_ID || effect === 'storm') {
+  if (
+    templateId === STORM_GROUND_EFFECT_ID ||
+    templateId === MOAT_GROUND_EFFECT_ID ||
+    effect === 'storm' ||
+    effect === 'moat'
+  ) {
     return false
   }
   return (
     templateId === FIRE_GROUND_EFFECT_ID ||
     effect === 'fire' ||
     (mechanicType === 'entry_and_turn_start_damage' &&
-      templateId !== STORM_GROUND_EFFECT_ID)
+      templateId !== STORM_GROUND_EFFECT_ID &&
+      templateId !== MOAT_GROUND_EFFECT_ID)
   )
 }
 
@@ -96,7 +116,14 @@ function isStormMechanic(
   return templateId === STORM_GROUND_EFFECT_ID || effect === 'storm'
 }
 
-/** Fire or Storm: entry + turn-start flat damage zones. */
+export function isMoatMechanic(
+  effect: string,
+  templateId: number,
+): boolean {
+  return templateId === MOAT_GROUND_EFFECT_ID || effect === 'moat'
+}
+
+/** Fire or Storm: entry + turn-start flat damage zones (Moat ticks separately). */
 function isEntryTurnStartDamageZone(zone: {
   templateId: number
   mechanicType: string
@@ -108,41 +135,42 @@ function isEntryTurnStartDamageZone(zone: {
   )
 }
 
-export const FIRE_GROUND_EFFECT_ID = 6
-export const STORM_GROUND_EFFECT_ID = 7
-const DEFAULT_FIRE_FIZZLE_TERRAIN_IDS = [11, 14, 16]
-const DEFAULT_STORM_DMG_MULT = 1.5
-const DEFAULT_STORM_EXPIRES_ROUNDS = 2
-
-/** Terrain type ids where Fire placement creates no tile (Water/Shallows/Swamp). */
-export function fireFizzleTerrainIds(catalog: ReferenceCatalog): Set<number> {
-  const mechanic = asRecord(
-    resolveGroundEffectTemplate(catalog, FIRE_GROUND_EFFECT_ID).mechanic,
-  )
-  const raw = mechanic?.fizzles_on_terrain
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return new Set(DEFAULT_FIRE_FIZZLE_TERRAIN_IDS)
+/** Resolve fizzle terrain ids from ability.stats (or default Water/Shallow/Swamp). */
+export function fireFizzleTerrainIdsFromStats(
+  stats: Record<string, unknown> | null | undefined,
+): number[] {
+  const raw = stats?.fizzle_terrain_ids
+  if (Array.isArray(raw)) {
+    const ids = raw
+      .map((value) => Math.floor(Number(value)))
+      .filter((id) => Number.isFinite(id) && id > 0)
+    if (ids.length > 0) {
+      return [...new Set(ids)]
+    }
   }
-  const ids = raw
-    .map((value) => Math.floor(Number(value)))
-    .filter((id) => Number.isFinite(id) && id > 0)
-  return new Set(ids.length > 0 ? ids : DEFAULT_FIRE_FIZZLE_TERRAIN_IDS)
+  return [...DEFAULT_FIRE_FIZZLE_TERRAIN_IDS]
 }
 
 /**
- * Drop hexes whose combat terrain is in Fire's fizzles_on_terrain list.
+ * Drop hexes whose combat tile matches a fizzle `terrain.id`.
  * Attempts still "count" for bolt/roll trackers — only actual placement is skipped.
  */
 export function filterFirePlaceableHexKeys(
   hexKeys: string[],
   tiles: CombatTile[] | undefined,
   catalog: ReferenceCatalog,
+  fizzleTerrainIds?: readonly number[] | null,
 ): string[] {
   const unique = [...new Set(hexKeys.filter((key) => key.length > 0))]
   if (!tiles || tiles.length === 0) {
     return unique
   }
-  const fizzleIds = fireFizzleTerrainIds(catalog)
+  const fizzleIds = new Set(
+    (fizzleTerrainIds?.length
+      ? fizzleTerrainIds
+      : DEFAULT_FIRE_FIZZLE_TERRAIN_IDS
+    ).filter((id) => id > 0),
+  )
   if (fizzleIds.size === 0) {
     return unique
   }
@@ -154,7 +182,7 @@ export function filterFirePlaceableHexKeys(
     if (!tile) {
       return true
     }
-    const terrain = terrainByName(catalog, tile.terrain)
+    const terrain = hexTerrainByName(catalog, tile.terrain)
     if (!terrain) {
       return true
     }
@@ -658,7 +686,7 @@ function fallbackGroundEffectRow(templateId: number): GroundEffectRow | null {
         effect: 'fire',
         blocks_movement: false,
         blocks_los: false,
-        fizzles_on_terrain: [11, 14, 16],
+        // Fizzle terrains live on the creating ability's stats.fizzle_terrain_ids.
         fizzle_still_counts_as_drop: true,
       },
       hidden: false,
@@ -682,6 +710,24 @@ function fallbackGroundEffectRow(templateId: number): GroundEffectRow | null {
       hidden: false,
       image_path: 'Storm.png',
       display_rules: { layer: 'above_units' },
+    }
+  }
+  if (templateId === MOAT_GROUND_EFFECT_ID) {
+    return {
+      id: MOAT_GROUND_EFFECT_ID,
+      name: 'Moat',
+      description: null,
+      mechanic: {
+        type: 'entry_and_turn_start_damage',
+        effect: 'moat',
+        flat_dmg: DEFAULT_MOAT_FLAT_DMG,
+        blocks_movement: false,
+        blocks_los: false,
+      },
+      hidden: false,
+      // Terrain paint already shows Moat / drawbridge art — no GE overlay.
+      image_path: null,
+      display_rules: { layer: 'below_units' },
     }
   }
   return null
@@ -977,7 +1023,8 @@ export function placeGroundEffectOnBattle(
 /**
  * Place Fire (id 6) on exact hexes with caster intel snapshotted into flatDmg.
  * Overwrites overlapping ground effects (most-recent-wins).
- * Water/Shallows/Swamp hexes fizzle (no tile) but callers may still count the attempt.
+ * Hexes matching ability.stats.fizzle_terrain_ids (or default Water/Shallow/Swamp)
+ * fizzle (no tile) but callers may still count the attempt.
  */
 export function placeFireOnHexKeys(
   battle: CombatBattle,
@@ -987,8 +1034,17 @@ export function placeFireOnHexKeys(
   hexKeys: string[],
   tiles?: CombatTile[],
   ability?: AbilityRow | null,
+  fizzleTerrainIds?: readonly number[] | null,
 ): { battle: CombatBattle; tiles?: CombatTile[]; placedKeys: string[] } {
-  const keys = filterFirePlaceableHexKeys(hexKeys, tiles, catalog)
+  const abilityStats =
+    ability?.stats && typeof ability.stats === 'object' && !Array.isArray(ability.stats)
+      ? (ability.stats as Record<string, unknown>)
+      : null
+  const fizzleIds =
+    fizzleTerrainIds && fizzleTerrainIds.length > 0
+      ? fizzleTerrainIds
+      : fireFizzleTerrainIdsFromStats(abilityStats)
+  const keys = filterFirePlaceableHexKeys(hexKeys, tiles, catalog, fizzleIds)
   if (keys.length === 0) {
     return { battle, ...(tiles ? { tiles } : {}), placedKeys: [] }
   }
@@ -1116,6 +1172,75 @@ export function placeStormOnHexKeys(
     ...(placed.tiles ? { tiles: placed.tiles } : {}),
     placedKeys: keys,
   }
+}
+
+/** Flat Moat damage from ground_effect.mechanic.flat_dmg (default 15). */
+export function moatFlatDmgFromTemplate(catalog: ReferenceCatalog): number {
+  const mechanic = asRecord(
+    resolveGroundEffectTemplate(catalog, MOAT_GROUND_EFFECT_ID).mechanic,
+  )
+  const raw = asFinite(mechanic?.flat_dmg)
+  if (raw != null && raw > 0) {
+    return Math.max(0, Math.floor(raw))
+  }
+  return DEFAULT_MOAT_FLAT_DMG
+}
+
+function isMoatTerrainName(name: string | null | undefined): boolean {
+  return (name ?? '').replaceAll(' ', '_').toLowerCase() === 'moat'
+}
+
+/**
+ * Stamp one Moat ground_effect across all siege Moat terrain hexes.
+ * Damage is fixed flat_dmg (not caster intel). Visuals stay on terrain paint.
+ */
+export function placeSiegeMoatGroundEffect(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  flatDmgMult = 1,
+): CombatBattle {
+  const keys = [
+    ...new Set(
+      tiles
+        .filter((tile) => isMoatTerrainName(tile.terrain))
+        .map((tile) => occupancyKey(tile.q, tile.r)),
+    ),
+  ]
+  if (keys.length === 0) {
+    return battle
+  }
+  const template = resolveGroundEffectTemplate(catalog, MOAT_GROUND_EFFECT_ID)
+  const mechanic = asRecord(template.mechanic)
+  const baseFlat = moatFlatDmgFromTemplate(catalog)
+  const effect: CombatGroundEffect = {
+    id: nextGroundId(),
+    templateId: MOAT_GROUND_EFFECT_ID,
+    name: template.name || 'Moat',
+    imagePath: template.image_path,
+    layer: template.display_rules?.layer ?? 'below_units',
+    hexKeys: keys,
+    casterSide: 'def',
+    hidden: template.hidden === true,
+    roundsLeft: null,
+    mechanicType:
+      typeof mechanic?.type === 'string'
+        ? mechanic.type
+        : 'entry_and_turn_start_damage',
+    effect: typeof mechanic?.effect === 'string' ? mechanic.effect : 'moat',
+    triggerMoveTypes: [],
+    evasionPct: 0,
+    flatDmg: Math.max(0, Math.floor(baseFlat * flatDmgMult)),
+    explodeRadius: 0,
+    stunChancePct: 0,
+    stunConditionId: 0,
+    resistStat: null,
+    consumeOnTrigger: false,
+    friendlyTakesDmg: false,
+    blocksMovement: false,
+    blocksLos: false,
+  }
+  return placeGroundEffectOnBattle(battle, effect, tiles).battle
 }
 
 /**
@@ -1286,7 +1411,7 @@ export function applyFireGroundDamage(
   }
 }
 
-/** Log label for Fire/Storm (and other entry damage) zones. */
+/** Log label for Fire/Storm/Moat (and other entry damage) zones. */
 function hazardZoneLabel(zone: {
   templateId: number
   mechanicType: string
@@ -1295,6 +1420,9 @@ function hazardZoneLabel(zone: {
 }): string {
   if (isStormMechanic(zone.effect, zone.templateId)) {
     return 'Storm'
+  }
+  if (isMoatMechanic(zone.effect, zone.templateId)) {
+    return 'Moat'
   }
   if (isFireMechanic(zone.mechanicType, zone.effect, zone.templateId)) {
     return 'Fire'

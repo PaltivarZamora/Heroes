@@ -27,12 +27,21 @@ import {
   type ResourceWallet,
 } from './resources'
 import {
-  addMaskedTerrainHex,
-  loadAllTerrainTextures,
+  addChunkMaskedTerrain,
+  addMaskedTerrainWedge,
+  buildTerrainChunkDecors,
+  loadHexTerrainTextures,
   loadTextureUrl,
-  pickTerrainVariantIndex,
 } from './terrainTextures'
-import { buildWorld, fetchTestGrid, getTile, getExploredHexes, isExplored, markExplored, restoreExplored, terrainFillColor } from './world'
+import { addPropSprite, layoutHexSprite, loadPropTexture } from './propTextures'
+import { loadFeatureTexture } from './featureTextures'
+import {
+  assignedTerrainForHex,
+  assignedTerrainName,
+  parseCssHexColor,
+  wedgesForHex,
+} from './terrainTransition'
+import { buildWorld, fetchTestGrid, forEachTile, getTile, getExploredHexes, isExplored, markExplored, restoreExplored } from './world'
 import { worldHoverTooltipText } from './worldTooltip'
 import type { MapObjectData, TestGridResponse } from './types'
 import { mapObjectResourceId, mapObjectTownTypeId } from './types'
@@ -49,7 +58,7 @@ import {
   seedWorldMobs,
 } from '../session/mobs'
 import { HERO_ID } from '../session/types'
-import { fetchCatalog, getCachedCatalog, heroMovementPoints, ownerTint, pickupAmount, subscribeCatalog, unitById, visionRange } from '../town/catalog'
+import { fetchCatalog, featureForResource, getCachedCatalog, heroMovementPoints, mapShowHexesWorld, mapUseTerrainImages, ownerTint, pickupAmount, subscribeCatalog, unitById, visionRange } from '../town/catalog'
 import { unitPortraitUrl } from '../town/slotArt'
 import {
   activePlayer,
@@ -60,7 +69,9 @@ import {
   findTownAt,
   persistActiveExplored,
   syncHero,
+  townIsUndefended,
   walletFromSession,
+  applyHeroTownVisitUniques,
 } from '../session/accessors'
 
 type HexMapProps = {
@@ -162,17 +173,17 @@ const UNEXPLORED_COLOR = 0x3a3a3a
 
 /**
  * Explored map objects to path around. Heroes are always blocked.
- * Enemy-owned towns stay blocked (approach adjacent; never walk on).
- * Own/unowned towns and resource nodes are blocked unless they are
- * `walkOnto` (the clicked destination).
+ * Defended enemy towns stay blocked (approach adjacent; never walk on).
+ * Undefended enemy towns, own/unowned towns, and resource nodes are blocked
+ * unless they are `walkOnto` (the clicked destination).
  */
 function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
   const blocked = new Set<string>()
   const ontoKey =
     walkOnto != null ? `${walkOnto.q},${walkOnto.r}` : ''
-  const playerId =
-    getSession().heroes.find((hero) => hero.id === selectedMapHeroId)
-      ?.player_id ?? null
+  const session = getSession()
+  const self = session.heroes.find((hero) => hero.id === selectedMapHeroId)
+  const playerId = self?.player_id ?? null
   const add = (q: number, r: number) => {
     if (q === mover.q && r === mover.r) {
       return
@@ -186,7 +197,6 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     }
     blocked.add(hexKey)
   }
-  const session = getSession()
   for (const hero of session.heroes) {
     add(hero.position.q, hero.position.r)
   }
@@ -195,7 +205,7 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
       town.player_id != null &&
       playerId != null &&
       town.player_id !== playerId
-    if (enemyOwned) {
+    if (enemyOwned && !townIsUndefended(session, town, self?.id)) {
       if (
         !(town.position.q === mover.q && town.position.r === mover.r)
       ) {
@@ -473,39 +483,29 @@ export function HexMap({
 
       updateSession((current) => seedWorldMobs(current))
 
-      const texturesByTerrain = await loadAllTerrainTextures(
-        getCachedCatalog()?.terrain_type ?? [],
-      )
+      const catalogAtPaint = getCachedCatalog()
+      const terrainRows = catalogAtPaint?.terrain ?? []
+      const useTerrainImages = mapUseTerrainImages(catalogAtPaint)
+      const showHexOutlines = mapShowHexesWorld(catalogAtPaint)
+      if (terrainRows.length === 0) {
+        console.warn(
+          '[hex] catalog.terrain is empty — restart backend so /api/reference/catalog includes terrain.',
+        )
+      }
+
+      const hexTerrainTextures = await loadHexTerrainTextures(terrainRows)
       if (cancelled) {
         instance.destroy()
         return
       }
 
-      const fills = new Graphics()
-      const strokes = new Graphics()
       const terrainLayer = new Container()
+      const propLayer = new Container()
       const { offsetX, offsetY } = layout
 
-      grid.forEach((hex) => {
-        const tile = getTile(hex.q, hex.r)
-        if (!tile) {
-          return
-        }
-        if (texturesByTerrain.get(tile.terrain)) {
-          return
-        }
-        const poly = hex.corners.map((corner) => ({
-          x: corner.x + offsetX,
-          y: corner.y + offsetY,
-        }))
-        fills.poly(poly)
-        fills.fill({ color: terrainFillColor(tile.terrain) })
-        strokes.poly(poly)
-        strokes.stroke({ width: 1.5, color: 0x111111 })
-      })
-
       const world = new Container()
-      world.addChild(fills, strokes, terrainLayer)
+      world.addChild(terrainLayer)
+      world.addChild(propLayer)
 
       const objectLayer = new Container()
       world.addChild(objectLayer)
@@ -538,7 +538,14 @@ export function HexMap({
 
       const objectByKey = new Map<
         string,
-        { data: MapObjectData; view: Container; badge: Graphics; label: Text }
+        {
+          data: MapObjectData
+          view: Container
+          badge: Graphics
+          label: Text
+          sprite: Sprite
+          ring: Graphics
+        }
       >()
 
       const paintObjectBadge = (target: Graphics, fill: number) => {
@@ -548,8 +555,105 @@ export function HexMap({
         target.stroke({ width: 2, color: 0x111111 })
       }
 
+      /** Player-color outline around a resource node; nothing when unowned. */
+      const paintOwnershipRing = (
+        target: Graphics,
+        playerId: string | null | undefined,
+        hexWidth: number,
+      ) => {
+        target.clear()
+        const tint = ownerTint(playerId)
+        if (tint == null) {
+          return
+        }
+        const radius = hexWidth * 0.42
+        const width = Math.max(2.5, hexWidth * 0.06)
+        target.circle(0, 0, radius)
+        target.stroke({ width, color: tint })
+      }
+
       const townFill = (playerId: string | null | undefined) =>
         ownerTint(playerId) ?? NEUTRAL_OBJECT_COLOR
+
+      const featureHexSize = (q: number, r: number) => {
+        const hex = grid.getHex({ q, r }) ?? grid.createHex({ q, r })
+        return { width: hex.width, height: hex.height }
+      }
+
+      const applyFeatureArt = (
+        entry: {
+          data: MapObjectData
+          badge: Graphics
+          label: Text
+          sprite: Sprite
+          ring: Graphics
+        },
+        texture: Texture | null,
+        ownerId: string | null | undefined,
+      ) => {
+        const hasArt = texture != null && texture.width >= 1 && texture.height >= 1
+        entry.sprite.visible = hasArt
+        entry.badge.visible = !hasArt
+        entry.label.visible = !hasArt
+        if (hasArt && texture) {
+          const { width, height } = featureHexSize(entry.data.q, entry.data.r)
+          // Same 1×1 fit as world props (box 0.9×W / 0.95×H, grounded anchor).
+          layoutHexSprite(entry.sprite, texture, 0, 0, width, height)
+          if (entry.data.flipped) {
+            entry.sprite.scale.x = -Math.abs(entry.sprite.scale.x)
+          }
+          if (entry.data.kind === 'mine') {
+            paintOwnershipRing(entry.ring, ownerId, width)
+          } else {
+            entry.ring.clear()
+          }
+          return
+        }
+        entry.ring.clear()
+        if (entry.data.kind === 'town') {
+          return
+        }
+        const mineOwned =
+          entry.data.kind === 'mine' && ownerId != null
+        paintObjectBadge(
+          entry.badge,
+          mineOwned ? townFill(ownerId) : NEUTRAL_OBJECT_COLOR,
+        )
+        entry.label.style.fill = mineOwned ? '#ffffff' : '#111111'
+      }
+
+      const loadObjectFeatureArt = (entry: {
+        data: MapObjectData
+        badge: Graphics
+        label: Text
+        sprite: Sprite
+        ring: Graphics
+      }) => {
+        if (entry.data.kind === 'town') {
+          return
+        }
+        const resourceId = mapObjectResourceId(entry.data)
+        if (resourceId == null) {
+          return
+        }
+        const kind = entry.data.kind === 'mine' ? 'mine' : 'pickup'
+        const feature = featureForResource(getCachedCatalog(), resourceId, kind)
+        const imagePath = feature?.image_path ?? null
+        const key = `${entry.data.q},${entry.data.r}`
+        // Pickups must use loose `{Resource}.png` only — never Node art.
+        // Nodes use `{Resource}_Node.png`. No cross-kind fallback on the map.
+        void loadFeatureTexture(imagePath).then((texture) => {
+          const live = objectByKey.get(key)
+          if (!live || live !== entry) {
+            return
+          }
+          const liveOwner =
+            live.data.kind === 'mine'
+              ? findNodeAt(getSession(), live.data.q, live.data.r)?.player_id
+              : null
+          applyFeatureArt(live, texture, liveOwner)
+        })
+      }
 
       const addObjectView = (obj: MapObjectData) => {
         const sessionNow = getSession()
@@ -559,6 +663,9 @@ export function HexMap({
         }
         const view = new Container()
         const objectBadge = new Graphics()
+        const objectRing = new Graphics()
+        const objectSprite = new Sprite()
+        objectSprite.visible = false
         const town = obj.kind === 'town' ? findTownAt(sessionNow, obj.q, obj.r) : undefined
         const mineOwned =
           obj.kind === 'mine' && (!!obj.claimed || node?.player_id != null)
@@ -580,17 +687,23 @@ export function HexMap({
           },
           anchor: 0.5,
         })
-        view.addChild(objectBadge, objectLabel)
+        view.addChild(objectBadge, objectSprite, objectRing, objectLabel)
         const hex = grid.getHex(obj) ?? grid.createHex(obj)
         const center = hexCenter(hex, offsetX, offsetY)
         view.position.set(center.x, center.y)
         objectLayer.addChild(view)
-        objectByKey.set(`${obj.q},${obj.r}`, {
+        const entry = {
           data: obj,
           view,
           badge: objectBadge,
           label: objectLabel,
-        })
+          sprite: objectSprite,
+          ring: objectRing,
+        }
+        objectByKey.set(`${obj.q},${obj.r}`, entry)
+        if (obj.kind === 'mine' || obj.kind === 'pickup') {
+          loadObjectFeatureArt(entry)
+        }
       }
 
       for (const obj of objects ?? []) {
@@ -615,7 +728,11 @@ export function HexMap({
         const moverId = hero?.player_id
         if (obj.kind === 'town') {
           const existing = findTownAt(getSession(), q, r)
-          if (existing?.player_id && existing.player_id !== moverId) {
+          if (
+            existing?.player_id &&
+            existing.player_id !== moverId &&
+            !townIsUndefended(getSession(), existing, heroId)
+          ) {
             return
           }
           updateSession((current) =>
@@ -626,6 +743,17 @@ export function HexMap({
             }),
           )
           const claimedTown = findTownAt(getSession(), q, r)
+          const catalog = getCachedCatalog()
+          if (catalog && claimedTown && heroId) {
+            updateSession((current) =>
+              applyHeroTownVisitUniques(
+                current,
+                catalog,
+                claimedTown.id,
+                heroId,
+              ),
+            )
+          }
           paintObjectBadge(entry.badge, townFill(claimedTown?.player_id))
           entry.label.style.fill = claimedTown?.player_id != null ? '#ffffff' : '#111111'
           if (!obj.claimed && claimedTown?.player_id != null) {
@@ -676,8 +804,16 @@ export function HexMap({
         if (node?.player_id != null && node.player_id === moverId) {
           if (!obj.claimed) {
             obj.claimed = true
-            paintObjectBadge(entry.badge, townFill(node.player_id))
-            entry.label.style.fill = '#ffffff'
+            if (entry.sprite.visible) {
+              paintOwnershipRing(
+                entry.ring,
+                node.player_id,
+                featureHexSize(q, r).width,
+              )
+            } else {
+              paintObjectBadge(entry.badge, townFill(node.player_id))
+              entry.label.style.fill = '#ffffff'
+            }
           }
           return
         }
@@ -685,8 +821,13 @@ export function HexMap({
         updateSession((current) => claimMine(current, q, r, resourceId, moverId))
         const claimed = findNodeAt(getSession(), q, r)
         walletRef.current = walletFromSession(getSession())
-        paintObjectBadge(entry.badge, townFill(claimed?.player_id ?? moverId))
-        entry.label.style.fill = '#ffffff'
+        const ownerId = claimed?.player_id ?? moverId
+        if (entry.sprite.visible) {
+          paintOwnershipRing(entry.ring, ownerId, featureHexSize(q, r).width)
+        } else {
+          paintObjectBadge(entry.badge, townFill(ownerId))
+          entry.label.style.fill = '#ffffff'
+        }
         emitResources()
       }
 
@@ -736,27 +877,190 @@ export function HexMap({
         for (const child of terrainLayer.removeChildren()) {
           child.destroy({ children: true })
         }
+        const catalog = getCachedCatalog()
+        if (!catalog || catalog.terrain.length === 0) {
+          return
+        }
+        // Collect every map hex so chunk UVs stay stable as fog reveals.
+        const members: Array<{ q: number; r: number; hex: Hex }> = []
+        grid.forEach((hex) => {
+          members.push({ q: hex.q, r: hex.r, hex })
+        })
+        const chunkDecors = useTerrainImages
+          ? buildTerrainChunkDecors(
+              members,
+              (q, r) => assignedTerrainName(q, r),
+              (q, r) => getTile(q, r)?.chunkId ?? null,
+              (name) =>
+                hexTerrainTextures.get(name) ??
+                hexTerrainTextures.get(name.replaceAll(' ', '_')),
+              offsetX,
+              offsetY,
+              seed,
+            )
+          : new Map()
+
         grid.forEach((hex) => {
           if (!isExplored(hex.q, hex.r)) {
             return
           }
-          const tile = getTile(hex.q, hex.r)
-          if (!tile) {
+          const base = assignedTerrainForHex(catalog, hex.q, hex.r)
+          if (!base) {
             return
           }
-          const variants = texturesByTerrain.get(tile.terrain)
-          if (!variants) {
-            return
+          const poly = hex.corners.map((corner) => ({
+            x: corner.x + offsetX,
+            y: corner.y + offsetY,
+          }))
+
+          // Clip ALL of this cell's paint (base + wedges) to the hex outline
+          // so wedge triangles can never bleed across neighbors.
+          const cell = new Container()
+          const cellMask = new Graphics()
+          cellMask.poly(poly)
+          cellMask.fill({ color: 0xffffff })
+          cell.addChild(cellMask)
+          cell.mask = cellMask
+
+          if (useTerrainImages) {
+            const decor = chunkDecors.get(`${hex.q},${hex.r}`)
+            if (decor) {
+              let cx = 0
+              let cy = 0
+              for (const p of poly) {
+                cx += p.x
+                cy += p.y
+              }
+              cx /= poly.length
+              cy /= poly.length
+              const expanded = poly.map((corner) => {
+                const dx = corner.x - cx
+                const dy = corner.y - cy
+                const len = Math.hypot(dx, dy) || 1
+                return {
+                  x: corner.x + (dx / len) * 2,
+                  y: corner.y + (dy / len) * 2,
+                }
+              })
+              addChunkMaskedTerrain(cell, expanded, decor)
+            } else {
+              const g = new Graphics()
+              g.poly(poly)
+              g.fill({ color: parseCssHexColor(base.color) })
+              cell.addChild(g)
+            }
+          } else {
+            const g = new Graphics()
+            g.poly(poly)
+            g.fill({ color: parseCssHexColor(base.color) })
+            cell.addChild(g)
           }
-          const variant = pickTerrainVariantIndex(seed, hex.q, hex.r, variants)
-          addMaskedTerrainHex(
-            terrainLayer,
+
+          const wedges = wedgesForHex(
+            catalog,
             hex,
             offsetX,
             offsetY,
-            variants[variant].texture,
+            hex.q,
+            hex.r,
+            (nq, nr) => {
+              const nHex = grid.getHex({ q: nq, r: nr })
+              if (!nHex) {
+                return null
+              }
+              return hexCenter(nHex, offsetX, offsetY)
+            },
           )
+          for (const wedge of wedges) {
+            if (useTerrainImages) {
+              if (wedge.fromBuffer) {
+                const bufTex =
+                  hexTerrainTextures.get(wedge.terrain.name) ??
+                  hexTerrainTextures.get(wedge.terrain.name.replaceAll(' ', '_'))
+                if (bufTex) {
+                  addMaskedTerrainWedge(cell, wedge.points, {
+                    kind: 'texture',
+                    texture: bufTex,
+                    hex,
+                    offsetX,
+                    offsetY,
+                  })
+                  continue
+                }
+              } else {
+                const decor = chunkDecors.get(`${wedge.nq},${wedge.nr}`)
+                if (decor) {
+                  addMaskedTerrainWedge(cell, wedge.points, {
+                    kind: 'chunk',
+                    decor,
+                  })
+                  continue
+                }
+              }
+            }
+            addMaskedTerrainWedge(cell, wedge.points, {
+              kind: 'color',
+              color: parseCssHexColor(wedge.terrain.color),
+            })
+          }
+
+          terrainLayer.addChild(cell)
+
+          if (showHexOutlines) {
+            const stroke = new Graphics()
+            stroke.poly(poly)
+            stroke.stroke({ width: 1.5, color: 0x111111 })
+            terrainLayer.addChild(stroke)
+          }
         })
+      }
+
+      const paintProps = async () => {
+        for (const child of propLayer.removeChildren()) {
+          child.destroy({ children: true })
+        }
+        const jobs: Array<{
+          q: number
+          r: number
+          file: string
+          variant: number
+        }> = []
+        forEachTile((q, r) => {
+          if (!isExplored(q, r)) {
+            return
+          }
+          const tile = getTile(q, r)
+          if (!tile?.propFile) {
+            return
+          }
+          jobs.push({
+            q,
+            r,
+            file: tile.propFile,
+            variant: tile.propVariant ?? 1,
+          })
+        })
+        await Promise.all(
+          jobs.map(async (job) => {
+            const texture = await loadPropTexture(job.file, job.variant)
+            if (!texture || cancelled) {
+              return
+            }
+            const hex = grid.getHex({ q: job.q, r: job.r })
+            if (!hex) {
+              return
+            }
+            const center = hexCenter(hex, offsetX, offsetY)
+            addPropSprite(
+              propLayer,
+              texture,
+              center.x,
+              center.y,
+              hex.width,
+              hex.height,
+            )
+          }),
+        )
       }
 
       const exploreAround = (origin: Axial) => {
@@ -767,6 +1071,7 @@ export function HexMap({
         })
         paintFog()
         paintTexturedHexes()
+        void paintProps()
         updateSession((current) =>
           persistActiveExplored(current, getExploredHexes()),
         )
@@ -1010,6 +1315,7 @@ export function HexMap({
         restoreExplored(player?.explored)
         paintFog()
         paintTexturedHexes()
+        void paintProps()
         walletRef.current = walletFromSession(session)
         emitResources()
         const ownHeroes = player
@@ -1036,11 +1342,22 @@ export function HexMap({
             entry.label.style.fill = town?.player_id != null ? '#ffffff' : '#111111'
             continue
           }
+          if (entry.data.kind === 'pickup') {
+            continue
+          }
           if (entry.data.kind !== 'mine') {
             continue
           }
           const node = findNodeAt(sessionNow, entry.data.q, entry.data.r)
           const owned = node?.player_id != null
+          if (entry.sprite.visible) {
+            paintOwnershipRing(
+              entry.ring,
+              owned ? node.player_id : null,
+              featureHexSize(entry.data.q, entry.data.r).width,
+            )
+            continue
+          }
           paintObjectBadge(
             entry.badge,
             owned ? townFill(node.player_id) : NEUTRAL_OBJECT_COLOR,
@@ -1059,6 +1376,11 @@ export function HexMap({
       const unsubCatalog = subscribeCatalog(() => {
         placeHeroMarkers()
         placeMobMarkers()
+        for (const entry of objectByKey.values()) {
+          if (entry.data.kind === 'mine' || entry.data.kind === 'pickup') {
+            loadObjectFeatureArt(entry)
+          }
+        }
         paintOwnedMarkers()
       })
       signal.addEventListener('abort', unsubHeroes, { once: true })
@@ -1150,7 +1472,15 @@ export function HexMap({
         } else {
           tipEl.hidden = true
         }
-        const walkOnto = !occupant && !enemyTown && !mob && (town || node) ? hex : null
+        const undefendedEnemy =
+          enemyTown != null &&
+          townIsUndefended(getSession(), enemyTown, hero.id)
+        const walkOnto =
+          !occupant &&
+          !mob &&
+          (undefendedEnemy || (!enemyTown && (town || node)))
+            ? hex
+            : null
         const hoverBlocked = obstacleHexes(hero, walkOnto)
         const from = waypointPlan?.end ?? hero
         const budget = waypointPlan?.remaining ?? hero.remaining
@@ -1160,7 +1490,7 @@ export function HexMap({
         }
         lastHoverKey = hoverKey
         const dest =
-          occupant || enemyTown || mob
+          occupant || (enemyTown && !undefendedEnemy) || mob
             ? approachHex(
                 from,
                 occupant?.position ?? enemyTown?.position ?? mob!.position,
@@ -1366,7 +1696,12 @@ export function HexMap({
           const occupantBlock = otherHeroAt(hex.q, hex.r, hero.id)
           const enemyTownBlock = enemyOwnedTownAt(hex.q, hex.r, hero.id)
           const mobBlock = visibleMobAt(hex.q, hex.r)
-          if (occupantBlock || enemyTownBlock || mobBlock) {
+          if (
+            occupantBlock ||
+            (enemyTownBlock &&
+              !townIsUndefended(getSession(), enemyTownBlock, hero.id)) ||
+            mobBlock
+          ) {
             return
           }
           const townHere = findTownAt(getSession(), hex.q, hex.r)
@@ -1442,6 +1777,15 @@ export function HexMap({
         }
         const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
         if (enemyTown) {
+          if (townIsUndefended(getSession(), enemyTown, hero.id)) {
+            // Empty garrison / no defending army — walk onto the hex and claim.
+            if (hero.q === enemyTown.position.q && hero.r === enemyTown.position.r) {
+              resolveHex(enemyTown.position.q, enemyTown.position.r)
+              return
+            }
+            commitViaWaypoints(hex, undefined, hex)
+            return
+          }
           const siege = () => {
             const mover = heroRef.current
             const live = findTownAt(getSession(), enemyTown.position.q, enemyTown.position.r)
@@ -1453,6 +1797,10 @@ export function HexMap({
               return
             }
             if (hexDistance(mover, live.position) > 1) {
+              return
+            }
+            if (townIsUndefended(getSession(), live, mover.id)) {
+              resolveHex(live.position.q, live.position.r)
               return
             }
             mover.remaining = spendHeroInteract(mover.remaining)

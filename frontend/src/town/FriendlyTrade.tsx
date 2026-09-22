@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { formatResourceLine, RESOURCES, type ResourceWallet } from '../hex/resources'
+import type { ResourceWallet } from '../hex/resources'
+import { ResourceBar } from '../hex/ResourceBar'
 import { getSession, subscribe } from '../session/store'
 import { fetchCatalog, getCachedCatalog, subscribeCatalog } from './catalog'
 import { ArmyTransfer } from './ArmyTransfer'
@@ -38,13 +39,7 @@ export function FriendlyTrade({
     >
       <header className="town-management-bar">
         <h1 id="friendly-trade-title">Friendly Trade</h1>
-        <p className="town-resource-strip">
-          {RESOURCES.map((resource) => (
-            <span key={resource.id}>
-              {formatResourceLine(resource, wallet[resource.id])}
-            </span>
-          ))}
-        </p>
+        <ResourceBar wallet={wallet} className="town-resource-strip" />
         <button type="button" onClick={onExit}>
           Done
         </button>

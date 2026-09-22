@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { clearCachedGrid, getSelectedMapHeroId, setHeroMovementRemaining, setMapCameraFollowMoves } from '../hex/HexMap'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import {
+  clearCachedGrid,
+  getSelectedMapHeroId,
+  setHeroMovementRemaining,
+  setMapCameraFollowMoves,
+} from '../hex/HexMap'
 import type { DataStatus } from '../hex/debug'
 import {
   createSave,
@@ -14,8 +19,10 @@ import type { GameSession } from '../session/types'
 import {
   activePlayer,
   grantBuildArmy,
+  grantBuildBasicBuildings,
   grantClassAbilitiesAtTier,
   grantOpenChest,
+  grantUpgradeBuildings,
   normalizeHeroProgress,
   restoreAllHeroMovement,
 } from '../session/accessors'
@@ -24,7 +31,14 @@ import {
   levelUpNoticeForAward,
   type LevelUpNotice,
 } from '../session/xp'
-import { fetchCatalog, getCachedCatalog, heroResourcePools, refreshCatalogFromDb, reloadReferenceData } from '../town/catalog'
+import {
+  DEFAULT_HERO_MOVEMENT_STEPS,
+  fetchCatalog,
+  getCachedCatalog,
+  heroResourcePools,
+  refreshCatalogFromDb,
+  reloadReferenceData,
+} from '../town/catalog'
 import { LIBRARY_TIERS } from '../town/libraryRules'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
@@ -33,7 +47,7 @@ import { getExploredHexes } from '../hex/world'
 import { HEX_SCALES, type HexScaleName } from '../hex/hexScale'
 import type { FixedFightKind } from '../session/fixedFight'
 
-const STEPS_UNLIMITED = 1000
+const STEPS_UNLIMITED = DEFAULT_HERO_MOVEMENT_STEPS
 
 type Panel = 'new' | 'save' | 'load' | 'quit' | null
 
@@ -185,6 +199,7 @@ export function OptionsMenu({
   const [notice, setNotice] = useState<string | null>(null)
   const [stepsUnlimited, setStepsUnlimited] = useState(false)
   const saveNameRef = useRef<HTMLInputElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!notice) {
@@ -197,6 +212,38 @@ export function OptionsMenu({
   useEffect(() => {
     onHudNotice?.(notice)
   }, [notice, onHudNotice])
+
+  useEffect(() => {
+    if (!expanded) {
+      return
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const root = menuRef.current
+      if (!root || !(event.target instanceof Node)) {
+        return
+      }
+      if (!root.contains(event.target)) {
+        setExpanded(false)
+      }
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [expanded])
+
+  /** Close after a real pick; leave flyout parents open so their submenu can be used. */
+  const closeAfterMenuPick = (event: MouseEvent) => {
+    const btn = (event.target as HTMLElement).closest('button[role="menuitem"]')
+    if (!(btn instanceof HTMLButtonElement) || btn.disabled) {
+      return
+    }
+    const isFlyoutParent =
+      btn.getAttribute('aria-haspopup') === 'true' &&
+      !btn.closest('.options-submenu')
+    if (isFlyoutParent) {
+      return
+    }
+    setExpanded(false)
+  }
 
   // Focus the save-name field when Save Game opens (autoFocus fails while busy).
   useEffect(() => {
@@ -562,7 +609,7 @@ export function OptionsMenu({
   }
 
   return (
-    <div className="options-menu">
+    <div className="options-menu" ref={menuRef}>
       <button
         type="button"
         className="options-toggle"
@@ -573,7 +620,11 @@ export function OptionsMenu({
         Options
       </button>
       {expanded ? (
-        <div className="options-choices" role="menu">
+        <div
+          className="options-choices"
+          role="menu"
+          onClick={closeAfterMenuPick}
+        >
           <button type="button" role="menuitem" onClick={() => openPanel('new')}>
             New Game
           </button>
@@ -621,6 +672,30 @@ export function OptionsMenu({
             }}
           >
             Build Army 2
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const result = grantBuildBasicBuildings(getSession())
+              setSession(result.session)
+              setExpanded(false)
+              setNotice(result.notice)
+            }}
+          >
+            Build Basic Buildings
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const result = grantUpgradeBuildings(getSession())
+              setSession(result.session)
+              setExpanded(false)
+              setNotice(result.notice)
+            }}
+          >
+            Upgrade Buildings
           </button>
           <button type="button" role="menuitem" onClick={learnAllAbilities}>
             Learn

@@ -3,9 +3,9 @@ import { slotStatesForTown } from '../session/accessors'
 import type { ReferenceCatalog } from './catalog'
 import { buildingById } from './catalog'
 
-const HALL_SLOT = 16
-const RAMPARTS_SLOT = 3
-const GATEHOUSE_SLOT = 12
+const HALL_SLOT = 1
+const RAMPARTS_SLOT = 2
+const GATEHOUSE_SLOT = 3
 
 function slotLevel(session: GameSession, townId: string, slotNum: number): number {
   return slotStatesForTown(session, townId)[slotNum - 1]?.level ?? 0

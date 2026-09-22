@@ -1,5 +1,7 @@
 package com.heroesofyendor;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -10,14 +12,24 @@ import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Seeded test grid: 3–8 hex wide, 1–2 hex tall segments (not full-width bands).
+ * Seeded test grid: organic {@link HexTerrain} chunks via {@link TerrainChunks}.
+ *
+ * <p>Fixed build order so each layer sees prior blockers:
+ * <ol>
+ *   <li>Terrain (base + wedge / chunk paint)
+ *   <li>Props (terrain eligibility; may mark hexes blocked)
+ *   <li>Features (towns / mines / pickups on passable, non-prop-blocked hexes)
+ * </ol>
+ * World mobs are seeded on the frontend from the same passable set.
  */
 final class TestGrid {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final TypeReference<Map<String, Object>> MAP_TYPE =
+            new TypeReference<>() {};
+
     static final MapSize SIZE = MapSize.SMALL;
 
-    static final int MIN_SEGMENT_WIDTH = 3;
-    static final int MAX_SEGMENT_WIDTH = 8;
     static final int START_TOWN_TYPE_ID = 1;
 
     /** Same offset cell as frontend `HERO_START_OFFSET` (Small 36×36 center). */
@@ -36,40 +48,72 @@ final class TestGrid {
         Random rng = new Random(seed);
         int width = SIZE.width();
         int height = SIZE.height();
-        List<Terrain> pool = Terrain.generationPool(data);
-        Terrain[][] cells = paintSegments(width, height, rng, pool);
+        List<HexTerrain> pool = HexTerrain.seedablePool(data);
+
+        // 1. Terrain (base + wedge / chunk resolution).
+        TerrainChunks.PaintResult painted = TerrainChunks.paint(width, height, rng, pool);
+        HexTerrain[][] cells = painted.cells();
+        int[][] chunkIds = painted.chunkIds();
+
+        // 2. Props — terrain eligibility only; no features yet.
+        List<WorldProps.PropDef> props = WorldProps.all(data);
+        WorldProps.Seed[][] propSeeds = new WorldProps.Seed[height][width];
+        boolean[][] propBlocked = new boolean[height][width];
+        for (int row = 0; row < height; row++) {
+            for (int col = 0; col < width; col++) {
+                HexTerrain terrain = cells[row][col];
+                if (!terrain.isPassable()) {
+                    continue;
+                }
+                WorldProps.Seed prop = WorldProps.roll(terrain, props, rng);
+                if (prop == null) {
+                    continue;
+                }
+                propSeeds[row][col] = prop;
+                propBlocked[row][col] = prop.blocker();
+            }
+        }
+
+        // 3. Features — passable terrain and not occupied by a blocking prop.
+        List<int[]> placeable = new ArrayList<>();
+        for (int row = 0; row < height; row++) {
+            for (int col = 0; col < width; col++) {
+                if (cells[row][col].isPassable() && !propBlocked[row][col]) {
+                    placeable.add(new int[] {col, row});
+                }
+            }
+        }
+        List<MapObjectData> objects = placeObjects(placeable, rng, data);
+
         List<TileData> tiles = new ArrayList<>(width * height);
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
-                Terrain terrain = cells[row][col];
-                int q = col;
-                int r = row - offsetFromZero(col);
+                HexTerrain terrain = cells[row][col];
+                // EXPERIMENT: pointy-top world map — odd-r (revert: q=col, r=row-offset(col)).
+                int q = col - offsetFromZero(row);
+                int r = row;
+                int chunkId = chunkIds[row][col];
+                WorldProps.Seed prop = propSeeds[row][col];
+                boolean blocked = terrain.blocked() || (prop != null && prop.blocker());
                 tiles.add(
                         new TileData(
                                 q,
                                 r,
                                 terrain.label(),
                                 terrain.movementCost(),
-                                terrain.blocked()));
+                                blocked,
+                                chunkId > 0 ? chunkId : null,
+                                prop != null ? prop.propId() : null,
+                                prop != null ? prop.variant() : null,
+                                prop != null ? prop.fileName() : null));
             }
         }
-        List<MapObjectData> objects = placeObjects(cells, rng, data);
         return new TestGridResponse(seed, List.copyOf(tiles), List.copyOf(objects));
     }
 
-    /** Passable hexes only, one object per hex. First town sits near hero spawn. */
+    /** Passable, non-prop-blocked hexes only; one object per hex. First town near hero spawn. */
     private static List<MapObjectData> placeObjects(
-            Terrain[][] cells, Random rng, ReferenceData data) {
-        int height = cells.length;
-        int width = cells[0].length;
-        List<int[]> passable = new ArrayList<>();
-        for (int row = 0; row < height; row++) {
-            for (int col = 0; col < width; col++) {
-                if (cells[row][col].isPassable()) {
-                    passable.add(new int[] {col, row});
-                }
-            }
-        }
+            List<int[]> placeable, Random rng, ReferenceData data) {
         MapPlaceConfig cfg = mapPlaceConfig(data);
         TownNameSession names = TownNameSession.from(data, rng);
         List<MapObjectData> objects = new ArrayList<>();
@@ -78,14 +122,14 @@ final class TestGrid {
         if (start != null
                 && placeStartTown(
                         objects,
-                        passable,
+                        placeable,
                         start,
                         rng,
                         cfg.startTownMin(),
                         cfg.startTownMax())) {
             placed = 1;
         }
-        Collections.shuffle(passable, rng);
+        Collections.shuffle(placeable, rng);
         int i = 0;
         for (Map<String, Object> row : resourceRows(data)) {
             Integer resourceId = intId(row, "id");
@@ -94,19 +138,19 @@ final class TestGrid {
             }
             String resourceName = stringVal(row, "name");
             for (int n = 0; n < cfg.minesPerRes(); n++) {
-                if (i >= passable.size()) {
+                if (i >= placeable.size()) {
                     return objects;
                 }
-                objects.add(objectAt(passable.get(i++), "mine", resourceId, resourceName));
+                objects.add(objectAt(placeable.get(i++), "mine", resourceId, resourceName, rng, data));
             }
             for (int n = 0; n < cfg.loosePerRes(); n++) {
-                if (i >= passable.size()) {
+                if (i >= placeable.size()) {
                     return objects;
                 }
-                objects.add(objectAt(passable.get(i++), "pickup", resourceId, resourceName));
+                objects.add(objectAt(placeable.get(i++), "pickup", resourceId, resourceName, rng, data));
             }
         }
-        placeTowns(objects, passable, i, names, rng, placed, cfg.townCount());
+        placeTowns(objects, placeable, i, names, rng, placed, cfg.townCount());
         return objects;
     }
 
@@ -117,8 +161,9 @@ final class TestGrid {
             Random rng,
             int startTownMin,
             int startTownMax) {
-        int startQ = HERO_START_COL;
-        int startR = HERO_START_ROW - offsetFromZero(HERO_START_COL);
+        // EXPERIMENT: pointy-top — odd-r hero spawn axial.
+        int startQ = HERO_START_COL - offsetFromZero(HERO_START_ROW);
+        int startR = HERO_START_ROW;
         int[] chosen =
                 pickNearbyPassable(passable, startQ, startR, rng, startTownMin, startTownMax);
         if (chosen == null) {
@@ -127,9 +172,9 @@ final class TestGrid {
         passable.remove(chosen);
         int col = chosen[0];
         int row = chosen[1];
-        int q = col;
-        int r = row - offsetFromZero(col);
-        objects.add(new MapObjectData(q, r, "town", null, "T1", start.name(), start.townTypeId()));
+        int q = col - offsetFromZero(row);
+        int r = row;
+        objects.add(new MapObjectData(q, r, "town", null, "T1", start.name(), start.townTypeId(), null));
         return true;
     }
 
@@ -147,8 +192,8 @@ final class TestGrid {
         int[] fallback = null;
         int fallbackDist = Integer.MAX_VALUE;
         for (int[] colRow : passable) {
-            int q = colRow[0];
-            int r = colRow[1] - offsetFromZero(colRow[0]);
+            int q = colRow[0] - offsetFromZero(colRow[1]);
+            int r = colRow[1];
             int dist = hexDistance(startQ, startR, q, r);
             if (dist == 0) {
                 continue;
@@ -199,9 +244,9 @@ final class TestGrid {
             int[] colRow = passable.get(i++);
             int col = colRow[0];
             int row = colRow[1];
-            int q = col;
-            int r = row - offsetFromZero(col);
-            objects.add(new MapObjectData(q, r, "town", null, "T1", name, townId));
+            int q = col - offsetFromZero(row);
+            int r = row;
+            objects.add(new MapObjectData(q, r, "town", null, "T1", name, townId, null));
             placed++;
         }
     }
@@ -371,95 +416,94 @@ final class TestGrid {
     }
 
     private static MapObjectData objectAt(
-            int[] colRow, String kind, int resourceId, String resourceName) {
+            int[] colRow,
+            String kind,
+            int resourceId,
+            String resourceName,
+            Random rng,
+            ReferenceData data) {
         int col = colRow[0];
         int row = colRow[1];
-        int q = col;
-        int r = row - offsetFromZero(col);
+        int q = col - offsetFromZero(row);
+        int r = row;
         String marker =
                 "mine".equals(kind)
                         ? Resource.mineMarker(resourceId, resourceName)
                         : Resource.pickupMarker(resourceId, resourceName);
-        return new MapObjectData(q, r, kind, resourceId, marker, null, null);
-    }
-
-    private static Terrain[][] paintSegments(
-            int width, int height, Random rng, List<Terrain> pool) {
-        Terrain[][] cells = new Terrain[height][width];
-        for (int row = 0; row < height; row++) {
-            Terrain previous = null;
-            int col = 0;
-            while (col < width) {
-                if (cells[row][col] != null) {
-                    previous = cells[row][col];
-                    col++;
-                    continue;
-                }
-                int remaining = width - col;
-                int segW = segmentWidth(rng, remaining);
-                int segH = segmentHeight(rng, cells, row, col, segW, height);
-                Terrain terrain = pickTerrain(rng, previous, pool);
-                for (int dr = 0; dr < segH; dr++) {
-                    for (int c = col; c < col + segW; c++) {
-                        cells[row + dr][c] = terrain;
-                    }
-                }
-                previous = terrain;
-                col += segW;
-            }
+        boolean flipped = false;
+        if (featureFlippable(data, resourceId, kind) && rng.nextBoolean()) {
+            flipped = true;
         }
-        return cells;
-    }
-
-    /** 3–8 hexes, or whatever is left at the end of a row (never leave a 1–2 gap). */
-    private static int segmentWidth(Random rng, int remaining) {
-        int span = MAX_SEGMENT_WIDTH - MIN_SEGMENT_WIDTH + 1;
-        int segW = MIN_SEGMENT_WIDTH + rng.nextInt(span);
-        if (segW > remaining) {
-            segW = remaining;
-        }
-        int leftover = remaining - segW;
-        if (leftover > 0 && leftover < MIN_SEGMENT_WIDTH) {
-            segW = remaining;
-        }
-        return segW;
-    }
-
-    private static int segmentHeight(
-            Random rng,
-            Terrain[][] cells,
-            int row,
-            int col,
-            int segW,
-            int height) {
-        if (row + 1 >= height) {
-            return 1;
-        }
-        for (int c = col; c < col + segW; c++) {
-            if (cells[row + 1][c] != null) {
-                return 1;
-            }
-        }
-        return 1 + rng.nextInt(2);
-    }
-
-    /** Adjacent segments in a row use different types so one terrain cannot wall the row. */
-    private static Terrain pickTerrain(Random rng, Terrain avoid, List<Terrain> pool) {
-        if (pool.isEmpty()) {
-            throw new IllegalStateException("terrain_type is empty");
-        }
-        int index = rng.nextInt(pool.size());
-        Terrain picked = pool.get(index);
-        if (avoid != null && picked == avoid && pool.size() > 1) {
-            picked = pool.get((index + 1) % pool.size());
-        }
-        return picked;
+        return new MapObjectData(q, r, kind, resourceId, marker, null, null, flipped);
     }
 
     /**
-     * honeycomb-grid default offset (-1): {@code (col + offset * (col & 1)) >> 1}.
+     * {@code feature.flippable} for this resource + kind (mine → resource_node,
+     * pickup → loose_resource). Missing row or column defaults to true.
      */
-    private static int offsetFromZero(int col) {
-        return (col + (-1) * (col & 1)) >> 1;
+    private static boolean featureFlippable(
+            ReferenceData data, int resourceId, String kind) {
+        String typeName = "mine".equals(kind) ? "resource_node" : "loose_resource";
+        Integer typeId = null;
+        for (Map<String, Object> row : data.rows("feature_type")) {
+            if (typeName.equalsIgnoreCase(stringVal(row, "name"))) {
+                typeId = intId(row, "id");
+                break;
+            }
+        }
+        for (Map<String, Object> row : data.rows("feature")) {
+            Integer rowType = intId(row, "feature_type_id");
+            if (typeId != null && (rowType == null || !typeId.equals(rowType))) {
+                continue;
+            }
+            Integer rowResource = featureResourceId(row.get("stats"));
+            if (rowResource == null || rowResource != resourceId) {
+                continue;
+            }
+            Object flag = row.get("flippable");
+            if (flag == null) {
+                return true;
+            }
+            if (flag instanceof Boolean b) {
+                return b;
+            }
+            String text = flag.toString().trim().toLowerCase();
+            return !(text.equals("false") || text.equals("f") || text.equals("0"));
+        }
+        return true;
+    }
+
+    private static Integer featureResourceId(Object statsRaw) {
+        Object value = statsRaw;
+        if (value != null && !(value instanceof Map<?, ?>) && !(value instanceof String)) {
+            value = value.toString();
+        }
+        if (value instanceof String s) {
+            String trimmed = s.trim();
+            if (trimmed.isEmpty() || !(trimmed.startsWith("{") || trimmed.startsWith("["))) {
+                return null;
+            }
+            try {
+                value = JSON.readValue(trimmed, MAP_TYPE);
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        if (!(value instanceof Map<?, ?> map)) {
+            return null;
+        }
+        Object rid = map.get("resource_id");
+        if (rid == null) {
+            rid = map.get("resourceId");
+        }
+        return rid instanceof Number n ? n.intValue() : null;
+    }
+
+    /**
+     * honeycomb-grid default offset (-1): {@code (axis + offset * (axis & 1)) >> 1}.
+     * EXPERIMENT: pointy-top applies this to row (odd-r); flat used col (odd-q).
+     */
+    private static int offsetFromZero(int axis) {
+        return (axis + (-1) * (axis & 1)) >> 1;
     }
 }

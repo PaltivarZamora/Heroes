@@ -4,6 +4,7 @@ import type { GameSession } from '../session/types'
 import { slotStatesForTown } from '../session/accessors'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import { retaliationCharges, unitAttackShape, unitById } from '../town/catalog'
+import { warRoomSiegeMult } from '../town/townUniques'
 import {
   COMBAT_COLUMNS,
   COMBAT_ROWS,
@@ -13,8 +14,10 @@ import {
   siegeWallColForRow,
 } from './battlefield'
 import { isHeroStack, type CombatBattle, type CombatStack, type CombatTile } from './battle'
+import { isMoatMechanic } from './groundEffect'
+import { stackFootprint } from './occupancy'
 
-const RAMPARTS_SLOT_INDEX = 2
+const RAMPARTS_SLOT_INDEX = 1
 
 type WallKind = 'end' | 'shooter' | 'wall' | 'drawbridge'
 
@@ -203,11 +206,25 @@ export function isHazardousMoatHex(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
 ): boolean {
-  const tile = tileAt(tiles, hex.q, hex.r)
-  if (!tile || tile.terrain.replaceAll(' ', '_').toLowerCase() !== 'moat') {
+  const key = `${hex.q},${hex.r}`
+  if (openBridgeMoatKeys(battle, catalog, tiles).has(key)) {
     return false
   }
-  return !openBridgeMoatKeys(battle, catalog, tiles).has(`${hex.q},${hex.r}`)
+  const hasMoatZone = (battle.groundEffects ?? []).some(
+    (zone) =>
+      zone.flatDmg > 0 &&
+      isMoatMechanic(zone.effect, zone.templateId) &&
+      zone.hexKeys.includes(key),
+  )
+  if (hasMoatZone) {
+    return true
+  }
+  // Fallback: Moat terrain paint before GE stamp (should be rare).
+  const tile = tileAt(tiles, hex.q, hex.r)
+  return (
+    tile != null &&
+    tile.terrain.replaceAll(' ', '_').toLowerCase() === 'moat'
+  )
 }
 
 /** True when any step (or the stand hex) is a damaging Moat. */
@@ -382,6 +399,11 @@ export function liveWallLosKeys(
   gate?: { q: number; r: number } | null,
 ): Set<string> {
   const keys = closedDrawbridgeKeys(stacks, catalog, tiles, gate)
+  const addFootprint = (stack: CombatStack) => {
+    for (const hex of stackFootprint(stack, catalog)) {
+      keys.add(`${hex.q},${hex.r}`)
+    }
+  }
   for (const stack of stacks) {
     if (stack.qty <= 0) {
       continue
@@ -391,7 +413,7 @@ export function liveWallLosKeys(
       continue
     }
     if (unit?.blocks_los === true || isWallSegmentUnit(unit)) {
-      keys.add(`${stack.q},${stack.r}`)
+      addFootprint(stack)
       continue
     }
     // Earth Spike / Ice Shard drops: indestructible stationary fixtures even
@@ -404,7 +426,7 @@ export function liveWallLosKeys(
       unitAttackShape(unit).immuneToMagicDmg !== true &&
       unitAttackShape(unit).aiTreatAsThreat !== true
     ) {
-      keys.add(`${stack.q},${stack.r}`)
+      addFootprint(stack)
     }
   }
   return keys
@@ -500,14 +522,18 @@ function makeStack(
   qty: number,
   id: string,
   indestructible: boolean,
+  opts?: { hpMult?: number; dmgMult?: number },
 ): CombatStack {
+  const hpMult = opts?.hpMult ?? 1
+  const dmgMult = opts?.dmgMult ?? 1
+  const baseHp = Math.max(1, unitById(catalog, unit.id)?.health ?? 1)
   return {
     id,
     side,
     slot,
     unitId: unit.id,
     qty,
-    topHealth: Math.max(1, unitById(catalog, unit.id)?.health ?? 1),
+    topHealth: Math.max(1, Math.floor(baseHp * hpMult)),
     startingQty: qty,
     q: hex.q,
     r: hex.r,
@@ -515,6 +541,9 @@ function makeStack(
     hasActedThisRound: false,
     retaliationsLeft: retaliationCharges(unitById(catalog, unit.id)),
     indestructible,
+    ...(dmgMult !== 1
+      ? { minDmgMult: dmgMult, maxDmgMult: dmgMult }
+      : {}),
   }
 }
 
@@ -527,6 +556,7 @@ export function siegeStructureStacks(
   catapultHex: Axial | null,
 ): CombatStack[] {
   const qty = rampartsTier(session, townId)
+  const warMult = warRoomSiegeMult(session, catalog, townId)
   const stacks: CombatStack[] = []
   for (let i = 0; i < wallHexes.length; i += 1) {
     const kind = WALL_KIND_BY_ROW[i] ?? 'wall'
@@ -535,6 +565,9 @@ export function siegeStructureStacks(
     if (!unit || !hex) {
       continue
     }
+    const isShooter = kind === 'shooter'
+    const isWallHp =
+      kind === 'wall' || kind === 'end' || kind === 'drawbridge'
     stacks.push(
       makeStack(
         catalog,
@@ -545,6 +578,10 @@ export function siegeStructureStacks(
         qty,
         `combat-wall-${i}`,
         kind === 'end',
+        {
+          hpMult: isWallHp ? warMult : 1,
+          dmgMult: isShooter ? warMult : 1,
+        },
       ),
     )
   }

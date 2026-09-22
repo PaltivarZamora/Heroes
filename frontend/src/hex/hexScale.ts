@@ -6,7 +6,7 @@ export const HEX_SCALES = {
 
 export type HexScaleName = keyof typeof HEX_SCALES
 
-export const DEFAULT_HEX_SCALE: HexScaleName = 'Medium'
+export const DEFAULT_HEX_SCALE: HexScaleName = 'Large'
 
 /** Named map sizes already used for generated maps. Not hex zoom. */
 export const MAP_SIZES = [

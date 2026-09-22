@@ -1,4 +1,6 @@
-import { getTile, isPassable, isWalkable } from './world'
+import { isPassable, isWalkable } from './world'
+import { getCachedCatalog } from '../town/catalog'
+import { hexTransitionMoveCost } from './terrainTransition'
 import type { Axial } from './hero'
 
 const AXIAL_NEIGHBORS: Axial[] = [
@@ -35,15 +37,21 @@ function isPathHexOpen(
   if (ignoreFog ? !isPassable(q, r) : !isWalkable(q, r)) {
     return false
   }
-  return !blocked?.has(key(q, r))
+  if (blocked?.has(key(q, r))) {
+    return false
+  }
+  // Base terrain may be impassable even if the assigned chunk tile isn't.
+  if (hexTransitionMoveCost(getCachedCatalog(), q, r) == null) {
+    return false
+  }
+  return true
 }
 
+/**
+ * Enter cost for pathfinding — hex/`terrain` table move_cost (isolated helper).
+ */
 function terrainEnterCost(q: number, r: number): number | null {
-  const tile = getTile(q, r)
-  if (!tile || tile.blocked) {
-    return null
-  }
-  return tile.movementCostMultiplier
+  return hexTransitionMoveCost(getCachedCatalog(), q, r)
 }
 
 export function hexDistance(from: Axial, to: Axial): number {
@@ -62,11 +70,7 @@ export function neighborHexes(at: Axial): Axial[] {
 function pathEnterCost(path: Axial[]): number {
   let cost = 0
   for (let i = 1; i < path.length; i++) {
-    const tile = getTile(path[i].q, path[i].r)
-    if (!tile || tile.blocked) {
-      return Infinity
-    }
-    const step = tile.movementCostMultiplier
+    const step = terrainEnterCost(path[i].q, path[i].r)
     if (step == null) {
       return Infinity
     }

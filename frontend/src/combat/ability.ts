@@ -50,7 +50,6 @@ import { relocateAwayFrom, relocateRandom, relocateToHex, landableHexes } from '
 import {
   barrierLineDir,
   barrierLineHexes,
-  clearTerrainPatchesOnKeys,
 } from './factory'
 import {
   applyStackDamage,
@@ -2062,7 +2061,6 @@ function hasEffectKeys(stats: Record<string, unknown>): boolean {
     stats.redirects_dmg_type != null ||
     stats.ignores_sublethal_damage === true ||
     stats.min_qty_stat_div != null ||
-    stats.terrain_type_id != null ||
     stats.line_length_stat_div != null ||
     stats.push_dist_stat_div != null ||
     stats.push_direction != null ||
@@ -2331,40 +2329,8 @@ function applyOneEffect(
         )
         flashes.push({ keys: [...clearHexKeys], color: 'green' })
       }
-      const chancePct =
-        clearChanceStat != null
-          ? Math.max(0, intel * clearChanceStat)
-          : 100
-      // Barrier / Void terrain_type stamps (not unit blockers).
-      const patchClear = clearTerrainPatchesOnKeys(
-        { ...battle, stacks, tombstones, groundEffects },
-        workingTiles,
-        clearHexKeys,
-        chancePct,
-        random,
-      )
-      workingTiles = patchClear.tiles
-      battle = patchClear.battle
-      groundEffects = patchClear.battle.groundEffects ?? groundEffects
-      if (clearChanceStat != null && patchClear.attempted > 0) {
-        lines.push(
-          chanceRollLog(ability.name, chancePct, patchClear.cleared > 0, {
-            action: 'to clear terrain stamps',
-            success: `${patchClear.cleared}/${patchClear.attempted} cleared.`,
-            fail: `0/${patchClear.attempted} cleared.`,
-          }),
-        )
-      } else if (patchClear.cleared > 0) {
-        lines.push(
-          `${ability.name}: cleared ${patchClear.cleared} terrain stamp${
-            patchClear.cleared === 1 ? '' : 's'
-          }.`,
-        )
-        flashes.push({ keys: [...clearHexKeys], color: 'green' })
-      }
-      if (patchClear.cleared > 0 && clearChanceStat != null) {
-        flashes.push({ keys: [...clearHexKeys], color: 'green' })
-      }
+      // clear_chance_pct_stat rolls apply to unit-blocker clears above; GE clear
+      // is always attempted when clears_terrain / clears_los_blockers is set.
     }
   }
 

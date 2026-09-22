@@ -6,8 +6,8 @@ import {
   heroEffectiveStats,
   retaliationCharges,
   unitById,
+  unitFootprint,
   unitHasTag,
-  unitHexFootprint,
   unitTakesTurns,
   unitsWithTag,
 } from '../town/catalog'
@@ -24,6 +24,16 @@ import type {
   CombatTile,
 } from './battle'
 import { insertIntoRemainingInitiative, isHeroStack, stackMaxHealth } from './battle'
+import {
+  ATTACKER_COL,
+  ATTACKER_HERO_COL,
+  DEFENDER_COL,
+  DEFENDER_HERO_COL,
+} from './battlefield'
+import {
+  blockerPlacementKeepsEscapeRoutes,
+  permanentBlockKeys,
+} from './battleProps'
 import { mirrorImageTopHealth } from './abilityStatMath'
 import {
   isNatureTotemStack,
@@ -51,7 +61,7 @@ import { isHeroClass } from './shadow'
 import { combatCanLandOn, combatEnterCost, moveKindForUnit, stackOccupyingHex } from './movement'
 import {
   footprintFits,
-  footprintStep,
+  footprintAlong,
   occupancyKey,
   occupiedHexes,
 } from './occupancy'
@@ -192,10 +202,10 @@ function openHexesForUnit(
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
-  const size = unitHexFootprint(unit)
-  const step = footprintStep(side)
+  const code = unitFootprint(unit)
+  const along = footprintAlong(side)
   return tiles.filter((tile) =>
-    footprintFits({ q: tile.q, r: tile.r }, size, step, occupied, enterCost),
+    footprintFits({ q: tile.q, r: tile.r }, code, along, occupied, enterCost),
   )
 }
 
@@ -333,8 +343,8 @@ export function nearestOpenHexTo(
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
-  const size = unitHexFootprint(unit)
-  const step = footprintStep(side)
+  const code = unitFootprint(unit)
+  const along = footprintAlong(side)
   const ranked = [...tiles]
     .filter((tile) => !(tile.q === origin.q && tile.r === origin.r))
     .sort((a, b) => {
@@ -349,7 +359,7 @@ export function nearestOpenHexTo(
       return a.r - b.r
     })
   for (const tile of ranked) {
-    if (footprintFits({ q: tile.q, r: tile.r }, size, step, occupied, enterCost)) {
+    if (footprintFits({ q: tile.q, r: tile.r }, code, along, occupied, enterCost)) {
       return { q: tile.q, r: tile.r }
     }
   }
@@ -395,8 +405,8 @@ function frontOfTargetOpenHexes(
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
-  const size = unitHexFootprint(unit)
-  const step = footprintStep(side)
+  const code = unitFootprint(unit)
+  const along = footprintAlong(side)
   const ranked = neighborHexes(target)
     .filter((hex) => board.has(occupancyKey(hex.q, hex.r)))
     .sort((a, b) => {
@@ -415,7 +425,7 @@ function frontOfTargetOpenHexes(
     if (out.length >= want) {
       break
     }
-    if (!footprintFits(hex, size, step, occupied, enterCost)) {
+    if (!footprintFits(hex, code, along, occupied, enterCost)) {
       continue
     }
     out.push(hex)
@@ -452,6 +462,93 @@ function pickNearCenterOpenHex(
   const poolSize = Math.max(1, Math.ceil(open.length / 3))
   const pool = open.slice(0, poolSize)
   return pickRandom(pool, random)
+}
+
+function tileCol(tiles: CombatTile[], hex: Axial): number | null {
+  const tile = tiles.find((row) => row.q === hex.q && row.r === hex.r)
+  return tile?.col ?? null
+}
+
+/**
+ * Place behind the army: attacker → leftmost (hero) columns; defender → rightmost.
+ * Prefers the rearmost open column on that side, then a random hex in that column.
+ */
+function pickBehindArmyOpenHex(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  side: CombatSide,
+  unit: UnitRow,
+  random: () => number,
+): Axial | null {
+  const open = openHexesForUnit(battle, catalog, tiles, side, unit)
+  if (open.length === 0) {
+    return null
+  }
+  const backMaxCol = side === 'atk' ? ATTACKER_COL : DEFENDER_HERO_COL
+  const backMinCol = side === 'atk' ? ATTACKER_HERO_COL : DEFENDER_COL
+  const behind = open.filter((hex) => {
+    const col = tileCol(tiles, hex)
+    if (col == null) {
+      return true
+    }
+    return col >= backMinCol && col <= backMaxCol
+  })
+  const pool = behind.length > 0 ? behind : open
+  pool.sort((a, b) => {
+    const ca = tileCol(tiles, a)
+    const cb = tileCol(tiles, b)
+    if (ca != null && cb != null && ca !== cb) {
+      // Attacker: lower col is further back; defender: higher col is further back.
+      return side === 'atk' ? ca - cb : cb - ca
+    }
+    if (a.r !== b.r) {
+      return a.r - b.r
+    }
+    return a.q - b.q
+  })
+  const bestCol = tileCol(tiles, pool[0]!)
+  const sameCol =
+    bestCol == null
+      ? pool
+      : pool.filter((hex) => tileCol(tiles, hex) === bestCol)
+  return pickRandom(sameCol.length > 0 ? sameCol : pool, random)
+}
+
+/** Prefer one of each totem type, then fill remaining slots at random. */
+function pickTotemUnitsForSpawn(
+  pool: UnitRow[],
+  count: number,
+  random: () => number,
+  preferUnique: boolean,
+): UnitRow[] {
+  if (pool.length === 0 || count <= 0) {
+    return []
+  }
+  const out: UnitRow[] = []
+  if (preferUnique) {
+    const shuffled = [...pool]
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(random() * (i + 1))
+      const tmp = shuffled[i]!
+      shuffled[i] = shuffled[j]!
+      shuffled[j] = tmp
+    }
+    for (const unit of shuffled) {
+      if (out.length >= count) {
+        break
+      }
+      out.push(unit)
+    }
+  }
+  while (out.length < count) {
+    const unit = pool[Math.floor(random() * pool.length)]
+    if (!unit) {
+      break
+    }
+    out.push(unit)
+  }
+  return out
 }
 
 export type SummonResolve = {
@@ -1035,10 +1132,12 @@ export function applyIceShardPlacement(
   const lines: string[] = []
   const flashes: SummonResolve['flashes'] = []
   const remaining = [...empty]
-  for (let i = 0; i < placeCount; i += 1) {
-    if (remaining.length === 0) {
-      break
-    }
+  const proposed = permanentBlockKeys(battle)
+  let placed = 0
+  let attempts = 0
+  const maxAttempts = remaining.length * 4
+  while (placed < placeCount && remaining.length > 0 && attempts < maxAttempts) {
+    attempts += 1
     const idx = Math.min(
       remaining.length - 1,
       Math.floor(random() * remaining.length),
@@ -1046,6 +1145,12 @@ export function applyIceShardPlacement(
     const pick = remaining.splice(idx, 1)[0]
     if (!pick) {
       break
+    }
+    const key = occupancyKey(pick.q, pick.r)
+    const trial = new Set(proposed)
+    trial.add(key)
+    if (!blockerPlacementKeepsEscapeRoutes(next, catalog, tiles, trial)) {
+      continue
     }
     const spawned = spawnSummonedStack(
       next,
@@ -1064,10 +1169,12 @@ export function applyIceShardPlacement(
     )
     next = spawned.battle
     flashes.push(...spawned.flashes)
+    proposed.add(key)
+    placed += 1
   }
-  if (placeCount > 0) {
+  if (placed > 0) {
     lines.push(
-      `${ability.name}: placed ${placeCount} ${blockerLabel(unit.name, placeCount)}.`,
+      `${ability.name}: placed ${placed} ${blockerLabel(unit.name, placed)}.`,
     )
   }
   return { battle: next, lines, flashes }
@@ -1117,10 +1224,12 @@ export function applyRadiusBlockerPlacement(
   const lines: string[] = []
   const flashes: SummonResolve['flashes'] = []
   const remaining = [...open]
-  for (let i = 0; i < placeCount; i += 1) {
-    if (remaining.length === 0) {
-      break
-    }
+  const proposed = permanentBlockKeys(battle)
+  let placed = 0
+  let attempts = 0
+  const maxAttempts = remaining.length * 4
+  while (placed < placeCount && remaining.length > 0 && attempts < maxAttempts) {
+    attempts += 1
     const idx = Math.min(
       remaining.length - 1,
       Math.floor(random() * remaining.length),
@@ -1128,6 +1237,12 @@ export function applyRadiusBlockerPlacement(
     const pick = remaining.splice(idx, 1)[0]
     if (!pick) {
       break
+    }
+    const key = occupancyKey(pick.q, pick.r)
+    const trial = new Set(proposed)
+    trial.add(key)
+    if (!blockerPlacementKeepsEscapeRoutes(next, catalog, tiles, trial)) {
+      continue
     }
     const spawned = spawnSummonedStack(
       next,
@@ -1146,20 +1261,23 @@ export function applyRadiusBlockerPlacement(
     )
     next = spawned.battle
     flashes.push(...spawned.flashes)
+    proposed.add(key)
+    placed += 1
   }
-  if (placeCount > 0) {
+  if (placed > 0) {
     lines.push(
-      `${ability.name}: raised ${placeCount} ${blockerLabel(unit.name, placeCount)}.`,
+      `${ability.name}: raised ${placed} ${blockerLabel(unit.name, placed)}.`,
     )
   }
   return { battle: next, lines, flashes }
 }
 
 /**
- * Shaman S7-8: spawn up to `totem_spawn_per_round` (default 1) Fire/Lightning/Nature
- * Totems near map center when below floor(INT/totem_int_divisor) (min totem_min).
- * Gradual regrowth — never tops up the full gap in one call.
- * Called at battle start and at the start of every subsequent round.
+ * Shaman S7-8: Fire/Lightning/Nature Totems.
+ * - Battle start (`fillToCap`): spawn every missing totem up to the INT cap,
+ *   placed behind the army (not map center).
+ * - Later rounds: spawn up to `totem_spawn_per_round` (usually 1) to replace
+ *   destroyed totems, still behind the army.
  */
 export function applyShamanBattleStartTotems(
   battle: CombatBattle,
@@ -1167,6 +1285,7 @@ export function applyShamanBattleStartTotems(
   tiles: CombatTile[],
   heroes: { atk?: Hero; def?: Hero },
   random: () => number = Math.random,
+  opts?: { fillToCap?: boolean },
 ): { battle: CombatBattle; lines: string[] } {
   const sides: CombatSide[] = ['atk', 'def']
   let next = battle
@@ -1175,6 +1294,7 @@ export function applyShamanBattleStartTotems(
     id: 0,
     name: 'Shaman Totems',
   } as AbilityRow
+  const fillToCap = opts?.fillToCap === true
 
   for (const side of sides) {
     const hero = heroes[side]
@@ -1189,7 +1309,9 @@ export function applyShamanBattleStartTotems(
     if (missing <= 0) {
       continue
     }
-    const spawnCap = shamanTotemSpawnPerRound(catalog, hero)
+    const spawnCap = fillToCap
+      ? missing
+      : shamanTotemSpawnPerRound(catalog, hero)
     const toSpawn = Math.min(missing, Math.max(0, spawnCap))
     if (toSpawn <= 0) {
       continue
@@ -1203,13 +1325,10 @@ export function applyShamanBattleStartTotems(
       hero.class_id,
       hero.current_level ?? 1,
     ).intel
+    const units = pickTotemUnitsForSpawn(pool, toSpawn, random, fillToCap)
     let spawned = 0
-    for (let i = 0; i < toSpawn; i += 1) {
-      const unit = pool[Math.floor(random() * pool.length)]
-      if (!unit) {
-        break
-      }
-      const hex = pickNearCenterOpenHex(
+    for (const unit of units) {
+      const hex = pickBehindArmyOpenHex(
         next,
         catalog,
         tiles,
@@ -1325,13 +1444,15 @@ export function applyShamanEndOfRoundNatureHeals(
         side,
       )
       if (!target) {
+        lines.push('Nature Totem: No one in range needs heal')
         break
       }
       const full = stackMaxHealth(target, catalog)
       const need = frontDeficit(target, catalog)
       const spend = Math.min(amount, need)
       if (spend <= 0) {
-        continue
+        lines.push('Nature Totem: No one in range needs heal')
+        break
       }
       const live = next.stacks.find((row) => row.id === target.id) ?? target
       const healed = applyStackHeal(live, spend, full)

@@ -1,9 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   formatAmount,
-  formatResourceLine,
-  RESOURCES,
 } from '../hex/resources'
+import { ResourceBar } from '../hex/ResourceBar'
 import {
   ensureLibraryOffers,
   findTownById,
@@ -113,13 +112,7 @@ export function Library({ townId, slotNum, onClose }: LibraryProps) {
     >
       <header className="town-management-bar">
         <h1 id="library-title">Library</h1>
-        <p className="town-resource-strip">
-          {RESOURCES.map((resource) => (
-            <span key={resource.id}>
-              {formatResourceLine(resource, wallet[resource.id])}
-            </span>
-          ))}
-        </p>
+        <ResourceBar wallet={wallet} className="town-resource-strip" />
         <button type="button" onClick={onClose}>
           Close
         </button>

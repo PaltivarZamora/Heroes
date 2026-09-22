@@ -1,11 +1,13 @@
 import type { ReferenceCatalog } from '../town/catalog'
-import { terrainByName, unitById } from '../town/catalog'
+import { unitById } from '../town/catalog'
 import { applyStackDamage } from './attack'
 import { applyBreaksOnDamage } from './condition'
 import type { CombatBattle, CombatTile } from './battle'
 import { noteUnitDeaths, stackMaxHealth } from './battle'
+import { isMoatMechanic } from './groundEffect'
 import { syncTombstonesFromWipes } from './tombstone'
 import { hexKey, moveKindForUnit } from './movement'
+import { occupancyKey, stackFootprint } from './occupancy'
 import { isSiegeEngineUnit, isWallSegmentUnit, openBridgeMoatKeys } from './siege'
 
 export type MoatTick = {
@@ -19,10 +21,10 @@ function noop(battle: CombatBattle): MoatTick {
 }
 
 /**
- * Moat `entry_damage` is a terrain hazard, not an attack.
- * Apply the catalog value as flat HP loss — do NOT run Defense,
- * Resistance, or mitigationOf. Flying and Hover never touch the water
- * and are fully immune.
+ * Moat ground_effect (entry_and_turn_start_damage): flat HP loss from
+ * snapshotted zone.flatDmg — do NOT run Defense, Resistance, or mitigation.
+ * Flying and Hover never touch the water and are fully immune. Open
+ * Drawbridge span is exempt.
  */
 export function applyMoatEntryDamage(
   battle: CombatBattle,
@@ -42,23 +44,33 @@ export function applyMoatEntryDamage(
   if (kind === 'flying' || kind === 'hover') {
     return noop(battle)
   }
-  if (openBridgeMoatKeys(battle, catalog, tiles).has(hexKey(stack.q, stack.r))) {
-    return noop(battle)
+  const openBridge = openBridgeMoatKeys(battle, catalog, tiles)
+  const standKeys = new Set(
+    stackFootprint(stack, catalog).map((hex) => occupancyKey(hex.q, hex.r)),
+  )
+  let damage = 0
+  for (const zone of battle.groundEffects ?? []) {
+    if (
+      !isMoatMechanic(zone.effect, zone.templateId) ||
+      zone.flatDmg <= 0
+    ) {
+      continue
+    }
+    const hitting = zone.hexKeys.some(
+      (key) => standKeys.has(key) && !openBridge.has(key),
+    )
+    if (!hitting) {
+      continue
+    }
+    damage += zone.flatDmg
   }
-  const tile = tiles.find((row) => row.q === stack.q && row.r === stack.r)
-  if (!tile) {
-    return noop(battle)
-  }
-  const spec = terrainByName(catalog, tile.terrain)
-  const damage = spec?.entry_damage ?? 0
   if (damage <= 0) {
     return noop(battle)
   }
   const full = stackMaxHealth(stack, catalog)
   const applied = applyStackDamage(stack, damage, full)
   const name = unit?.name ?? 'Unknown'
-  const terrainName = (spec?.name ?? tile.terrain).replaceAll('_', ' ')
-  let line = `${stack.qty} ${name} took ${damage} dmg from ${terrainName}`
+  let line = `${stack.qty} ${name} took ${damage} dmg from Moat`
   if (applied.killed > 0) {
     line += ` and ${applied.killed} ${name} died`
   }

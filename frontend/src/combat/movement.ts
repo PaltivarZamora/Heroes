@@ -13,17 +13,19 @@ import { closedDrawbridgeKeys, openBridgeMoatKeys } from './siege'
 import { hasLineOfSight } from './shapes'
 import { tombstoneOccupancyBodies } from './tombstone'
 import {
-  combatBodySize,
+  combatBodyFootprint,
+  footprintAlong,
   footprintFits,
-  footprintStep,
   occupancyKey,
   occupiedHexes,
   stackFootprint,
   type OccupancyBody,
 } from './occupancy'
+import type { FootprintCode } from './footprint'
 
 export {
   combatBodySize as combatStackCells,
+  combatBodyFootprint as combatStackFootprint,
   occupiedHexes,
   stackFootprint,
   stackOccupyingHex,
@@ -227,8 +229,8 @@ function stackEnterCost(
 }
 
 export type FootprintSpec = {
-  size: number
-  step: Axial
+  code: FootprintCode
+  along: 1 | -1
   ignore: ReadonlySet<string>
 }
 
@@ -236,12 +238,12 @@ export function footprintSpecFor(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): FootprintSpec {
-  const size = combatBodySize(stack, catalog)
-  const step = footprintStep(stack.side)
+  const code = combatBodyFootprint(stack, catalog)
+  const along = footprintAlong(stack.side)
   const ignore = new Set(
     stackFootprint(stack, catalog).map((hex) => hexKey(hex.q, hex.r)),
   )
-  return { size, step, ignore }
+  return { code, along, ignore }
 }
 
 function standFits(
@@ -252,8 +254,8 @@ function standFits(
 ): boolean {
   return footprintFits(
     origin,
-    spec?.size ?? 1,
-    spec?.step ?? { q: 0, r: 0 },
+    spec?.code ?? '1x1',
+    spec?.along ?? 1,
     occupied,
     enterCost,
     spec?.ignore,
@@ -278,8 +280,8 @@ function landFits(
   }
   return footprintFits(
     origin,
-    spec?.size ?? 1,
-    spec?.step ?? { q: 0, r: 0 },
+    spec?.code ?? '1x1',
+    spec?.along ?? 1,
     occupied,
     landCost,
     spec?.ignore,

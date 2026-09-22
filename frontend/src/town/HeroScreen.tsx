@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { formatResourceLine, RESOURCES } from '../hex/resources'
+import { ResourceBar } from '../hex/ResourceBar'
 import { humanPlayer, walletFromSession } from '../session/accessors'
 import { getSession, subscribe } from '../session/store'
 import {
@@ -191,13 +191,7 @@ export function HeroScreen({
     >
       <header className="town-management-bar">
         <h1 id="hero-screen-title">Hero</h1>
-        <p className="town-resource-strip">
-          {RESOURCES.map((resource) => (
-            <span key={resource.id}>
-              {formatResourceLine(resource, wallet[resource.id])}
-            </span>
-          ))}
-        </p>
+        <ResourceBar wallet={wallet} className="town-resource-strip" />
         <button type="button" onClick={onClose}>
           Close
         </button>

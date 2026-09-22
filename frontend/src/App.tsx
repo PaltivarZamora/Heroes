@@ -15,11 +15,10 @@ import {
   type HexScaleName,
 } from './hex/hexScale'
 import {
-  formatResourceLine,
   formatResourceLines,
-  RESOURCES,
   type ResourceWallet,
 } from './hex/resources'
+import { ResourceBar } from './hex/ResourceBar'
 import { calendarRolloverTitle, calendarDayNumber, formatCalendar } from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
@@ -60,6 +59,8 @@ import {
   matchVictoryResult,
   persistActiveExplored,
   visitingHeroId,
+  claimTown,
+  townIsUndefended,
   walletFromSession,
 } from './session/accessors'
 import { addWorldMobs } from './session/mobs'
@@ -257,7 +258,25 @@ function App() {
     setTrade(null)
     setHeroScreen(false)
     const town = current.towns.find((row) => row.id === townId)
-    const occupantId = town ? visitingHeroId(current, town) : null
+    if (!town) {
+      return
+    }
+    // Empty garrison / no defending army — walk-in capture, no siege.
+    if (townIsUndefended(current, town, self.id)) {
+      updateSession((session) =>
+        claimTown(session, town.position.q, town.position.r, {
+          ownerId: self.player_id,
+        }),
+      )
+      const claimed = findTownById(getSession(), townId)
+      if (claimed && !activePlayer(getSession())?.is_ai) {
+        setWelcomeTown({ name: claimed.name, id: claimed.id })
+      }
+      combatWaitRef.current?.()
+      combatWaitRef.current = null
+      return
+    }
+    const occupantId = visitingHeroId(current, town)
     const occupant = occupantId
       ? current.heroes.find((row) => row.id === occupantId)
       : undefined
@@ -1099,13 +1118,7 @@ function App() {
             onStartGame={onStartGame}
           />
         </div>
-        <p className="resource-debug">
-          {RESOURCES.map((resource) => (
-            <span key={resource.id}>
-              {formatResourceLine(resource, wallet[resource.id])}
-            </span>
-          ))}
-        </p>
+        <ResourceBar wallet={wallet} />
       </header>
       <HexMap
         key={mapEpoch}

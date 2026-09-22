@@ -4,7 +4,7 @@ import {
   retaliationCharges,
   unitAttackShape,
   unitById,
-  unitHexFootprint,
+  unitFootprint,
 } from '../town/catalog'
 import {
   insertIntoRemainingInitiative,
@@ -16,7 +16,7 @@ import {
 import { combatCanLandOn, combatEnterCost, moveKindForUnit } from './movement'
 import {
   footprintFits,
-  footprintStep,
+  footprintAlong,
   occupiedHexes,
 } from './occupancy'
 import { tombstoneOccupancyBodies } from './tombstone'
@@ -80,10 +80,10 @@ export function tryAutoSplitOnTurn(
     }
     return combatEnterCost(tile, kind)
   }
-  const size = unitHexFootprint(unit)
-  const step = footprintStep(stack.side)
+  const code = unitFootprint(unit)
+  const along = footprintAlong(stack.side)
   const open = neighborHexes({ q: stack.q, r: stack.r }).filter((hex) =>
-    footprintFits(hex, size, step, occupied, enterCost),
+    footprintFits(hex, code, along, occupied, enterCost),
   )
   if (open.length === 0) {
     return null

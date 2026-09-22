@@ -10,5 +10,7 @@ public record MapObjectData(
         Integer resourceId,
         String marker,
         String name,
-        Integer townTypeId) {
+        Integer townTypeId,
+        /** Horizontal mirror when placed; null/false = no flip. */
+        Boolean flipped) {
 }

@@ -2690,10 +2690,7 @@ export function resolveAttack(
         .trim()
         .toLowerCase()
       const isNinjaUnit =
-        unitId === 68 ||
-        unitId === 69 ||
-        unitName === 'ninja' ||
-        unitName === 'advanced ninja'
+        unitName === 'ninja' || unitName === 'advanced ninja'
       const factor =
         atkAbilities.chancePctFlatStat != null &&
         atkAbilities.chancePctFlatStat > 0

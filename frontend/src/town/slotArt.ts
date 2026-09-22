@@ -1,9 +1,11 @@
 /**
- * Empty-slot art on disk (most towns):
+ * Empty-slot placeholder art (separate from building.image_path; Rod owns
+ * disk renames for these files):
  *   {Town}_{Slot:02d}_Empty_1.png
- *   e.g. Grove_04_Empty_1.png
+ *   e.g. Grove_11_Empty_1.png
  *
- * Built slots load building.image_path from the database.
+ * Built slots always load building.image_path from the database — never
+ * synthesize a filename from slot/level/name.
  */
 export function emptySlotArtFilename(
   slotId: number,
@@ -14,7 +16,7 @@ export function emptySlotArtFilename(
   return `${town}_${slot}_Empty_1.png`
 }
 
-/** Built slots use building.image_path; empty slots keep the derived Empty name. */
+/** Built → building.image_path; empty → emptySlotArtFilename. */
 export function slotArtFilename(
   slotId: number,
   level: number,

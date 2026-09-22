@@ -5,8 +5,10 @@ import {
   getCachedCatalog,
   heroResourcePools,
   isAdvancedUnit,
+  unitById,
   unitEffectiveTier,
   unitHasTag,
+  unitIdByName,
   type ReferenceCatalog,
   type UnitRow,
 } from '../town/catalog'
@@ -40,21 +42,39 @@ export type FixedFightOk = {
 
 export type FixedFightResult = FixedFightOk | { error: string }
 
-/** Fortress ladder for Raise Demons (+ Pit Fiends enemy). */
-const RAISE_DEMON_ENEMIES: ReadonlyArray<{ unitId: number; qty: number }> = [
-  { unitId: 52, qty: 20 }, // Bandit T1
-  { unitId: 56, qty: 15 }, // Gypsy T2
-  { unitId: 58, qty: 10 }, // Yeti T3
-  { unitId: 64, qty: 2 }, // Arsonist T4
-  { unitId: 68, qty: 2 }, // Ninja T5
-  { unitId: 72, qty: 2 }, // Assassin T6
+/** Fortress ladder for Raise Demons (+ Pit Fiends enemy) — resolved by name. */
+const RAISE_DEMON_ENEMY_SPEC: ReadonlyArray<{ name: string; qty: number }> = [
+  { name: 'Bandit', qty: 20 },
+  { name: 'Gypsy', qty: 15 },
+  { name: 'Yeti', qty: 10 },
+  { name: 'Arsonist', qty: 2 },
+  { name: 'Ninja', qty: 2 },
+  { name: 'Assassin', qty: 2 },
 ]
 
-const PIT_FIEND_ARCH_ID = 216
+const PIT_FIEND_ARCH_NAME = 'Pit Fiend Arch'
 const PIT_FIEND_ARCH_QTY = 3
-/** Imp (base + Advanced) → Horned Hellion for Raise Demons debug army. */
-const IMP_UNIT_IDS = new Set([196, 197])
-const HORNED_HELLION_ID = 204
+const HORNED_HELLION_NAME = 'Horned Hellion'
+
+function resolveNamedArmy(
+  catalog: ReferenceCatalog,
+  parts: ReadonlyArray<{ name: string; qty: number }>,
+): Array<{ unitId: number; qty: number }> | null {
+  const out: Array<{ unitId: number; qty: number }> = []
+  for (const part of parts) {
+    const id = unitIdByName(catalog, part.name)
+    if (id == null) {
+      return null
+    }
+    out.push({ unitId: id, qty: part.qty })
+  }
+  return out
+}
+
+function isImpUnitId(catalog: ReferenceCatalog, unitId: number): boolean {
+  const name = unitById(catalog, unitId)?.name.trim().toLowerCase() ?? ''
+  return name === 'imp' || name === 'advanced imp'
+}
 
 /** BR S6-41: T1/T3/T3/T4/T5/T5 — skips T2/T6; intentional (data fit). */
 const HOARD_TIERS: readonly number[] = [1, 3, 3, 4, 5, 5]
@@ -108,13 +128,18 @@ function clearHeroArmy(session: GameSession, heroId: string): GameSession {
   }
 }
 
-/** Swap Imp stacks on this hero to Horned Hellions (204), keeping qty. */
+/** Swap Imp stacks on this hero to Horned Hellions, keeping qty. */
 function replaceHeroImpsWithHornedHellions(
   session: GameSession,
   heroId: string,
+  catalog: ReferenceCatalog,
 ): GameSession {
   const hero = session.heroes.find((row) => row.id === heroId)
   if (!hero) {
+    return session
+  }
+  const hellionId = unitIdByName(catalog, HORNED_HELLION_NAME)
+  if (hellionId == null) {
     return session
   }
   const heroStackIds = new Set(
@@ -123,8 +148,8 @@ function replaceHeroImpsWithHornedHellions(
   return {
     ...session,
     units: session.units.map((row) =>
-      heroStackIds.has(row.id) && IMP_UNIT_IDS.has(row.unit_id)
-        ? { ...row, unit_id: HORNED_HELLION_ID }
+      heroStackIds.has(row.id) && isImpUnitId(catalog, row.unit_id)
+        ? { ...row, unit_id: hellionId }
         : row,
     ),
   }
@@ -700,20 +725,31 @@ export function prepareFixedFight(
       : prepareForTheHoard(session, hero, catalog, random)
   }
   let next = session
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return { error: 'Catalog not loaded' }
+  }
   if (kind === 'pit_fiends') {
+    const archId = unitIdByName(catalog, PIT_FIEND_ARCH_NAME)
+    if (archId == null) {
+      return { error: `Fixed Fight: missing unit "${PIT_FIEND_ARCH_NAME}"` }
+    }
     next = clearHeroArmy(next, hero.id)
     next = insertHeroArmyStack(next, hero.id, 0, {
       id: nextUnitStackId(next),
-      unitId: PIT_FIEND_ARCH_ID,
+      unitId: archId,
       qty: PIT_FIEND_ARCH_QTY,
     })
   } else {
-    next = replaceHeroImpsWithHornedHellions(next, hero.id)
+    next = replaceHeroImpsWithHornedHellions(next, hero.id, catalog)
   }
   const enemies =
     kind === 'pit_fiends'
-      ? [{ unitId: 72, qty: 2 }]
-      : RAISE_DEMON_ENEMIES
+      ? resolveNamedArmy(catalog, [{ name: 'Assassin', qty: 2 }])
+      : resolveNamedArmy(catalog, RAISE_DEMON_ENEMY_SPEC)
+  if (!enemies) {
+    return { error: 'Fixed Fight: could not resolve enemy unit names' }
+  }
   const spawned = spawnFixedMob(next, hero.position, enemies)
   if (!spawned) {
     return { error: 'Could not spawn Fixed Fight enemies' }

@@ -69,6 +69,11 @@ export type BuildingState = {
   slot_num: number
   level: number
   recruit_qty: number
+  /**
+   * Permanent weekly growth add-on (Bone Nursery / Recruitment Beacon).
+   * Stacks; survives upgrades on the same slot.
+   */
+  growth_bonus?: number
   /** Rolled Library offers, keyed by building_id + discipline_id + level. */
   offered_abilities: OfferedAbilityRoll[]
 }
@@ -161,7 +166,7 @@ export type GameSession = {
 export const HUMAN_PLAYER_ID = 'player-1'
 export const GAME_ID = 'game-1'
 export const HERO_ID = 'hero-1'
-export const NECROPOLIS_TOWN_TYPE_ID = 1
+export const NECROPOLIS_TOWN_TYPE_ID = 6
 export const BUILDING_SLOT_COUNT = 16
 export const ARMY_STACK_SLOTS = 6
 

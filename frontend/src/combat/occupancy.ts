@@ -1,7 +1,11 @@
 import type { Axial } from '../hex/hero'
 import type { ReferenceCatalog } from '../town/catalog'
-import { unitById, unitHexFootprint } from '../town/catalog'
+import { unitById, unitFootprint } from '../town/catalog'
 import { isHeroStack, type CombatSide, type CombatStack } from './battle'
+import {
+  footprintHexes as shapeFootprintHexes,
+  type FootprintCode,
+} from './footprint'
 
 export function occupancyKey(q: number, r: number): string {
   return `${q},${r}`
@@ -16,35 +20,61 @@ export type OccupancyBody = {
   hexes: Axial[]
 }
 
-/** Inward contiguous step: extra hexes extend toward the field center. */
+/** Inward along-row direction: attacker +q, defender −q. */
+export function footprintAlong(side: CombatSide): 1 | -1 {
+  return side === 'def' ? -1 : 1
+}
+
+/**
+ * @deprecated Prefer footprintAlong — kept for call sites that still build Axial steps.
+ * Extra hexes extend toward the field center along ±q.
+ */
 export function footprintStep(side: CombatSide): Axial {
   return side === 'def' ? { q: -1, r: 0 } : { q: 1, r: 0 }
 }
 
 export function footprintHexes(
   origin: Axial,
-  size: number,
-  step: Axial,
+  codeOrSize: FootprintCode | number,
+  alongOrStep: 1 | -1 | Axial = 1,
 ): Axial[] {
-  const n = Math.max(1, Math.floor(size))
-  const hexes: Axial[] = [{ q: origin.q, r: origin.r }]
-  for (let i = 1; i < n; i += 1) {
-    hexes.push({
-      q: origin.q + step.q * i,
-      r: origin.r + step.r * i,
-    })
-  }
-  return hexes
+  const code: FootprintCode =
+    typeof codeOrSize === 'number'
+      ? codeOrSize <= 1
+        ? '1x1'
+        : codeOrSize === 2
+          ? '2x1'
+          : '1x1'
+      : codeOrSize
+  const along: 1 | -1 =
+    typeof alongOrStep === 'number'
+      ? alongOrStep
+      : alongOrStep.q < 0
+        ? -1
+        : 1
+  return shapeFootprintHexes(origin, code, along)
 }
 
+export function combatBodyFootprint(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): FootprintCode {
+  if (isHeroStack(stack)) {
+    return '1x1'
+  }
+  return unitFootprint(unitById(catalog, stack.unitId))
+}
+
+/** @deprecated Use combatBodyFootprint — returns hex count for legacy art sizing. */
 export function combatBodySize(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
-  if (isHeroStack(stack)) {
-    return 1
-  }
-  return unitHexFootprint(unitById(catalog, stack.unitId))
+  return footprintHexes(
+    { q: stack.q, r: stack.r },
+    combatBodyFootprint(stack, catalog),
+    footprintAlong(stack.side),
+  ).length
 }
 
 export function stackFootprint(
@@ -53,8 +83,8 @@ export function stackFootprint(
 ): Axial[] {
   return footprintHexes(
     { q: stack.q, r: stack.r },
-    combatBodySize(stack, catalog),
-    footprintStep(stack.side),
+    combatBodyFootprint(stack, catalog),
+    footprintAlong(stack.side),
   )
 }
 
@@ -174,13 +204,13 @@ export function stackOccupyingHex(
 /** True if every hex of the footprint can be stood on. */
 export function footprintFits(
   origin: Axial,
-  size: number,
-  step: Axial,
+  codeOrSize: FootprintCode | number,
+  alongOrStep: 1 | -1 | Axial,
   occupied: ReadonlySet<string>,
   enterCost: (q: number, r: number) => number | null,
   ignore?: ReadonlySet<string>,
 ): boolean {
-  for (const hex of footprintHexes(origin, size, step)) {
+  for (const hex of footprintHexes(origin, codeOrSize, alongOrStep)) {
     const key = occupancyKey(hex.q, hex.r)
     if (enterCost(hex.q, hex.r) == null) {
       return false

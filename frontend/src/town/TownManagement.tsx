@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore, Fragment, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   formatAmount,
-  formatResourceLine,
-  RESOURCES,
   type ResourceWallet,
 } from '../hex/resources'
+import { ResourceBar } from '../hex/ResourceBar'
 import {
   armyBuildOptions,
   buildingById,
   buildingGrowth,
-  constructionCost,
   destroyCostOf,
   emptySlotPreviewLines,
   hasPrerequisite,
@@ -38,9 +36,14 @@ import {
   unitCost,
   unitForBuilding,
   type BuildingRow,
+  type CostMap,
   type HeroPoolRow,
   type ReferenceCatalog,
 } from './catalog'
+import {
+  townConstructionCost,
+  townRecruitUnitCost,
+} from './townUniques'
 import {
   emptySlotArtFilename,
   GARRISON_ART_FILENAME,
@@ -323,7 +326,7 @@ export function TownManagement({
           buildingId: building.id,
           recruitQty: buildingGrowth(building),
         },
-        constructionCost(catalog, building),
+        townConstructionCost(session, catalog, townId, building),
       )
     ) {
       return
@@ -354,7 +357,7 @@ export function TownManagement({
           buildingId: next.id,
           recruitQty: current.recruitQty,
         },
-        constructionCost(catalog, next),
+        townConstructionCost(session, catalog, townId, next),
       )
     ) {
       return
@@ -437,13 +440,7 @@ export function TownManagement({
       <header className="town-management-bar">
         <h1 id="town-management-title">{townName}</h1>
         <p className="town-calendar">{calendarLabel}</p>
-        <p className="town-resource-strip">
-          {RESOURCES.map((resource) => (
-            <span key={resource.id}>
-              {formatResourceLine(resource, wallet[resource.id])}
-            </span>
-          ))}
-        </p>
+        <ResourceBar wallet={wallet} className="town-resource-strip" />
         <button type="button" onClick={onExit}>
           Exit Town
         </button>
@@ -486,6 +483,8 @@ export function TownManagement({
                     id,
                     townTypeId,
                     builtBuildingIds,
+                    (building) =>
+                      townConstructionCost(session, catalog, townId, building),
                   ).join('\n')
                 : ''
             const slotStyle = townLayoutSlotStyle(layout, layoutRows)
@@ -551,6 +550,7 @@ export function TownManagement({
           catalogError={catalogError}
           message={message}
           hasActedToday={hasActedToday}
+          townId={townId}
           townTypeId={townTypeId}
           anchor={panelAnchor}
           onClose={() => {
@@ -1135,6 +1135,7 @@ function BuildingPanel({
   catalogError,
   message,
   hasActedToday,
+  townId,
   townTypeId,
   wallet,
   anchor,
@@ -1156,6 +1157,7 @@ function BuildingPanel({
   catalogError: string | null
   message: string | null
   hasActedToday: boolean
+  townId: string
   townTypeId: number
   wallet: ResourceWallet
   anchor: { left: number; top: number } | null
@@ -1172,6 +1174,11 @@ function BuildingPanel({
   onOpenLibrary: () => void
 }) {
   const army = isArmySlot(slotId)
+  const sessionNow = getSession()
+  const buildCost = (building: BuildingRow): CostMap =>
+    catalog
+      ? townConstructionCost(sessionNow, catalog, townId, building)
+      : {}
   const current =
     catalog != null ? buildingById(catalog, slotState.buildingId) : null
   const nextCandidate =
@@ -1226,6 +1233,7 @@ function BuildingPanel({
           hasActedToday={hasActedToday}
           townTypeId={townTypeId}
           builtBuildingIds={builtBuildingIds}
+          buildCost={buildCost}
           onBuild={onBuild}
         />
       ) : current && isLibraryBuilding(current) ? (
@@ -1234,6 +1242,7 @@ function BuildingPanel({
           next={next}
           catalog={catalog}
           hasActedToday={hasActedToday}
+          buildCost={buildCost}
           onUpgrade={onUpgrade}
           onLearn={onOpenLibrary}
           lockedUpgradeLine={lockedUpgradeLine}
@@ -1245,8 +1254,10 @@ function BuildingPanel({
           next={next}
           catalog={catalog}
           hasActedToday={hasActedToday}
+          townId={townId}
           recruitQty={slotState.recruitQty}
           wallet={wallet}
+          buildCost={buildCost}
           onUpgrade={onUpgrade}
           onDestroy={onDestroy}
           onRecruit={onRecruit}
@@ -1286,6 +1297,7 @@ function EmptySlotActions({
   hasActedToday,
   townTypeId,
   builtBuildingIds,
+  buildCost,
   onBuild,
 }: {
   slotId: number
@@ -1294,6 +1306,7 @@ function EmptySlotActions({
   hasActedToday: boolean
   townTypeId: number
   builtBuildingIds: ReadonlySet<number>
+  buildCost: (building: BuildingRow) => CostMap
   onBuild: (building: BuildingRow) => void
 }) {
   if (army) {
@@ -1322,8 +1335,8 @@ function EmptySlotActions({
         {options.map((building) => {
           const unitName = unitForBuilding(catalog, building.id)?.name?.trim()
           const label = unitName
-            ? `Build ${building.name} (${unitName}): ${formatCost(constructionCost(catalog, building))}`
-            : `Build ${building.name}: ${formatCost(constructionCost(catalog, building))}`
+            ? `Build ${building.name} (${unitName}): ${formatCost(buildCost(building))}`
+            : `Build ${building.name}: ${formatCost(buildCost(building))}`
           return (
             <div key={building.id} className="town-building-option">
               <p>{effectLine(building)}</p>
@@ -1360,7 +1373,7 @@ function EmptySlotActions({
         disabled={hasActedToday}
         onClick={() => onBuild(root)}
       >
-        Build {root.name}: {formatCost(constructionCost(catalog, root))}
+        Build {root.name}: {formatCost(buildCost(root))}
       </button>
       <ActedLabel visible={hasActedToday} />
     </div>
@@ -1372,6 +1385,7 @@ function LibraryFilledActions({
   next,
   catalog,
   hasActedToday,
+  buildCost,
   onUpgrade,
   onLearn,
   lockedUpgradeLine,
@@ -1380,6 +1394,7 @@ function LibraryFilledActions({
   next: BuildingRow | null
   catalog: ReferenceCatalog
   hasActedToday: boolean
+  buildCost: (building: BuildingRow) => CostMap
   onUpgrade: (next: BuildingRow) => void
   onLearn: () => void
   lockedUpgradeLine?: string | null
@@ -1396,7 +1411,7 @@ function LibraryFilledActions({
             disabled={hasActedToday}
             onClick={() => onUpgrade(next)}
           >
-            Upgrade to {next.name}: {formatCost(constructionCost(catalog, next))}
+            Upgrade to {next.name}: {formatCost(buildCost(next))}
           </button>
           <ActedLabel visible={hasActedToday} />
         </>
@@ -1416,8 +1431,10 @@ function FilledSlotActions({
   next,
   catalog,
   hasActedToday,
+  townId,
   recruitQty,
   wallet,
+  buildCost,
   onUpgrade,
   onDestroy,
   onRecruit,
@@ -1431,8 +1448,10 @@ function FilledSlotActions({
   next: BuildingRow | null
   catalog: ReferenceCatalog
   hasActedToday: boolean
+  townId: string
   recruitQty: number
   wallet: ResourceWallet
+  buildCost: (building: BuildingRow) => CostMap
   onUpgrade: (next: BuildingRow) => void
   onDestroy: (building: BuildingRow) => void
   onRecruit: (qty: number) => boolean
@@ -1446,7 +1465,12 @@ function FilledSlotActions({
   const [hiring, setHiring] = useState(false)
   const destroyCost = destroyCostOf(current)
   const unit = army ? unitForBuilding(catalog, current.id) : null
-  const perUnitCost = unitCost(unit)
+  const perUnitCost = townRecruitUnitCost(
+    getSession(),
+    catalog,
+    townId,
+    unitCost(unit),
+  )
   const [qtyText, setQtyText] = useState('0')
 
   useEffect(() => {
@@ -1469,7 +1493,7 @@ function FilledSlotActions({
           disabled={hasActedToday}
           onClick={() => onUpgrade(next)}
         >
-          Upgrade to {next.name}: {formatCost(constructionCost(catalog, next))}
+          Upgrade to {next.name}: {formatCost(buildCost(next))}
         </button>
       ) : lockedUpgradeLine ? (
         <p>{lockedUpgradeLine}</p>

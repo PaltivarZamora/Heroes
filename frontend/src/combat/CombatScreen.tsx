@@ -19,19 +19,23 @@ import {
   HERO_ROW,
   armySlotRow,
   combatEncounterSeed,
+  combatTilesFromHexField,
   createCombatHexGrid,
+  generateCombatHexTerrainField,
   hexFloorAnchor,
-  neighborhoodTerrains,
-  pickCombatTerrain,
   siegeMoatColForRow,
-  siegeTileTerrain,
 } from './battlefield'
+import { seedBattlePropsFromWorld } from './battleProps'
 import {
+  addChunkMaskedTerrain,
   addMaskedTerrainHex,
-  loadAllTerrainTextures,
+  addMaskedTerrainWedge,
+  buildTerrainChunkDecors,
+  loadHexTerrainTextures,
   loadTextureUrl,
-  pickTerrainVariantIndex,
 } from '../hex/terrainTextures'
+import { addFootprintPropSprite, loadPropTexture } from '../hex/propTextures'
+import { parseCssHexColor, wedgesForHex } from '../hex/terrainTransition'
 import { terrainFillColor } from '../hex/world'
 import { DebugCopyPanel } from '../hex/DebugCopyPanel'
 import type { DebugSections } from '../hex/debug'
@@ -44,7 +48,6 @@ import {
   getCachedCatalog,
   subscribeCatalog,
   shapePulsesOnMove,
-  terrainByName,
   unitAttackShape,
   unitById,
   unitIsStationary,
@@ -52,6 +55,9 @@ import {
   unitAutoTarget,
   combatEndTimerSeconds,
   combatLogTimerSeconds,
+  mapShowHexesBattle,
+  mapUseTerrainImages,
+  hexTerrainByName,
   type AbilityRow,
 } from '../town/catalog'
 import { heroPortraitUrl, terrainArtUrl, unitPortraitUrl } from '../town/slotArt'
@@ -84,9 +90,16 @@ import {
   stackMoveSpeed,
 } from './battle'
 import {
+  footprintBottomRow,
+  footprintExtent,
+  footprintHexes,
+  parseFootprint,
+  type FootprintCode,
+} from './footprint'
+import {
   canCombatStep,
   combatMovementReachable,
-  combatStackCells,
+  combatStackFootprint,
   footprintSpecFor,
   groundEffectMovementBlockKeys,
   hexKey,
@@ -99,7 +112,6 @@ import {
   stopOnlyForMover,
 } from './movement'
 import { deathKnightShadowMoveAdjust } from './shadow'
-import { tryLeaveTerrainOnMove } from './factory'
 import { auraRadiusHexKeys } from './templePassive'
 import { chanceRollLog } from './combatLog'
 import {
@@ -107,7 +119,9 @@ import {
   tryLeaveGroundEffectOnMoveStep,
   tryTriggerGroundEffectsOnEnter,
   fireHazardSummaryLine,
+  placeSiegeMoatGroundEffect,
 } from './groundEffect'
+import { warRoomSiegeMult } from '../town/townUniques'
 import { resolveAttack, pickAutoAttackTarget, heroForSide, type HitFlashColor } from './attack'
 import { combatOwnerPlayer, decideCombatAction } from '../ai/combat'
 import { decideHeroAbility } from '../ai/heroAbility'
@@ -416,7 +430,11 @@ function GroundEffectArt({
   useEffect(() => {
     setMissing(false)
   }, [filename])
-  if (filename && !missing) {
+  // Damage-only zones (siege Moat) intentionally omit art — terrain paint is enough.
+  if (!filename) {
+    return null
+  }
+  if (!missing) {
     return (
       <img
         className="combat-ground-effect-img"
@@ -490,12 +508,21 @@ function stacksBottomUp(stacks: CombatStack[], anchors: HexAnchor[]): CombatStac
 function stackArtBox(
   pos: { x: number; y: number },
   hexPx: number,
-  size: number,
+  codeOrSize: FootprintCode | number,
   side: CombatSide,
 ) {
-  const cells = Math.max(1, size)
-  const width = hexPx * cells
-  const height = hexPx
+  const code =
+    typeof codeOrSize === 'number'
+      ? codeOrSize <= 1
+        ? '1x1'
+        : codeOrSize === 2
+          ? '2x1'
+          : '1x1'
+      : codeOrSize
+  const ext = footprintExtent(code)
+  const width = hexPx * ext.cols
+  // Pointy-top row pitch ≈ ¾ hex height.
+  const height = hexPx * (1 + Math.max(0, ext.rows - 1) * 0.75)
   const left =
     side === 'def' ? pos.x + hexPx / 2 - width : pos.x - hexPx / 2
   return { width, height, left, top: pos.y - height }
@@ -655,7 +682,9 @@ export function CombatScreen({
   waypointPlanRef.current = waypointPlan
   // Keep live tiles (Void/Barricade stamps) available to the Pixi hover path —
   // that handler closes over the map-init array and must not use a stale copy.
-  if (field) {
+  // Only sync when markers match: assigning on every render made createBattle
+  // see prev===field and skip the initial army spawn.
+  if (field && fieldRef.current?.markers === field.markers) {
     fieldRef.current = field
   }
   {
@@ -750,27 +779,7 @@ export function CombatScreen({
         if (walkGenRef.current !== gen) {
           return
         }
-        // Legacy terrain_type leave-behind (vacated hex before stepping away).
-        {
-          const walker = latest.stacks.find((row) => row.id === stack.id)
-          if (walker) {
-            const left = tryLeaveTerrainOnMove(
-              latest,
-              stack.id,
-              catalog,
-              field.tiles,
-              { q: walker.q, r: walker.r },
-            )
-            latest = left.battle
-            if (left.tiles !== field.tiles) {
-              setField((prev) =>
-                prev ? { ...prev, tiles: left.tiles } : prev,
-              )
-              field.tiles.splice(0, field.tiles.length, ...left.tiles)
-            }
-            trapLines.push(...left.lines)
-          }
-        }
+        // Vacated-hex leave-behind is ground_effect only (Void GE id 5).
         latest = moveStack(latest, stack.id, step.q, step.r)
         {
           // Worms/Riders (full_path): leave GE on each entered hex.
@@ -1917,6 +1926,15 @@ export function CombatScreen({
       field.heroStarts,
       defenderMobId,
     )
+    if (field.siege) {
+      const moatMult = warRoomSiegeMult(session, catalog, field.siege.townId)
+      created = placeSiegeMoatGroundEffect(
+        created,
+        catalog,
+        field.tiles,
+        moatMult,
+      )
+    }
     const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
     const defender = defenderHeroId
       ? session.heroes.find((hero) => hero.id === defenderHeroId)
@@ -1927,6 +1945,7 @@ export function CombatScreen({
       field.tiles,
       { atk: attacker, def: defender },
       Math.random,
+      { fillToCap: true },
     )
     created = totems.battle
     const snap = snapshotOpening(created.stacks)
@@ -2391,26 +2410,6 @@ export function CombatScreen({
             if (walkGenRef.current !== gen) {
               return
             }
-            {
-              const walker = latest.stacks.find((row) => row.id === stack.id)
-              if (walker) {
-                const left = tryLeaveTerrainOnMove(
-                  latest,
-                  stack.id,
-                  catalog,
-                  field.tiles,
-                  { q: walker.q, r: walker.r },
-                )
-                latest = left.battle
-                if (left.tiles !== field.tiles) {
-                  setField((prev) =>
-                    prev ? { ...prev, tiles: left.tiles } : prev,
-                  )
-                  field.tiles.splice(0, field.tiles.length, ...left.tiles)
-                }
-                trapLines.push(...left.lines)
-              }
-            }
             latest = moveStack(latest, stack.id, step.q, step.r)
             {
               const left = tryLeaveGroundEffectOnMoveStep(
@@ -2656,26 +2655,6 @@ export function CombatScreen({
           for (const step of steps) {
             if (walkGenRef.current !== gen) {
               return
-            }
-            {
-              const walker = latest.stacks.find((row) => row.id === stack.id)
-              if (walker) {
-                const left = tryLeaveTerrainOnMove(
-                  latest,
-                  stack.id,
-                  catalog,
-                  field.tiles,
-                  { q: walker.q, r: walker.r },
-                )
-                latest = left.battle
-                if (left.tiles !== field.tiles) {
-                  setField((prev) =>
-                    prev ? { ...prev, tiles: left.tiles } : prev,
-                  )
-                  field.tiles.splice(0, field.tiles.length, ...left.tiles)
-                }
-                trapLines.push(...left.lines)
-              }
             }
             latest = moveStack(latest, stack.id, step.q, step.r)
             {
@@ -3012,8 +2991,8 @@ export function CombatScreen({
       : def
         ? { ...def.position }
         : { ...mob!.position }
-    const pool = neighborhoodTerrains(attackerPos, defenderPos)
     const seed = combatEncounterSeed(current.game.seed, attackerPos, defenderPos)
+    const useTerrainImages = mapUseTerrainImages(catalog)
     const { grid, layout } = createCombatHexGrid(
       COMBAT_COLUMNS,
       COMBAT_ROWS,
@@ -3069,7 +3048,7 @@ export function CombatScreen({
       }
       app = instance
       canvasHost.replaceChildren(instance.canvas)
-      const texturesByTerrain = await loadAllTerrainTextures(catalog.terrain_type)
+      const hexTerrainTextures = await loadHexTerrainTextures(catalog.terrain)
       const townName = siege
         ? townTypeName(catalog, siege.town_type_id)
         : 'Necropolis'
@@ -3089,78 +3068,272 @@ export function CombatScreen({
       const auraMark = new Graphics()
       const activeMark = new Graphics()
       const terrainLayer = new Container()
+      const propLayer = new Container()
       const moatClosedLayer = new Container()
       const moatOpenLayer = new Container()
       const gateMoat = siegeLayout?.drawbridgeMoat ?? null
       const { offsetX, offsetY } = layout
-      const rolled: CombatTile[] = []
+      const showHexOutlines = mapShowHexesBattle(catalog)
       const anchors: HexAnchor[] = []
       const hexByKey = new Map<string, Hex>()
       grid.forEach((hex) => {
-        const sampled = pickCombatTerrain(pool, seed, hex.q, hex.r, catalog)
-        const terrain = siegeLayout
-          ? siegeTileTerrain(hex.col, hex.row, sampled)
-          : sampled
-        const spec = terrainByName(catalog, terrain)
-        rolled.push({
-          q: hex.q,
-          r: hex.r,
-          col: hex.col,
-          row: hex.row,
-          terrain,
-          movementCostMultiplier: spec?.move_cost ?? null,
-          blocked: spec?.is_blocked ?? true,
-          blocksLos: spec?.blocks_los ?? false,
-        })
         const floor = hexFloorAnchor(hex, offsetX, offsetY)
         anchors.push({ q: hex.q, r: hex.r, x: floor.x, y: floor.y })
         hexByKey.set(hexKey(hex.q, hex.r), hex)
       })
-      const tiles = rolled
-      for (const tile of tiles) {
-        const hex = hexByKey.get(hexKey(tile.q, tile.r))
-        if (!hex) {
-          continue
+
+      const field = generateCombatHexTerrainField(
+        grid,
+        attackerPos,
+        defenderPos,
+        seed,
+        catalog,
+      )
+      const tiles = seedBattlePropsFromWorld(
+        combatTilesFromHexField(field, catalog, Boolean(siegeLayout)),
+        catalog,
+        attackerPos,
+        defenderPos,
+        { seed, siege: Boolean(siegeLayout) },
+      )
+
+      const terrainByCoord = new Map(
+        tiles.map((tile) => [`${tile.q},${tile.r}`, tile] as const),
+      )
+      const terrainLookup = (q: number, r: number) =>
+        terrainByCoord.get(`${q},${r}`)?.terrain ?? null
+
+      {
+        const members = tiles
+          .map((tile) => {
+            const hex = hexByKey.get(hexKey(tile.q, tile.r))
+            return hex ? { q: tile.q, r: tile.r, hex } : null
+          })
+          .filter((m): m is { q: number; r: number; hex: Hex } => m != null)
+        const chunkDecors = useTerrainImages
+          ? buildTerrainChunkDecors(
+              members,
+              terrainLookup,
+              (q, r) => terrainByCoord.get(`${q},${r}`)?.chunkId ?? null,
+              (name) =>
+                hexTerrainTextures.get(name) ??
+                hexTerrainTextures.get(name.replaceAll(' ', '_')),
+              offsetX,
+              offsetY,
+              seed,
+            )
+          : new Map()
+
+        const hexCenter = (hex: Hex) => {
+          let x = 0
+          let y = 0
+          for (const c of hex.corners) {
+            x += c.x + offsetX
+            y += c.y + offsetY
+          }
+          return { x: x / hex.corners.length, y: y / hex.corners.length }
         }
-        const poly = hex.corners.map((corner) => ({
-          x: corner.x + offsetX,
-          y: corner.y + offsetY,
-        }))
-        const variants =
-          texturesByTerrain.get(tile.terrain) ??
-          texturesByTerrain.get(tile.terrain.replaceAll(' ', '_'))
-        const isMoat =
-          tile.terrain.replaceAll(' ', '_').toLowerCase() === 'moat'
-        const hasTex = variants != null && variants.length > 0
-        if (!isMoat || !hasTex) {
-          fills.poly(poly)
-          fills.fill({ color: terrainFillColor(tile.terrain) })
-        }
-        if (hasTex && variants) {
-          const variant = pickTerrainVariantIndex(
-            seed,
-            tile.q,
-            tile.r,
-            variants,
-          )
-          const chosen = variants[variant]
-          if (chosen) {
-            const isGateMoat =
-              gateMoat != null &&
-              tile.q === gateMoat.q &&
-              tile.r === gateMoat.r
-            addMaskedTerrainHex(
-              isGateMoat ? moatClosedLayer : terrainLayer,
+
+        for (const tile of tiles) {
+          const hex = hexByKey.get(hexKey(tile.q, tile.r))
+          if (!hex) {
+            continue
+          }
+          const poly = hex.corners.map((corner) => ({
+            x: corner.x + offsetX,
+            y: corner.y + offsetY,
+          }))
+          const cell = new Container()
+          const cellMask = new Graphics()
+          cellMask.poly(poly)
+          cellMask.fill({ color: 0xffffff })
+          cell.addChild(cellMask)
+          cell.mask = cellMask
+
+          const hexRow = hexTerrainByName(catalog, tile.terrain)
+          const isMoat =
+            tile.terrain.replaceAll(' ', '_').toLowerCase() === 'moat'
+          const isGateMoat =
+            gateMoat != null &&
+            tile.q === gateMoat.q &&
+            tile.r === gateMoat.r
+          const decor = chunkDecors.get(`${tile.q},${tile.r}`)
+
+          if (isMoat && isGateMoat) {
+            const moatTex =
+              hexTerrainTextures.get('Moat') ??
+              hexTerrainTextures.get('moat')
+            if (moatTex) {
+              addMaskedTerrainHex(
+                moatClosedLayer,
+                hex,
+                offsetX,
+                offsetY,
+                moatTex,
+                'contain',
+              )
+            } else {
+              fills.poly(poly)
+              fills.fill({
+                color: hexRow
+                  ? parseCssHexColor(hexRow.color)
+                  : terrainFillColor(tile.terrain),
+              })
+            }
+          } else if (useTerrainImages && decor && hexRow) {
+            const center = hexCenter(hex)
+            const expanded = poly.map((corner) => {
+              const dx = corner.x - center.x
+              const dy = corner.y - center.y
+              const len = Math.hypot(dx, dy) || 1
+              return {
+                x: corner.x + (dx / len) * 2,
+                y: corner.y + (dy / len) * 2,
+              }
+            })
+            addChunkMaskedTerrain(cell, expanded, decor)
+          } else {
+            fills.poly(poly)
+            fills.fill({
+              color: hexRow
+                ? parseCssHexColor(hexRow.color)
+                : terrainFillColor(tile.terrain),
+            })
+          }
+
+          if (hexRow) {
+            const wedges = wedgesForHex(
+              catalog,
               hex,
               offsetX,
               offsetY,
-              chosen.texture,
-              isMoat ? 'contain' : 'cover',
+              tile.q,
+              tile.r,
+              (nq, nr) => {
+                const nHex = hexByKey.get(hexKey(nq, nr))
+                return nHex ? hexCenter(nHex) : null
+              },
+              terrainLookup,
             )
+            for (const wedge of wedges) {
+              if (useTerrainImages) {
+                if (wedge.fromBuffer) {
+                  const bufTex =
+                    hexTerrainTextures.get(wedge.terrain.name) ??
+                    hexTerrainTextures.get(
+                      wedge.terrain.name.replaceAll(' ', '_'),
+                    )
+                  if (bufTex) {
+                    addMaskedTerrainWedge(cell, wedge.points, {
+                      kind: 'texture',
+                      texture: bufTex,
+                      hex,
+                      offsetX,
+                      offsetY,
+                    })
+                    continue
+                  }
+                } else {
+                  const wDecor = chunkDecors.get(`${wedge.nq},${wedge.nr}`)
+                  if (wDecor) {
+                    addMaskedTerrainWedge(cell, wedge.points, {
+                      kind: 'chunk',
+                      decor: wDecor,
+                    })
+                    continue
+                  }
+                }
+              }
+              addMaskedTerrainWedge(cell, wedge.points, {
+                kind: 'color',
+                color: parseCssHexColor(wedge.terrain.color),
+              })
+            }
+          }
+
+          terrainLayer.addChild(cell)
+          if (showHexOutlines) {
+            strokes.poly(poly)
+            strokes.stroke({ width: 2, color: 0x111111 })
           }
         }
-        strokes.poly(poly)
-        strokes.stroke({ width: 2, color: 0x111111 })
+      }
+
+      await Promise.all(
+        tiles.map(async (tile) => {
+          if (!tile.propFile) {
+            return
+          }
+          const hex = hexByKey.get(hexKey(tile.q, tile.r))
+          if (!hex) {
+            return
+          }
+          const texture = await loadPropTexture(tile.propFile, tile.propVariant)
+          if (!texture || cancelled) {
+            return
+          }
+          const code = parseFootprint(tile.propFootprint ?? '1x1')
+          const cover = footprintHexes({ q: tile.q, r: tile.r }, code, 1)
+          const bottoms = footprintBottomRow({ q: tile.q, r: tile.r }, code, 1)
+          const centers: Array<{ x: number; y: number }> = []
+          const bottomCenters: Array<{ x: number; y: number }> = []
+          for (const h of cover) {
+            const cell = hexByKey.get(hexKey(h.q, h.r))
+            if (!cell) {
+              continue
+            }
+            let cx = 0
+            let cy = 0
+            for (const c of cell.corners) {
+              cx += c.x + offsetX
+              cy += c.y + offsetY
+            }
+            centers.push({
+              x: cx / cell.corners.length,
+              y: cy / cell.corners.length,
+            })
+          }
+          for (const h of bottoms) {
+            const cell = hexByKey.get(hexKey(h.q, h.r))
+            if (!cell) {
+              continue
+            }
+            let cx = 0
+            let cy = 0
+            for (const c of cell.corners) {
+              cx += c.x + offsetX
+              cy += c.y + offsetY
+            }
+            bottomCenters.push({
+              x: cx / cell.corners.length,
+              y: cy / cell.corners.length,
+            })
+          }
+          if (centers.length === 0) {
+            let cx = 0
+            let cy = 0
+            for (const c of hex.corners) {
+              cx += c.x + offsetX
+              cy += c.y + offsetY
+            }
+            centers.push({
+              x: cx / hex.corners.length,
+              y: cy / hex.corners.length,
+            })
+          }
+          addFootprintPropSprite(
+            propLayer,
+            texture,
+            centers,
+            bottomCenters.length > 0 ? bottomCenters : centers,
+            hex.width,
+            hex.height,
+          )
+        }),
+      )
+      if (cancelled) {
+        instance.destroy()
+        return
       }
       if (downTex && gateMoat) {
         const moatHex = hexByKey.get(hexKey(gateMoat.q, gateMoat.r))
@@ -3192,6 +3365,7 @@ export function CombatScreen({
         terrainLayer,
         moatClosedLayer,
         moatOpenLayer,
+        propLayer,
         strokes,
         auraMark,
         reach,
@@ -3800,31 +3974,6 @@ export function CombatScreen({
                   return (
                     <>
                       {renderZones('below_units')}
-                      {(battle.terrainPatches ?? []).map((patch) => {
-                        const pos = anchorAt(field.anchors, patch.q, patch.r)
-                        if (!pos) {
-                          return null
-                        }
-                        return (
-                          <div
-                            key={`tp:${patch.q},${patch.r},${patch.terrainTypeId}`}
-                            className="combat-ground-effect combat-ground-effect-below"
-                            data-terrain-patch={patch.terrainTypeId}
-                            title={patch.name}
-                            style={{
-                              width: field.hexPx,
-                              height: field.hexPx,
-                              left: pos.x - field.hexPx / 2,
-                              top: pos.y - field.hexPx,
-                            }}
-                          >
-                            <GroundEffectArt
-                              filename={patch.imagePath}
-                              label={patch.name}
-                            />
-                          </div>
-                        )
-                      })}
                       {stacksBottomUp(battle.stacks, field.anchors).map((stack) => {
                   const pos = anchorAt(field.anchors, stack.q, stack.r)
                   if (!pos) {
@@ -3839,7 +3988,7 @@ export function CombatScreen({
                   const box = stackArtBox(
                     pos,
                     field.hexPx,
-                    catalog ? combatStackCells(stack, catalog) : 1,
+                    catalog ? combatStackFootprint(stack, catalog) : '1x1',
                     stack.side,
                   )
                   const unit = hero ? null : unitById(catalog, stack.unitId)
@@ -3959,8 +4108,8 @@ export function CombatScreen({
                     pos,
                     field.hexPx,
                     occupant && catalog
-                      ? combatStackCells(occupant, catalog)
-                      : 1,
+                      ? combatStackFootprint(occupant, catalog)
+                      : '1x1',
                     occupant?.side ?? 'atk',
                   )
                   return (
@@ -4082,7 +4231,7 @@ export function CombatScreen({
                   const box = stackArtBox(
                     pos,
                     field.hexPx,
-                    combatStackCells(stack, catalog),
+                    combatStackFootprint(stack, catalog),
                     stack.side,
                   )
                   const tipEstimatePx = 10 + rows.length * 17

@@ -1,7 +1,7 @@
 import type { Axial } from '../hex/hero'
 import { hexDistance } from '../hex/pathfinding'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { unitById, unitHexFootprint } from '../town/catalog'
+import { unitById, unitFootprint } from '../town/catalog'
 import {
   isHeroStack,
   moveStack,
@@ -13,7 +13,7 @@ import {
 import { combatCanLandOn, combatEnterCost, moveKindForUnit } from './movement'
 import {
   footprintFits,
-  footprintStep,
+  footprintAlong,
   occupancyKey,
   occupiedHexes,
 } from './occupancy'
@@ -60,14 +60,14 @@ export function landableHexes(
     }
     return combatEnterCost(tile, kind)
   }
-  const size = unitHexFootprint(unit)
-  const step = footprintStep(stack.side)
+  const code = unitFootprint(unit)
+  const along = footprintAlong(stack.side)
   return tiles
     .filter((tile) =>
       footprintFits(
         { q: tile.q, r: tile.r },
-        size,
-        step,
+        code,
+        along,
         occupied,
         enterCost,
       ),

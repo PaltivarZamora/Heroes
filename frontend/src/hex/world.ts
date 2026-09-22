@@ -46,6 +46,10 @@ function asWorldTile(raw: TileData): TileData {
     isBlocked?: unknown
     is_blocked?: unknown
     movement_cost_multiplier?: unknown
+    chunk_id?: unknown
+    prop_id?: unknown
+    prop_variant?: unknown
+    prop_file?: unknown
   }
   const costRaw = extra.movementCostMultiplier ?? extra.movement_cost_multiplier
   const cost =
@@ -59,6 +63,19 @@ function asWorldTile(raw: TileData): TileData {
       : flag === true ||
         flag === 1 ||
         String(flag).trim().toLowerCase() === 'true'
+  const propIdRaw = raw.propId ?? extra.prop_id
+  const propVariantRaw = raw.propVariant ?? extra.prop_variant
+  const propFileRaw = raw.propFile ?? extra.prop_file
+  const propIdN =
+    propIdRaw == null || propIdRaw === '' ? NaN : Number(propIdRaw)
+  const propVariantN =
+    propVariantRaw == null || propVariantRaw === ''
+      ? NaN
+      : Number(propVariantRaw)
+  const propFile =
+    typeof propFileRaw === 'string' && propFileRaw.trim() !== ''
+      ? propFileRaw.trim().replace(/\.png$/i, '')
+      : null
   return {
     q: raw.q,
     r: raw.r,
@@ -66,6 +83,17 @@ function asWorldTile(raw: TileData): TileData {
     movementCostMultiplier:
       cost != null && Number.isFinite(cost) ? cost : null,
     blocked,
+    chunkId: (() => {
+      const id = raw.chunkId ?? extra.chunk_id
+      const n = id == null || id === '' ? NaN : Number(id)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    propId: Number.isFinite(propIdN) && propIdN > 0 ? propIdN : null,
+    propVariant:
+      Number.isFinite(propVariantN) && propVariantN > 0
+        ? Math.floor(propVariantN)
+        : null,
+    propFile,
   }
 }
 
@@ -186,16 +214,21 @@ export async function fetchTestGrid(seed?: number): Promise<TestGridResponse> {
   }
 }
 
-function offsetFromZero(col: number): number {
-  return (col + -1 * (col & 1)) >> 1
+/** honeycomb-grid default offset (-1): (axis + -1 * (axis & 1)) >> 1 */
+function offsetFromZero(axis: number): number {
+  return (axis + -1 * (axis & 1)) >> 1
 }
 
+/**
+ * EXPERIMENT: pointy-top world map — odd-r offset (row = r, col = q + offset(r)).
+ * Revert with odd-q: col = q, row = r + offset(q).
+ */
 function dimensionsFromTiles(tiles: TileData[]): { width: number; height: number } {
   let maxCol = 0
   let maxRow = 0
   for (const tile of tiles) {
-    const col = tile.q
-    const row = tile.r + offsetFromZero(tile.q)
+    const row = tile.r
+    const col = tile.q + offsetFromZero(tile.r)
     if (col > maxCol) {
       maxCol = col
     }
@@ -221,15 +254,13 @@ function measureGrid(grid: Grid<Hex>) {
     }
   })
 
-  const verticalStagger = grid.hexPrototype.height / 2
-  const padX = GRID_PADDING
-  const padY = GRID_PADDING + verticalStagger
-
+  // EXPERIMENT: pointy-top — uniform pad like combat (no flat verticalStagger).
+  const pad = GRID_PADDING
   return {
-    offsetX: padX - minX,
-    offsetY: padY - minY,
-    canvasWidth: Math.ceil(maxX - minX + padX * 2),
-    canvasHeight: Math.ceil(maxY - minY + padY * 2),
+    offsetX: pad - minX,
+    offsetY: pad - minY,
+    canvasWidth: Math.ceil(maxX - minX + pad * 2),
+    canvasHeight: Math.ceil(maxY - minY + pad * 2),
   }
 }
 
@@ -237,7 +268,8 @@ function measureGrid(grid: Grid<Hex>) {
 export function createHexGrid(width: number, height: number, hexSize: number) {
   const Hex = defineHex({
     dimensions: hexSize,
-    orientation: Orientation.FLAT,
+    // EXPERIMENT: pointy-top world map — revert to Orientation.FLAT with odd-q.
+    orientation: Orientation.POINTY,
     origin: 'topLeft',
   })
   const grid = new Grid(Hex, rectangle({ width, height }))

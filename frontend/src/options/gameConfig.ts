@@ -67,8 +67,12 @@ function clampPlayerCount(n: number): number {
   )
 }
 
-/** Default hero_type.id per slot from new_hero_1..4; unused slots stay Random. */
-const FALLBACK_HERO_TYPE_IDS: Array<number | null> = [3, 2, 4, 6]
+/**
+ * Placeholder New Game starters (Balance-phase TBD).
+ * Spread across towns — Knight, Barbarian, Necromancer, Wizard.
+ * Keep in sync with app_config.new_hero_1..4.
+ */
+const FALLBACK_HERO_TYPE_IDS: Array<number | null> = [1, 7, 12, 18]
 
 function heroTypeDefault(
   catalog: ReferenceCatalog | null | undefined,

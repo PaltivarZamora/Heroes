@@ -3,7 +3,7 @@ import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
   commandingHeroStats,
-  terrainByName,
+  hexTerrainByName,
   unitAttackShape,
   unitById,
 } from '../town/catalog'
@@ -27,7 +27,7 @@ function heroForSide(
   return side === 'atk' ? heroes.atk : heroes.def
 }
 
-/** Mud Sprite: at turn-start only, if standing on Mud, +floor(qty/10) (min 1). */
+/** Mud Sprite: at turn-start only, if standing on absorb terrains, +floor(qty/10) (min 1). */
 export function applyTerrainGrowth(
   battle: CombatBattle,
   stackId: string,
@@ -39,8 +39,10 @@ export function applyTerrainGrowth(
     return { battle, lines: [] }
   }
   const spec = unitAttackShape(unitById(catalog, stack.unitId))
-  const terrainId = spec.terrainGrowthTerrainTypeId
-  if (terrainId == null || terrainId <= 0) {
+  const absorbIds = new Set(
+    (spec.absorbTerrainIds ?? []).filter((id) => id > 0),
+  )
+  if (absorbIds.size === 0) {
     return { battle, lines: [] }
   }
   const byKey = new Map(
@@ -51,8 +53,8 @@ export function applyTerrainGrowth(
     if (!tile) {
       return false
     }
-    const terrain = terrainByName(catalog, tile.terrain)
-    return terrain?.id === terrainId
+    const terrain = hexTerrainByName(catalog, tile.terrain)
+    return terrain != null && absorbIds.has(terrain.id)
   })
   if (!onTerrain) {
     return { battle, lines: [] }

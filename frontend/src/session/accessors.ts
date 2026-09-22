@@ -13,14 +13,15 @@ import {
   armyOptions,
   buildingById,
   buildingGrowth,
-  goldIncomeGrant,
+  buildingProduces,
+  genericRoot,
+  genericSlotBuildings,
   heroMovementPoints,
   heroResourcePools,
   isArmySlot,
   isBuildRoot,
   isLibraryBuilding,
-  resourceYieldGrant,
-  scaleCost,
+  nextInChain,
   unitCost,
   unitForBuilding,
   unitUpgradeCost,
@@ -34,6 +35,13 @@ import {
   type HeroPoolRow,
   type ReferenceCatalog,
 } from '../town/catalog'
+import {
+  applyHeroTownVisitUniques,
+  applyWeeklyTownUniques,
+  townRecruitCost,
+} from '../town/townUniques'
+
+export { applyHeroTownVisitUniques } from '../town/townUniques'
 import { applyWeeklyMobGrowth } from './mobs'
 import { applyWeeklyNeutralTownGrowth } from './neutralTowns'
 import {
@@ -83,6 +91,49 @@ export function visitingHeroId(
   }
   const hero = session.heroes.find(onTown)
   return hero ? hero.id : null
+}
+
+/** True when any army slot id maps to a living (qty > 0) unit stack. */
+export function slotsHaveLivingUnits(
+  session: GameSession,
+  slots: Array<string | null> | undefined,
+): boolean {
+  if (!slots) {
+    return false
+  }
+  return slots.some((id) => {
+    if (!id) {
+      return false
+    }
+    const row = session.units.find((unit) => unit.id === id)
+    return row != null && row.qty > 0
+  })
+}
+
+/**
+ * Enemy town with no garrison and no defending hero army — walk-in capture,
+ * no siege battle.
+ */
+export function townIsUndefended(
+  session: GameSession,
+  town: Town,
+  attackerHeroId?: string | null,
+): boolean {
+  if (slotsHaveLivingUnits(session, town.garrison.slots_1_to_6)) {
+    return false
+  }
+  const visitorId = visitingHeroId(session, town)
+  if (!visitorId || visitorId === attackerHeroId) {
+    return true
+  }
+  const visitor = session.heroes.find((hero) => hero.id === visitorId)
+  if (!visitor) {
+    return true
+  }
+  if (town.player_id && visitor.player_id !== town.player_id) {
+    return true
+  }
+  return !slotsHaveLivingUnits(session, visitor.army.slots_1_to_6)
 }
 
 export function activePlayerIndex(session: GameSession): number {
@@ -694,7 +745,7 @@ export function grantOpenChest(session: GameSession): GameSession {
 }
 
 /**
- * Debug/options: place basic (level-1) army dwellings for slots 4–9 on the
+ * Debug/options: place basic (level-1) army dwellings for slots 11–16 on the
  * player's first controlled town. `armyChoice` 1 = first root per slot (by id),
  * 2 = second. Includes one week of initial growth in recruit_qty.
  */
@@ -717,7 +768,7 @@ export function grantBuildArmy(
   const rootIndex = armyChoice - 1
   let next = session
   let built = 0
-  for (let slotNum = 4; slotNum <= 9; slotNum += 1) {
+  for (let slotNum = 11; slotNum <= 16; slotNum += 1) {
     if (!isArmySlot(slotNum)) {
       continue
     }
@@ -744,7 +795,141 @@ export function grantBuildArmy(
   const townLabel = town.name?.trim() || 'your first town'
   return {
     session: next,
-    notice: `Built Army ${armyChoice} (slots 4–9) in ${townLabel} with initial growth`,
+    notice: `Built Army ${armyChoice} (slots 11–16) in ${townLabel} with initial growth`,
+  }
+}
+
+/** Basic (slots 1–5, 11–16) + non-upgradeable (6–9) roots for every town. */
+const BASIC_BUILD_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16] as const
+
+/** Upgradeable slots that can gain +1 level (skip when capped). */
+const UPGRADE_BUILD_SLOTS = [1, 2, 3, 4, 5, 11, 12, 13, 14, 15, 16] as const
+
+function slotAlreadyBuilt(
+  session: GameSession,
+  townId: string,
+  slotNum: number,
+): boolean {
+  return session.building_states.some(
+    (row) =>
+      row.town_id === townId &&
+      row.slot_num === slotNum &&
+      row.building_id != null &&
+      row.level >= 1,
+  )
+}
+
+export function grantBuildBasicBuildings(
+  session: GameSession,
+): { session: GameSession; notice: string } {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return { session, notice: 'Catalog not loaded.' }
+  }
+  if (session.towns.length === 0) {
+    return { session, notice: 'No towns in this game.' }
+  }
+  let next = session
+  let built = 0
+  for (const town of next.towns) {
+    for (const slotNum of BASIC_BUILD_SLOTS) {
+      if (slotAlreadyBuilt(next, town.id, slotNum)) {
+        continue
+      }
+      const building = isArmySlot(slotNum)
+        ? armyOptions(catalog, slotNum, town.town_type_id)
+            .filter(isBuildRoot)
+            .sort((a, b) => a.id - b.id)[0]
+        : genericRoot(
+            genericSlotBuildings(catalog, slotNum, town.town_type_id),
+          )
+      if (!building) {
+        continue
+      }
+      next = patchBuildingSlot(next, town.id, slotNum - 1, {
+        level: 1,
+        buildingId: building.id,
+        recruitQty: isArmySlot(slotNum) ? buildingGrowth(building) : 0,
+      })
+      if (isLibraryBuilding(building)) {
+        next = ensureLibraryOffers(
+          next,
+          catalog,
+          town.id,
+          town.town_type_id,
+          slotNum,
+        )
+      }
+      built += 1
+    }
+  }
+  return {
+    session: next,
+    notice:
+      built > 0
+        ? `Built ${built} basic building(s) across ${session.towns.length} town(s).`
+        : 'All basic building slots already filled.',
+  }
+}
+
+export function grantUpgradeBuildings(
+  session: GameSession,
+): { session: GameSession; notice: string } {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return { session, notice: 'Catalog not loaded.' }
+  }
+  if (session.towns.length === 0) {
+    return { session, notice: 'No towns in this game.' }
+  }
+  let next = session
+  let upgraded = 0
+  let skipped = 0
+  for (const town of next.towns) {
+    for (const slotNum of UPGRADE_BUILD_SLOTS) {
+      const state = next.building_states.find(
+        (row) => row.town_id === town.id && row.slot_num === slotNum,
+      )
+      if (!state || state.building_id == null || state.level < 1) {
+        continue
+      }
+      const current = buildingById(catalog, state.building_id)
+      if (!current) {
+        continue
+      }
+      const advanced = nextInChain(
+        current,
+        catalog,
+        slotNum,
+        town.town_type_id,
+      )
+      if (!advanced) {
+        skipped += 1
+        continue
+      }
+      next = patchBuildingSlot(next, town.id, slotNum - 1, {
+        level: Math.max(1, advanced.level),
+        buildingId: advanced.id,
+        recruitQty: state.recruit_qty,
+      })
+      if (isLibraryBuilding(advanced)) {
+        next = ensureLibraryOffers(
+          next,
+          catalog,
+          town.id,
+          town.town_type_id,
+          slotNum,
+        )
+      }
+      upgraded += 1
+    }
+  }
+  return {
+    session: next,
+    notice:
+      upgraded > 0
+        ? `Upgraded ${upgraded} building(s) (+1 level); skipped ${skipped} empty/capped.`
+        : 'No upgradeable buildings (empty or already capped).',
   }
 }
 
@@ -990,6 +1175,7 @@ export function patchBuildingSlot(
             building_id: next.buildingId,
             level: next.level,
             recruit_qty: next.recruitQty,
+            growth_bonus: row.growth_bonus ?? 0,
             offered_abilities:
               next.level === 0 ? [] : (row.offered_abilities ?? []),
           }
@@ -1102,14 +1288,17 @@ export function applyWeeklyGrowth(
       if (row.level < 1 || row.building_id == null || !isArmySlot(row.slot_num)) {
         return row
       }
-      const growth = buildingGrowth(buildingById(catalog, row.building_id))
+      const growth =
+        buildingGrowth(buildingById(catalog, row.building_id)) +
+        (row.growth_bonus ?? 0)
       if (growth <= 0) {
         return row
       }
       return { ...row, recruit_qty: row.recruit_qty + growth }
     }),
   }
-  return applyWeeklyBuildingIncome(grown, catalog)
+  const withIncome = applyWeeklyBuildingIncome(grown, catalog)
+  return applyWeeklyTownUniques(withIncome, catalog)
 }
 
 function addGrant(
@@ -1126,7 +1315,7 @@ function addGrant(
   grants.set(playerId, current)
 }
 
-/** Owned towns: stack `resource_yield`; per town, max `gold_income` among built buildings. */
+/** Owned towns: each built building’s `payload.produces` credits the owner. */
 function applyWeeklyBuildingIncome(
   session: GameSession,
   catalog: ReferenceCatalog,
@@ -1136,22 +1325,15 @@ function applyWeeklyBuildingIncome(
     if (!town.player_id) {
       continue
     }
-    let maxGold = 0
     for (const row of session.building_states) {
       if (row.town_id !== town.id || row.level < 1 || row.building_id == null) {
         continue
       }
       const building = buildingById(catalog, row.building_id)
-      const yieldGrant = resourceYieldGrant(building)
-      if (yieldGrant) {
-        addGrant(grants, town.player_id, yieldGrant.resourceId, yieldGrant.amount)
-      }
-      const gold = goldIncomeGrant(building)
-      if (gold > maxGold) {
-        maxGold = gold
+      for (const grant of buildingProduces(building)) {
+        addGrant(grants, town.player_id, grant.resourceId, grant.qty)
       }
     }
-    addGrant(grants, town.player_id, GOLD_RESOURCE_ID, maxGold)
   }
   if (grants.size === 0) {
     return session
@@ -2268,7 +2450,7 @@ export function recruitToGarrison(
   if (!unit) {
     return { session, error: 'This building has no recruitable unit.' }
   }
-  const cost = scaleCost(unitCost(unit), qty)
+  const cost = townRecruitCost(session, catalog, townId, unitCost(unit), qty)
   const slots = [...town.garrison.slots_1_to_6]
   while (slots.length < ARMY_STACK_SLOTS) {
     slots.push(null)

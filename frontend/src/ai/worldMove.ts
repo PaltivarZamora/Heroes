@@ -12,7 +12,7 @@ import { appendAiTrace } from './trace'
 import { garrisonArmyValue, slotsArmyValue } from './armyAlloc'
 import { firstAffordableLearn } from './libraryLearn'
 import { mobLabel } from '../session/mobs'
-import { visitingHeroId } from '../session/accessors'
+import { visitingHeroId, townIsUndefended } from '../session/accessors'
 import {
   WORLD_MOVE_DECISION,
   WORLD_MOVE_FACTORS,
@@ -121,7 +121,7 @@ function blockedHexes(
   for (const town of session.towns) {
     const enemyOwned =
       town.player_id != null && town.player_id !== mover.player_id
-    if (enemyOwned) {
+    if (enemyOwned && !townIsUndefended(session, town, mover.id)) {
       if (!samePos(town.position, mover.position)) {
         blocked.add(posKey(town.position))
       }
@@ -498,10 +498,26 @@ export function decideWorldMove(
         occupant && occupant.player_id !== player.id
           ? slotsArmyValue(session, catalog, occupant.army.slots_1_to_6)
           : 0
+      const garrisonValue = garrisonArmyValue(session, catalog, town)
+      if (
+        townIsUndefended(session, town, hero.id) ||
+        (garrisonValue <= 0 && occupantValue <= 0)
+      ) {
+        add(`capture ${town.name} @ ${posKey(town.position)}`, {
+          kind: 'capture',
+          dest: town.position,
+          townId: town.id,
+        }, blankFactors({
+          safety: safetyAt(session, player.id, town.position),
+          explore_value: exploreValueAt(town.position) * 0.2,
+          capture_town: 1,
+        }))
+        continue
+      }
       considerAttack(
         `attack ${town.name}`,
         town.position,
-        garrisonArmyValue(session, catalog, town) + occupantValue,
+        garrisonValue + occupantValue,
         { type: 'town', townId: town.id },
       )
       continue

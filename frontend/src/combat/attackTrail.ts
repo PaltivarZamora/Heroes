@@ -138,6 +138,9 @@ function leaveFireOnAttackPath(
   tiles: CombatTile[] | undefined,
   caster: Hero | null,
 ): { battle: CombatBattle; tiles?: CombatTile[] } {
+  const fizzleTerrainIds = unitAttackShape(
+    unitById(catalog, stack.unitId),
+  ).fizzleTerrainIds
   const fire = placeFireOnHexKeys(
     battle,
     catalog,
@@ -145,6 +148,8 @@ function leaveFireOnAttackPath(
     stack.side,
     rolledKeys,
     tiles,
+    null,
+    fizzleTerrainIds,
   )
   return {
     battle: fire.battle,

@@ -70,7 +70,7 @@ function basicBuildingPool(
   if (hall) {
     pool.push(hall)
   }
-  const dwellings = armyOptions(catalog, 4, townTypeId)
+  const dwellings = armyOptions(catalog, 11, townTypeId)
     .filter(isBuildRoot)
     .sort((a, b) => a.id - b.id)
   if (dwellings[0]) {
@@ -186,7 +186,7 @@ function baseUnitForArmyTier(
   townTypeId: number,
   tier: number,
 ): UnitRow | null {
-  for (let slot = 4; slot <= 9; slot += 1) {
+  for (let slot = 11; slot <= 16; slot += 1) {
     if (!isArmySlot(slot) || armyTier(slot) !== tier) {
       continue
     }

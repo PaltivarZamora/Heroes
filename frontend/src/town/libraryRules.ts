@@ -35,7 +35,7 @@ export function townHeroClasses(
   return catalog.hero_type
     .filter((row) => row.town_id === townTypeId)
     .slice()
-    .sort((a, b) => a.id - b.id)
+    .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
 }
 
 export function classDisciplines(

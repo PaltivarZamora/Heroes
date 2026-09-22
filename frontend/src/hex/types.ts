@@ -4,8 +4,16 @@ export type TileData = {
   terrain: string
   /** Movement cost multiplier. `null` when unused (blocked types). */
   movementCostMultiplier: number | null
-  /** Explicit flag from terrain_type.is_blocked — do not infer from cost. */
+  /** Explicit blocked flag from generation / terrain catalog / blocking props. */
   blocked: boolean
+  /** Generation chunk id for continuous terrain texturing. */
+  chunkId?: number | null
+  /** Seeded world prop (`prop` table id). */
+  propId?: number | null
+  /** 1-based prop art variant. */
+  propVariant?: number | null
+  /** Base prop file name under `/assets/props/` (no extension). */
+  propFile?: string | null
 }
 
 export type MapObjectKind = 'mine' | 'pickup' | 'town'
@@ -20,6 +28,8 @@ export type MapObjectData = {
   name?: string | null
   /** Town type table id. Unused for mines/pickups. */
   townTypeId?: number | null
+  /** Horizontal mirror chosen at world placement when feature.flippable. */
+  flipped?: boolean | null
   /** Frontend-only: mine or town claimed by the hero. */
   claimed?: boolean
   /** Frontend-only: pickup already collected. */
