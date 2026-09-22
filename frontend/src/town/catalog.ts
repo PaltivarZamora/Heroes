@@ -2,6 +2,7 @@ import {
   GOLD_RESOURCE_ID,
   RESOURCES,
   applyResourceCatalog,
+  costKeyToResourceId,
   formatAmount,
   resourceById,
 } from '../hex/resources'
@@ -670,15 +671,6 @@ export type GroundEffectRow = {
   display_rules: GroundEffectDisplayRules | null
 }
 
-function costKeyToId(key: string): number | null {
-  const asNumber = Number(key)
-  if (Number.isInteger(asNumber) && resourceById(asNumber)) {
-    return asNumber
-  }
-  const byName = RESOURCES.find((resource) => resource.name === key)
-  return byName ? byName.id : null
-}
-
 function asCost(value: CostMap | Record<string, number> | null | undefined): CostMap {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
@@ -686,7 +678,8 @@ function asCost(value: CostMap | Record<string, number> | null | undefined): Cos
   const cost: CostMap = {}
   for (const [key, amount] of Object.entries(value)) {
     const n = Number(amount)
-    const id = costKeyToId(key)
+    // Same id-key path as building.cost — names only for legacy rows.
+    const id = costKeyToResourceId(key)
     if (id != null && Number.isFinite(n) && n !== 0) {
       cost[id] = n
     }
@@ -4768,6 +4761,7 @@ export function buildingHasProduces(building: BuildingRow | null): boolean {
   return buildingProduces(building).length > 0
 }
 
+/** Per-creature recruit cost (`unit.cost` JSONB, resource-id keys — same as `building.cost`). */
 export function unitCost(unit: UnitRow | null): CostMap {
   return unit ? asCost(unit.cost) : {}
 }

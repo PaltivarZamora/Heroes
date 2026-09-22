@@ -79,7 +79,16 @@ const RECRUIT_MAX_CHANCE = 0.65
 const RECRUIT_PARTIAL_MIN = 0.2
 const RECRUIT_PARTIAL_MAX = 0.8
 const MAX_TOWN_ACTIONS = 16
+/** Gold is renewable; scarce town resources weigh heavier in cost-efficiency. */
+const GOLD_COST_WEIGHT = 1
+const SCARCE_COST_WEIGHT = 3
+/** Gold-equivalent burden reference for costEfficiencyMult (higher → milder discount). */
+const COST_EFFICIENCY_REF = 250
 
+/**
+ * Town AI candidate actions. Destroy is intentionally absent — player-only.
+ * Do not add a destroy kind without removing {@link assertTownAiNeverDestroy}.
+ */
 type BuildIntent = {
   kind: 'build' | 'upgrade'
   townId: string
@@ -109,6 +118,8 @@ type UpgradeUnitIntent = {
   advancedName: string
   qty: number
   cost: CostMap
+  /** Per-creature upgrade cost — used for cost-efficiency scoring. */
+  perUnitCost: CostMap
 }
 
 type HireIntent = {
@@ -128,6 +139,14 @@ type HireGate = {
   roll: number
 }
 
+/** Structural guard: Destroy must never be a Town AI action. */
+function assertTownAiNeverDestroy(action: TownAction): void {
+  const kind = (action as { kind: string }).kind
+  if (kind === 'destroy') {
+    throw new Error('Town AI must never select Destroy')
+  }
+}
+
 function builtIdsForTown(session: GameSession, townId: string): Set<number> {
   return new Set(
     session.building_states
@@ -139,12 +158,57 @@ function builtIdsForTown(session: GameSession, townId: string): Set<number> {
   )
 }
 
+/** Weighted resource burden — scarce (non-Gold) costs count 3× Gold. */
+function costBurden(cost: CostMap): number {
+  let burden = 0
+  for (const [key, amount] of Object.entries(cost)) {
+    if (amount <= 0) {
+      continue
+    }
+    const id = Number(key)
+    const weight = id === GOLD_RESOURCE_ID ? GOLD_COST_WEIGHT : SCARCE_COST_WEIGHT
+    burden += amount * weight
+  }
+  return Math.max(0, burden)
+}
+
+/**
+ * Multiplier in (0, 1]: cheaper / Gold-heavy options stay near 1; scarce-heavy
+ * spends are discounted so they need a stronger bucket score to win.
+ */
+function costEfficiencyMult(cost: CostMap): number {
+  const burden = costBurden(cost)
+  return COST_EFFICIENCY_REF / (COST_EFFICIENCY_REF + burden)
+}
+
+/** Army bucket from dwelling growth + unit/building tier (not flat 1). */
+function armyValueFromGrowthTier(
+  catalog: ReferenceCatalog,
+  building: BuildingRow,
+): number {
+  const growth = buildingGrowth(building)
+  const unit = unitForBuilding(catalog, building.id)
+  const tier = Math.max(1, unit?.tier ?? building.tier ?? 1)
+  // growth 10 → ~1.0; tier 3 → ~1.0; combines so T6/high-growth outranks T1.
+  const growthPart = Math.max(0.35, growth > 0 ? growth / 10 : 0.35)
+  const tierPart = Math.max(0.5, tier / 3)
+  return Math.round((growthPart * 0.55 + tierPart * 0.45) * 100) / 100
+}
+
+function armyValueFromUnitTier(tier: number | null | undefined): number {
+  const t = Math.max(1, tier ?? 1)
+  return Math.round(Math.max(0.5, t / 3) * 100) / 100
+}
+
 function factorForBuilding(
+  catalog: ReferenceCatalog,
   slotNum: number,
   building: BuildingRow,
 ): Record<TownBuildFactor, number> {
-  if (isArmySlot(slotNum)) {
-    return { economy_value: 0, army_value: 1, defense_value: 0, hero_value: 0 }
+  const effect = building.effect_type.trim().toLowerCase()
+  if (isArmySlot(slotNum) || effect === 'unit_unlock') {
+    const army = armyValueFromGrowthTier(catalog, building)
+    return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
   const name = building.name.trim().toLowerCase()
   const economy =
@@ -152,24 +216,74 @@ function factorForBuilding(
     isTavernBuilding(building) ||
     isLibraryBuilding(building) ||
     buildingHasProduces(building) ||
-    building.effect_type === 'resource_yield' ||
-    building.effect_type === 'gold_income' ||
+    effect === 'resource_yield' ||
+    effect === 'gold_income' ||
     name.includes('market') ||
     name.includes('hall')
   if (economy) {
     return { economy_value: 1, army_value: 0, defense_value: 0, hero_value: 0 }
   }
+  // Town Uniques / wonders / other buffs — not walls.
+  if (effect === 'passive_buff') {
+    return { economy_value: 0, army_value: 0, defense_value: 0, hero_value: 1.15 }
+  }
   return { economy_value: 0, army_value: 0, defense_value: 1, hero_value: 0 }
 }
 
-function factorForAction(action: TownAction): Record<TownBuildFactor, number> {
+function factorForAction(
+  catalog: ReferenceCatalog,
+  action: TownAction,
+): Record<TownBuildFactor, number> {
   if (action.kind === 'hire_hero') {
     return { economy_value: 0, army_value: 0, defense_value: 0, hero_value: 1 }
   }
-  if (action.kind === 'recruit' || action.kind === 'upgrade_unit') {
-    return { economy_value: 0, army_value: 1, defense_value: 0, hero_value: 0 }
+  if (action.kind === 'recruit') {
+    const unit = unitForBuilding(catalog, action.building.id)
+    const army = armyValueFromUnitTier(unit?.tier)
+    return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
-  return factorForBuilding(action.slotNum, action.building)
+  if (action.kind === 'upgrade_unit') {
+    const base = catalog.unit.find(
+      (row) => row.name.trim().toLowerCase() === action.unitName.trim().toLowerCase(),
+    )
+    const army = armyValueFromUnitTier(base?.tier)
+    return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
+  }
+  return factorForBuilding(catalog, action.slotNum, action.building)
+}
+
+function efficiencyCostForAction(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  action: TownAction,
+): CostMap {
+  if (action.kind === 'recruit') {
+    const unit = unitForBuilding(catalog, action.building.id)
+    return townRecruitUnitCost(
+      session,
+      catalog,
+      action.townId,
+      unitCost(unit),
+    )
+  }
+  if (action.kind === 'upgrade_unit') {
+    return action.perUnitCost
+  }
+  return action.cost
+}
+
+function townActionScore(
+  catalog: ReferenceCatalog,
+  session: GameSession,
+  action: TownAction,
+  factors: Record<TownBuildFactor, number>,
+  weights: Record<string, number>,
+  mult: number,
+): number {
+  const efficiency = costEfficiencyMult(
+    efficiencyCostForAction(session, catalog, action),
+  )
+  return Math.round(scoreOption(factors, weights) * mult * efficiency * 100) / 100
 }
 
 function actionScoreMult(
@@ -424,6 +538,7 @@ function collectUpgradeActions(
       advancedName: offer.advanced.name,
       qty: stack.qty,
       cost: offer.total,
+      perUnitCost: offer.perUnit,
     })
   }
   const garrison = [...town.garrison.slots_1_to_6]
@@ -782,17 +897,18 @@ function applyOneTownAction(
     for (const action of collectTownActions(session, catalog, town)) {
       const cost = townConstructionCost(session, catalog, town.id, action.building)
       const intent: BuildIntent = { ...action, cost }
+      assertTownAiNeverDestroy(intent)
       const label = actionLabel(intent)
       const affordError = canAfford(wallet, cost)
       if (!affordError) {
-        const factors = factorForAction(intent)
+        const factors = factorForAction(catalog, intent)
         const { mult } = actionScoreMult(intent, heroClassId, catalog)
         scored.push({
           id: `${intent.kind}:${intent.townId}:${intent.slotNum}:${intent.building.id}`,
           label,
           factors,
           weights,
-          score: Math.round(scoreOption(factors, weights) * mult * 100) / 100,
+          score: townActionScore(catalog, session, intent, factors, weights, mult),
           data: intent,
         })
       } else {
@@ -800,6 +916,7 @@ function applyOneTownAction(
       }
     }
     for (const intent of collectRecruitActions(session, catalog, town)) {
+      assertTownAiNeverDestroy(intent)
       const label = actionLabel(intent)
       const unit = unitForBuilding(catalog, intent.building.id)
       if (!unit) {
@@ -819,32 +936,33 @@ function applyOneTownAction(
         skipped.push(`  skip (cannot afford 1) ${label}`)
         continue
       }
-      const factors = factorForAction(intent)
+      const factors = factorForAction(catalog, intent)
       const { mult } = actionScoreMult(intent, heroClassId, catalog)
       scored.push({
         id: `${intent.kind}:${intent.townId}:${intent.slotNum}:${intent.building.id}`,
         label,
         factors,
         weights,
-        score: Math.round(scoreOption(factors, weights) * mult * 100) / 100,
+        score: townActionScore(catalog, session, intent, factors, weights, mult),
         data: intent,
       })
     }
     for (const intent of collectUpgradeActions(session, catalog, town, player.id)) {
+      assertTownAiNeverDestroy(intent)
       const label = actionLabel(intent)
       const affordError = canAfford(wallet, intent.cost)
       if (affordError) {
         skipped.push(`  skip (${affordError}) ${label}`)
         continue
       }
-      const factors = factorForAction(intent)
+      const factors = factorForAction(catalog, intent)
       const { mult } = actionScoreMult(intent, heroClassId, catalog)
       scored.push({
         id: `${intent.kind}:${intent.townId}:${intent.slot.row}:${intent.slot.heroId ?? ''}:${intent.slot.slot}`,
         label,
         factors,
         weights,
-        score: Math.round(scoreOption(factors, weights) * mult * 100) / 100,
+        score: townActionScore(catalog, session, intent, factors, weights, mult),
         data: intent,
       })
     }
@@ -853,19 +971,20 @@ function applyOneTownAction(
       if (hire && 'skip' in hire) {
         skipped.push(`  ${hire.skip}`)
       } else if (hire) {
+        assertTownAiNeverDestroy(hire)
         const label = actionLabel(hire)
         const affordError = canAfford(wallet, hire.cost)
         if (affordError) {
           skipped.push(`  skip (${affordError}) ${label}`)
         } else {
-          const factors = factorForAction(hire)
+          const factors = factorForAction(catalog, hire)
           const { mult } = actionScoreMult(hire, heroClassId, catalog)
           scored.push({
             id: `${hire.kind}:${hire.townId}`,
             label,
             factors,
             weights,
-            score: Math.round(scoreOption(factors, weights) * mult * 100) / 100,
+            score: townActionScore(catalog, session, hire, factors, weights, mult),
             data: hire,
           })
         }
@@ -893,6 +1012,8 @@ function applyOneTownAction(
     appendAiTrace([...headerWithGold, '  pick failed'].join('\n'))
     return false
   }
+
+  assertTownAiNeverDestroy(pick.picked.data)
 
   const body = scored.map((option, index) => {
     const mark = option.id === pick.picked.id ? ' ← chosen' : ''

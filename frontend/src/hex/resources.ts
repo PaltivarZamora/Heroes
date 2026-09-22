@@ -6,32 +6,32 @@ export type ResourceDef = {
   marker: string
 }
 
+/**
+ * Marker letters by resource id. Keep in sync with `resource` table /
+ * Heroes_Schema confirmed ids (1=Gold, 5=Aether, 6=Amber, 7=Brimstone,
+ * 8=Crystal, 9=Ichor, 10=Tar).
+ */
 const MARKERS_BY_ID: Record<number, string> = {
   1: 'G',
-  2: 'W',
-  3: 'O',
-  4: 'I',
-  5: 'C',
-  6: 'S',
-  7: 'A',
-  8: 'E',
-  9: 'N',
-  10: 'B',
+  5: 'E',
+  6: 'A',
+  7: 'B',
+  8: 'C',
+  9: 'I',
+  10: 'T',
 }
 
 export const GOLD_RESOURCE_ID = 1
 
+/** Fallback before catalog load — names/ids match the live `resource` table. */
 const FALLBACK_RESOURCES: ResourceDef[] = [
   { id: 1, name: 'Gold', marker: 'G' },
-  { id: 2, name: 'Wood', marker: 'W' },
-  { id: 3, name: 'Ore', marker: 'O' },
-  { id: 4, name: 'Ichor', marker: 'I' },
-  { id: 5, name: 'Crystal', marker: 'C' },
-  { id: 6, name: 'Sap', marker: 'S' },
-  { id: 7, name: 'Ash', marker: 'A' },
-  { id: 8, name: 'Aether', marker: 'E' },
-  { id: 9, name: 'Incense', marker: 'N' },
-  { id: 10, name: 'Brimstone', marker: 'B' },
+  { id: 5, name: 'Aether', marker: 'E' },
+  { id: 6, name: 'Amber', marker: 'A' },
+  { id: 7, name: 'Brimstone', marker: 'B' },
+  { id: 8, name: 'Crystal', marker: 'C' },
+  { id: 9, name: 'Ichor', marker: 'I' },
+  { id: 10, name: 'Tar', marker: 'T' },
 ]
 
 /** Live binding: catalog load replaces names from the resource table. */
@@ -63,6 +63,26 @@ export function applyResourceCatalog(rows: Array<{ id: number; name: string }>):
 
 export function resourceById(id: number): ResourceDef | undefined {
   return RESOURCES.find((resource) => resource.id === id)
+}
+
+/**
+ * Resolve a cost JSONB key to `resource.id`.
+ * Prefer numeric id keys (`"1"`, `"6"`) — same shape as `building.cost` /
+ * `unit.cost`. Name keys remain accepted for legacy rows.
+ */
+export function costKeyToResourceId(key: string): number | null {
+  const trimmed = key.trim()
+  if (!trimmed) {
+    return null
+  }
+  const asNumber = Number(trimmed)
+  if (Number.isInteger(asNumber) && asNumber > 0) {
+    return asNumber
+  }
+  const byName = RESOURCES.find(
+    (resource) => resource.name.toLowerCase() === trimmed.toLowerCase(),
+  )
+  return byName ? byName.id : null
 }
 
 export function emptyWallet(): ResourceWallet {
@@ -118,7 +138,7 @@ export function canAfford(
   cost: Record<number, number> | Record<string, number>,
 ): string | null {
   for (const [key, amount] of Object.entries(cost)) {
-    const id = costResourceId(key)
+    const id = costKeyToResourceId(key)
     const resource = id != null ? resourceById(id) : undefined
     if (id == null || !resource) {
       return `Unknown resource in cost: ${key}`
@@ -131,24 +151,13 @@ export function canAfford(
   return null
 }
 
-function costResourceId(key: string): number | null {
-  const asNumber = Number(key)
-  if (Number.isInteger(asNumber) && resourceById(asNumber)) {
-    return asNumber
-  }
-  const byName = RESOURCES.find(
-    (resource) => resource.name.toLowerCase() === key.trim().toLowerCase(),
-  )
-  return byName ? byName.id : null
-}
-
 export function deductCost(
   wallet: ResourceWallet,
   cost: Record<number, number> | Record<string, number>,
 ): ResourceWallet {
   const next = snapshotWallet(wallet)
   for (const [key, amount] of Object.entries(cost)) {
-    const id = costResourceId(key)
+    const id = costKeyToResourceId(key)
     if (id != null && next[id]) {
       next[id].stockpile -= amount
     }
