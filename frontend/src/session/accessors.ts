@@ -2784,7 +2784,13 @@ export function findTownAt(
   q: number,
   r: number,
 ): Town | undefined {
-  return session.towns.find((town) => town.position.q === q && town.position.r === r)
+  return session.towns.find((town) => {
+    if (town.position.q === q && town.position.r === r) {
+      return true
+    }
+    // 2×1 footprint: left hex is blocked but still "the town" for lookups.
+    return town.position.q - 1 === q && town.position.r === r
+  })
 }
 
 export function findNodeAt(

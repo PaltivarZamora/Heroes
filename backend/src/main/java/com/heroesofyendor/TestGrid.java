@@ -85,6 +85,16 @@ final class TestGrid {
         }
         List<MapObjectData> objects = placeObjects(placeable, rng, data);
 
+        // Left hex of each 2×1 town footprint is permanently blocked.
+        java.util.HashSet<String> townLeftBlocked = new java.util.HashSet<>();
+        for (MapObjectData obj : objects) {
+            if (!"town".equals(obj.kind())) {
+                continue;
+            }
+            // Object q,r = entry (right / drawbridge). Left = q-1, same r.
+            townLeftBlocked.add((obj.q() - 1) + "," + obj.r());
+        }
+
         List<TileData> tiles = new ArrayList<>(width * height);
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
@@ -94,7 +104,10 @@ final class TestGrid {
                 int r = row;
                 int chunkId = chunkIds[row][col];
                 WorldProps.Seed prop = propSeeds[row][col];
-                boolean blocked = terrain.blocked() || (prop != null && prop.blocker());
+                boolean blocked =
+                        terrain.blocked()
+                                || (prop != null && prop.blocker())
+                                || townLeftBlocked.contains(q + "," + r);
                 tiles.add(
                         new TileData(
                                 q,
@@ -164,21 +177,144 @@ final class TestGrid {
         // EXPERIMENT: pointy-top — odd-r hero spawn axial.
         int startQ = HERO_START_COL - offsetFromZero(HERO_START_ROW);
         int startR = HERO_START_ROW;
-        int[] chosen =
-                pickNearbyPassable(passable, startQ, startR, rng, startTownMin, startTownMax);
-        if (chosen == null) {
+        int[] entry =
+                pickNearbyTownEntry(passable, startQ, startR, rng, startTownMin, startTownMax);
+        if (entry == null) {
             return false;
         }
-        passable.remove(chosen);
-        int col = chosen[0];
-        int row = chosen[1];
+        return commitTown2x1(objects, passable, entry, start.name(), start.townTypeId());
+    }
+
+    /**
+     * Pick the right (drawbridge/entry) hex of a 2×1 town pair near spawn.
+     * Left hex (col-1, same row) must also be placeable.
+     */
+    private static int[] pickNearbyTownEntry(
+            List<int[]> passable,
+            int startQ,
+            int startR,
+            Random rng,
+            int startTownMin,
+            int startTownMax) {
+        int min = Math.max(1, startTownMin);
+        int max = Math.max(min, startTownMax);
+        java.util.HashMap<String, int[]> byKey = placeableIndex(passable);
+        List<int[]> nearby = new ArrayList<>();
+        int[] fallback = null;
+        int fallbackDist = Integer.MAX_VALUE;
+        for (int[] colRow : passable) {
+            if (!hasTownLeft(byKey, colRow)) {
+                continue;
+            }
+            int q = colRow[0] - offsetFromZero(colRow[1]);
+            int r = colRow[1];
+            int dist = hexDistance(startQ, startR, q, r);
+            if (dist == 0) {
+                continue;
+            }
+            if (dist >= min && dist <= max) {
+                nearby.add(colRow);
+            }
+            if (dist < fallbackDist) {
+                fallbackDist = dist;
+                fallback = colRow;
+            }
+        }
+        if (!nearby.isEmpty()) {
+            Collections.shuffle(nearby, rng);
+            return nearby.get(0);
+        }
+        return fallback;
+    }
+
+    private static java.util.HashMap<String, int[]> placeableIndex(List<int[]> passable) {
+        java.util.HashMap<String, int[]> byKey = new java.util.HashMap<>();
+        for (int[] colRow : passable) {
+            byKey.put(colRow[0] + "," + colRow[1], colRow);
+        }
+        return byKey;
+    }
+
+    /** Entry (right) has a placeable left neighbor on the same row. */
+    private static boolean hasTownLeft(java.util.HashMap<String, int[]> byKey, int[] entry) {
+        return byKey.containsKey((entry[0] - 1) + "," + entry[1]);
+    }
+
+    /**
+     * Place town at entry (right/drawbridge). Removes left+entry from passable.
+     * Object coordinates = entry hex.
+     */
+    private static boolean commitTown2x1(
+            List<MapObjectData> objects,
+            List<int[]> passable,
+            int[] entry,
+            String flavorName,
+            int townTypeId) {
+        java.util.HashMap<String, int[]> byKey = placeableIndex(passable);
+        if (!hasTownLeft(byKey, entry)) {
+            return false;
+        }
+        int[] left = byKey.get((entry[0] - 1) + "," + entry[1]);
+        passable.remove(entry);
+        passable.remove(left);
+        int col = entry[0];
+        int row = entry[1];
         int q = col - offsetFromZero(row);
         int r = row;
-        objects.add(new MapObjectData(q, r, "town", null, "T1", start.name(), start.townTypeId(), null));
+        objects.add(new MapObjectData(q, r, "town", null, "T", flavorName, townTypeId, null));
         return true;
     }
 
-    /** Prefer a passable hex in [min, max] from spawn so the first town is in starting vision. */
+    private static int hexDistance(int aq, int ar, int bq, int br) {
+        int dq = aq - bq;
+        int dr = ar - br;
+        return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+    }
+
+    private static void placeTowns(
+            List<MapObjectData> objects,
+            List<int[]> passable,
+            int start,
+            TownNameSession names,
+            Random rng,
+            int placed,
+            int townCount) {
+        // Rebuild candidates from remaining passable (mines may have consumed earlier slots).
+        List<int[]> remaining = new ArrayList<>(passable.subList(Math.min(start, passable.size()), passable.size()));
+        Collections.shuffle(remaining, rng);
+        int want = Math.max(0, townCount);
+        int guard = 0;
+        while (placed < want && guard < remaining.size() + 8) {
+            guard++;
+            Integer townId = names.pickTownId(rng);
+            if (townId == null) {
+                return;
+            }
+            String name = names.take(townId);
+            if (name == null) {
+                return;
+            }
+            java.util.HashMap<String, int[]> byKey = placeableIndex(passable);
+            int[] entry = null;
+            for (int[] cand : remaining) {
+                if (passable.contains(cand) && hasTownLeft(byKey, cand)) {
+                    entry = cand;
+                    break;
+                }
+            }
+            if (entry == null) {
+                return;
+            }
+            if (commitTown2x1(objects, passable, entry, name, townId)) {
+                placed++;
+            }
+            remaining.remove(entry);
+        }
+    }
+
+    /**
+     * Prefer a passable hex in [min, max] from spawn (legacy single-hex helper).
+     */
     private static int[] pickNearbyPassable(
             List<int[]> passable,
             int startQ,
@@ -211,44 +347,6 @@ final class TestGrid {
             return nearby.get(0);
         }
         return fallback;
-    }
-
-    private static int hexDistance(int aq, int ar, int bq, int br) {
-        int dq = aq - bq;
-        int dr = ar - br;
-        return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
-    }
-
-    private static void placeTowns(
-            List<MapObjectData> objects,
-            List<int[]> passable,
-            int start,
-            TownNameSession names,
-            Random rng,
-            int placed,
-            int townCount) {
-        int i = start;
-        int want = Math.max(0, townCount);
-        while (placed < want) {
-            Integer townId = names.pickTownId(rng);
-            if (townId == null) {
-                return;
-            }
-            String name = names.take(townId);
-            if (name == null) {
-                return;
-            }
-            if (i >= passable.size()) {
-                return;
-            }
-            int[] colRow = passable.get(i++);
-            int col = colRow[0];
-            int row = colRow[1];
-            int q = col - offsetFromZero(row);
-            int r = row;
-            objects.add(new MapObjectData(q, r, "town", null, "T1", name, townId, null));
-            placed++;
-        }
     }
 
     /**

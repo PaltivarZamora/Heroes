@@ -33,8 +33,15 @@ import {
   loadHexTerrainTextures,
   loadTextureUrl,
 } from './terrainTextures'
-import { addPropSprite, layoutHexSprite, loadPropTexture } from './propTextures'
+import { addPropSprite, layoutHexFootprintSprite, layoutHexSprite, loadPropTexture } from './propTextures'
 import { loadFeatureTexture } from './featureTextures'
+import {
+  featureForTownType,
+  townBlockedHex,
+  townEntryHex,
+  townFootprintBottomRow,
+  townFootprintOrigin,
+} from './townFootprint'
 import {
   assignedTerrainForHex,
   assignedTerrainName,
@@ -201,19 +208,23 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     add(hero.position.q, hero.position.r)
   }
   for (const town of session.towns) {
+    const entry = townEntryHex(town.position)
+    const left = townBlockedHex(town.position)
+    // Left hex is never walkable (asymmetric 2×1 footprint).
+    if (isExplored(left.q, left.r) && !(left.q === mover.q && left.r === mover.r)) {
+      blocked.add(`${left.q},${left.r}`)
+    }
     const enemyOwned =
       town.player_id != null &&
       playerId != null &&
       town.player_id !== playerId
     if (enemyOwned && !townIsUndefended(session, town, self?.id)) {
-      if (
-        !(town.position.q === mover.q && town.position.r === mover.r)
-      ) {
-        blocked.add(`${town.position.q},${town.position.r}`)
+      if (!(entry.q === mover.q && entry.r === mover.r)) {
+        blocked.add(`${entry.q},${entry.r}`)
       }
       continue
     }
-    add(town.position.q, town.position.r)
+    add(entry.q, entry.r)
   }
   for (const node of session.nodes) {
     if (node.kind === 'pickup' && node.collected) {
@@ -507,16 +518,21 @@ export function HexMap({
       world.addChild(terrainLayer)
       world.addChild(propLayer)
 
+      // Path preview under map objects so yellow hexes don't paint over town art
+      // when the route passes behind / through the keep.
+      const preview = new Graphics()
+      world.addChild(preview)
+
       const objectLayer = new Container()
+      // Depth is applied by addChild order in syncTownActorDepth (not zIndex).
+      objectLayer.sortableChildren = false
       world.addChild(objectLayer)
 
       const fog = new Graphics()
       world.addChild(fog)
 
-      const preview = new Graphics()
-      world.addChild(preview)
-
       const heroLayer = new Container()
+      heroLayer.sortableChildren = true
       const heroMarkers = new Map<
         string,
         { view: Container; label: Text; badge: Graphics }
@@ -555,21 +571,98 @@ export function HexMap({
         target.stroke({ width: 2, color: 0x111111 })
       }
 
-      /** Player-color outline around a resource node; nothing when unowned. */
+      /** Player-color outline; `radius` is the ring radius in world px. */
       const paintOwnershipRing = (
         target: Graphics,
         playerId: string | null | undefined,
-        hexWidth: number,
+        radius: number,
       ) => {
         target.clear()
         const tint = ownerTint(playerId)
         if (tint == null) {
           return
         }
-        const radius = hexWidth * 0.42
-        const width = Math.max(2.5, hexWidth * 0.06)
-        target.circle(0, 0, radius)
+        const r = Math.max(4, radius)
+        // Same stroke for towns and nodes (capped thin outline).
+        const width = 1.5
+        target.circle(0, 0, r)
         target.stroke({ width, color: tint })
+      }
+
+      /** Ring large enough to encircle the 2×1 hex span and the boosted town art. */
+      const townFootprintRingRadius = (
+        entry: {
+          data: MapObjectData
+          view: Container
+          sprite?: Sprite
+        },
+      ) => {
+        const origin = townFootprintOrigin(entry.data)
+        const bottom = townFootprintBottomRow(entry.data)
+        const sample = grid.getHex(origin) ?? grid.createHex(origin)
+        let boxW = sample.width
+        if (bottom.length >= 2) {
+          const centers = bottom.map((axial) => {
+            const hex = grid.getHex(axial) ?? grid.createHex(axial)
+            const c = hexCenter(hex, offsetX, offsetY)
+            return {
+              x: c.x - entry.view.position.x,
+              y: c.y - entry.view.position.y,
+            }
+          })
+          const xs = centers.map((c) => c.x)
+          boxW = Math.max(...xs) - Math.min(...xs) + sample.width
+        }
+        const sprite = entry.sprite
+        if (sprite?.visible && sprite.texture.width >= 1) {
+          const drawnW = Math.abs(sprite.width)
+          const drawnH = Math.abs(sprite.height)
+          // Circumscribe the art once the ring is centered on it.
+          return Math.max(boxW * 0.55, drawnW * 0.52, drawnH * 0.52)
+        }
+        return boxW * 0.55
+      }
+
+      const placeTownOwnershipRing = (
+        entry: {
+          data: MapObjectData
+          view: Container
+          ring: Graphics
+          sprite?: Sprite
+        },
+        ownerId: string | null | undefined,
+      ) => {
+        const origin = townFootprintOrigin(entry.data)
+        const bottom = townFootprintBottomRow(entry.data)
+        const centers = bottom.map((axial) => {
+          const hex = grid.getHex(axial) ?? grid.createHex(axial)
+          const c = hexCenter(hex, offsetX, offsetY)
+          return {
+            x: c.x - entry.view.position.x,
+            y: c.y - entry.view.position.y,
+          }
+        })
+        let midX =
+          centers.length >= 2
+            ? (centers[0].x + centers[1].x) / 2
+            : 0
+        let midY =
+          centers.length >= 2
+            ? (centers[0].y + centers[1].y) / 2
+            : (centers[0]?.y ?? 0)
+        const sprite = entry.sprite
+        if (sprite?.visible) {
+          const w = Math.abs(sprite.width)
+          const h = Math.abs(sprite.height)
+          // Geometric center of the sprite (anchor is bottom-ish at 0.92).
+          midX =
+            sprite.position.x + (0.5 - sprite.anchor.x) * w * Math.sign(sprite.scale.x || 1)
+          // Keep mass is left of the drawbridge — nudge ring toward the keep.
+          midX -= w * 0.06
+          midY = sprite.position.y + (0.5 - sprite.anchor.y) * h
+        }
+        entry.ring.position.set(midX, midY)
+        paintOwnershipRing(entry.ring, ownerId, townFootprintRingRadius(entry))
       }
 
       const townFill = (playerId: string | null | undefined) =>
@@ -596,14 +689,62 @@ export function HexMap({
         entry.badge.visible = !hasArt
         entry.label.visible = !hasArt
         if (hasArt && texture) {
+          if (entry.data.kind === 'town') {
+            const origin = townFootprintOrigin(entry.data)
+            const bottom = townFootprintBottomRow(entry.data)
+            const centers = bottom.map((axial) => {
+              const hex = grid.getHex(axial) ?? grid.createHex(axial)
+              const c = hexCenter(hex, offsetX, offsetY)
+              return {
+                x: c.x - entry.view.position.x,
+                y: c.y - entry.view.position.y,
+              }
+            })
+            const sample = grid.getHex(origin) ?? grid.createHex(origin)
+            layoutHexFootprintSprite(
+              entry.sprite,
+              texture,
+              centers,
+              centers,
+              sample.width,
+              sample.height,
+            )
+            // Square town art is height-limited on a wide 2×1 span — scale up
+            // so the castle fills the footprint width (contain leaves it ~1 hex).
+            let boxW = sample.width * 0.9
+            if (centers.length >= 2) {
+              const xs = centers.map((c) => c.x)
+              boxW = Math.max(
+                boxW,
+                Math.max(...xs) - Math.min(...xs) + sample.width,
+              )
+            }
+            const contain = Math.abs(entry.sprite.scale.x) || 1
+            const coverW = (boxW * 0.98) / Math.max(1, texture.width)
+            const boost = Math.max(1, coverW / contain)
+            entry.sprite.scale.x *= boost
+            entry.sprite.scale.y *= boost
+            placeTownOwnershipRing(entry, ownerId)
+            syncTownActorDepth()
+            return
+          }
           const { width, height } = featureHexSize(entry.data.q, entry.data.r)
           // Same 1×1 fit as world props (box 0.9×W / 0.95×H, grounded anchor).
           layoutHexSprite(entry.sprite, texture, 0, 0, width, height)
+          // Node art sits smaller in its 768 frame than loose piles / many props —
+          // bump mines so the subject fills the hex similarly on screen.
+          if (entry.data.kind === 'mine') {
+            const nodeFit = 1.4
+            entry.sprite.scale.x *= nodeFit
+            entry.sprite.scale.y *= nodeFit
+            // Sit the cave base on the hex center (ownership ring), not floating above it.
+            entry.sprite.y += height * 0.18
+          }
           if (entry.data.flipped) {
             entry.sprite.scale.x = -Math.abs(entry.sprite.scale.x)
           }
           if (entry.data.kind === 'mine') {
-            paintOwnershipRing(entry.ring, ownerId, width)
+            paintOwnershipRing(entry.ring, ownerId, width * 0.58)
           } else {
             entry.ring.clear()
           }
@@ -629,7 +770,29 @@ export function HexMap({
         sprite: Sprite
         ring: Graphics
       }) => {
+        const key = `${entry.data.q},${entry.data.r}`
         if (entry.data.kind === 'town') {
+          const sessionTown = findTownAt(getSession(), entry.data.q, entry.data.r)
+          const typeId =
+            sessionTown?.town_type_id ?? mapObjectTownTypeId(entry.data) ?? null
+          const feature = featureForTownType(getCachedCatalog(), typeId)
+          const imagePath =
+            feature?.image_path ??
+            (sessionTown
+              ? `${getCachedCatalog()?.town.find((t) => t.id === typeId)?.name ?? ''}.png`
+              : null)
+          void loadFeatureTexture(imagePath).then((texture) => {
+            const live = objectByKey.get(key)
+            if (!live || live !== entry) {
+              return
+            }
+            const owner = findTownAt(
+              getSession(),
+              live.data.q,
+              live.data.r,
+            )?.player_id
+            applyFeatureArt(live, texture, owner)
+          })
           return
         }
         const resourceId = mapObjectResourceId(entry.data)
@@ -639,7 +802,6 @@ export function HexMap({
         const kind = entry.data.kind === 'mine' ? 'mine' : 'pickup'
         const feature = featureForResource(getCachedCatalog(), resourceId, kind)
         const imagePath = feature?.image_path ?? null
-        const key = `${entry.data.q},${entry.data.r}`
         // Pickups must use loose `{Resource}.png` only — never Node art.
         // Nodes use `{Resource}_Node.png`. No cross-kind fallback on the map.
         void loadFeatureTexture(imagePath).then((texture) => {
@@ -688,9 +850,17 @@ export function HexMap({
           anchor: 0.5,
         })
         view.addChild(objectBadge, objectSprite, objectRing, objectLabel)
-        const hex = grid.getHex(obj) ?? grid.createHex(obj)
-        const center = hexCenter(hex, offsetX, offsetY)
-        view.position.set(center.x, center.y)
+        if (obj.kind === 'town') {
+          // Anchor view at left hex; sprite spans left+right (entry = obj q,r).
+          const origin = townFootprintOrigin(obj)
+          const leftHex = grid.getHex(origin) ?? grid.createHex(origin)
+          const leftC = hexCenter(leftHex, offsetX, offsetY)
+          view.position.set(leftC.x, leftC.y)
+        } else {
+          const hex = grid.getHex(obj) ?? grid.createHex(obj)
+          const center = hexCenter(hex, offsetX, offsetY)
+          view.position.set(center.x, center.y)
+        }
         objectLayer.addChild(view)
         const entry = {
           data: obj,
@@ -701,7 +871,7 @@ export function HexMap({
           ring: objectRing,
         }
         objectByKey.set(`${obj.q},${obj.r}`, entry)
-        if (obj.kind === 'mine' || obj.kind === 'pickup') {
+        if (obj.kind === 'mine' || obj.kind === 'pickup' || obj.kind === 'town') {
           loadObjectFeatureArt(entry)
         }
       }
@@ -756,6 +926,9 @@ export function HexMap({
           }
           paintObjectBadge(entry.badge, townFill(claimedTown?.player_id))
           entry.label.style.fill = claimedTown?.player_id != null ? '#ffffff' : '#111111'
+          if (entry.sprite.visible) {
+            placeTownOwnershipRing(entry, claimedTown?.player_id)
+          }
           if (!obj.claimed && claimedTown?.player_id != null) {
             obj.claimed = true
           }
@@ -808,7 +981,7 @@ export function HexMap({
               paintOwnershipRing(
                 entry.ring,
                 node.player_id,
-                featureHexSize(q, r).width,
+                featureHexSize(q, r).width * 0.58,
               )
             } else {
               paintObjectBadge(entry.badge, townFill(node.player_id))
@@ -823,7 +996,11 @@ export function HexMap({
         walletRef.current = walletFromSession(getSession())
         const ownerId = claimed?.player_id ?? moverId
         if (entry.sprite.visible) {
-          paintOwnershipRing(entry.ring, ownerId, featureHexSize(q, r).width)
+          paintOwnershipRing(
+            entry.ring,
+            ownerId,
+            featureHexSize(q, r).width * 0.58,
+          )
         } else {
           paintObjectBadge(entry.badge, townFill(ownerId))
           entry.label.style.fill = '#ffffff'
@@ -1077,6 +1254,169 @@ export function HexMap({
         )
       }
 
+      const syncTownActorDepth = () => {
+        // Guarantee occlusion by parenting units under the town view (before the
+        // sprite) when they are behind the keep. Entry/drawbridge stays a sibling
+        // painted after the town so the unit stays on top. Missing hero art is
+        // irrelevant — badge and sprite use the same Container.
+        const entryBoost = hexSize * 2.2
+        const townBoost = hexSize * 0.4
+
+        type DepthItem = { view: Container; z: number }
+        const backItems: DepthItem[] = []
+        const frontUnits: Array<{
+          view: Container
+          z: number
+          worldX: number
+          worldY: number
+        }> = []
+
+        for (const entry of objectByKey.values()) {
+          if (entry.data.kind !== 'town' || !entry.sprite.visible) {
+            const hex =
+              grid.getHex(entry.data) ?? grid.createHex(entry.data)
+            const c = hexCenter(hex, offsetX, offsetY)
+            backItems.push({ view: entry.view, z: c.y - hexSize * 0.25 })
+            continue
+          }
+          const keep = townBlockedHex(entry.data)
+          const keepHex = grid.getHex(keep) ?? grid.createHex(keep)
+          const kc = hexCenter(keepHex, offsetX, offsetY)
+          backItems.push({ view: entry.view, z: kc.y + townBoost })
+        }
+
+        const townBehindWhich = (
+          pos: { q: number; r: number },
+          worldX: number,
+          worldY: number,
+        ) => {
+          for (const entry of objectByKey.values()) {
+            if (entry.data.kind !== 'town' || !entry.sprite.visible) {
+              continue
+            }
+            const keep = townBlockedHex(entry.data)
+            const keepHex = grid.getHex(keep) ?? grid.createHex(keep)
+            const kc = hexCenter(keepHex, offsetX, offsetY)
+            const entryHex =
+              grid.getHex(entry.data) ?? grid.createHex(entry.data)
+            const ec = hexCenter(entryHex, offsetX, offsetY)
+            const sp = entry.sprite
+            const groundY = entry.view.position.y + sp.position.y
+            const topY = groundY - Math.abs(sp.height) * sp.anchor.y
+            const midX =
+              entry.view.position.x +
+              sp.position.x +
+              (0.5 - sp.anchor.x) *
+                Math.abs(sp.width) *
+                Math.sign(sp.scale.x || 1)
+            const halfW = Math.max(Math.abs(sp.width) * 0.65, hexSize * 2)
+
+            // Entry/drawbridge: keep the unit in front of the town.
+            if (entry.data.q === pos.q && entry.data.r === pos.r) {
+              // Only treat as "in front" if the marker sits on the lower-right
+              // drawbridge side of the art; otherwise the keep still occludes
+              // (entry hex center falls under the gatehouse walls).
+              const onDrawbridge =
+                worldX >= midX - hexSize * 0.15 &&
+                worldY >= Math.min(kc.y, ec.y) - hexSize * 0.1
+              if (onDrawbridge) {
+                return null
+              }
+            }
+
+            const nearKeep =
+              pos.r <= keep.r + 0 && Math.abs(pos.q - keep.q) <= 2
+            const onFootprint =
+              (pos.q === keep.q && pos.r === keep.r) ||
+              (pos.q === entry.data.q && pos.r === entry.data.r)
+            const underArt =
+              worldY < kc.y + hexSize * 0.5 &&
+              Math.abs(worldX - midX) <= halfW &&
+              worldY >= topY - hexSize * 0.5
+            if (nearKeep || onFootprint || underArt) {
+              return entry
+            }
+          }
+          return null
+        }
+
+        const placeUnit = (
+          view: Container,
+          pos: { q: number; r: number },
+          worldX: number,
+          worldY: number,
+        ) => {
+          const host = townBehindWhich(pos, worldX, worldY)
+          if (host) {
+            // Insert just before the town sprite so opaque castle pixels cover
+            // the unit; transparent padding still shows the unit through.
+            const spriteIdx = host.view.getChildIndex(host.sprite)
+            host.view.addChildAt(view, Math.max(0, spriteIdx))
+            view.position.set(
+              worldX - host.view.position.x,
+              worldY - host.view.position.y,
+            )
+            return
+          }
+          const hex = grid.getHex(pos) ?? grid.createHex(pos)
+          const c = hexCenter(hex, offsetX, offsetY)
+          let z = c.y
+          for (const entry of objectByKey.values()) {
+            if (
+              entry.data.kind === 'town' &&
+              entry.sprite.visible &&
+              entry.data.q === pos.q &&
+              entry.data.r === pos.r
+            ) {
+              z = Math.max(z, c.y + entryBoost)
+            }
+          }
+          frontUnits.push({ view, z, worldX, worldY })
+        }
+
+        for (const hero of getSession().heroes) {
+          const marker = heroMarkers.get(hero.id)
+          if (!marker?.view.visible) {
+            continue
+          }
+          const hex =
+            grid.getHex(hero.position) ?? grid.createHex(hero.position)
+          const c = hexCenter(hex, offsetX, offsetY)
+          const same = getSession().heroes.filter(
+            (h) =>
+              heroVisibleOnMap(h) &&
+              h.position.q === hero.position.q &&
+              h.position.r === hero.position.r,
+          )
+          let spread = 0
+          if (same.length > 1) {
+            const index = same.findIndex((h) => h.id === hero.id)
+            spread = (index - (same.length - 1) / 2) * hexSize * 0.45
+          }
+          placeUnit(marker.view, hero.position, c.x + spread, c.y)
+        }
+        for (const mob of getSession().mobs) {
+          const marker = mobMarkers.get(mob.id)
+          if (!marker?.view.visible) {
+            continue
+          }
+          const hex =
+            grid.getHex(mob.position) ?? grid.createHex(mob.position)
+          const c = hexCenter(hex, offsetX, offsetY)
+          placeUnit(marker.view, mob.position, c.x, c.y)
+        }
+
+        backItems.sort((a, b) => a.z - b.z)
+        frontUnits.sort((a, b) => a.z - b.z)
+        for (const item of backItems) {
+          objectLayer.addChild(item.view)
+        }
+        for (const unit of frontUnits) {
+          objectLayer.addChild(unit.view)
+          unit.view.position.set(unit.worldX, unit.worldY)
+        }
+      }
+
       const placeHeroMarkers = () => {
         const sessionHeroes = getSession().heroes
         const counts = new Map<string, number>()
@@ -1142,10 +1482,11 @@ export function HexMap({
           if (seen.has(id)) {
             continue
           }
-          heroLayer.removeChild(entry.view)
+          entry.view.parent?.removeChild(entry.view)
           entry.view.destroy({ children: true })
           heroMarkers.delete(id)
         }
+        syncTownActorDepth()
       }
       const placeMobMarkers = () => {
         const session = getSession()
@@ -1239,10 +1580,11 @@ export function HexMap({
           if (seen.has(id)) {
             continue
           }
-          heroLayer.removeChild(entry.view)
+          entry.view.parent?.removeChild(entry.view)
           entry.view.destroy({ children: true })
           mobMarkers.delete(id)
         }
+        syncTownActorDepth()
       }
       applyHeroMarkerLabel = () => {
         placeHeroMarkers()
@@ -1338,8 +1680,12 @@ export function HexMap({
         for (const entry of objectByKey.values()) {
           if (entry.data.kind === 'town') {
             const town = findTownAt(sessionNow, entry.data.q, entry.data.r)
-            paintObjectBadge(entry.badge, townFill(town?.player_id))
-            entry.label.style.fill = town?.player_id != null ? '#ffffff' : '#111111'
+            if (entry.sprite.visible) {
+              placeTownOwnershipRing(entry, town?.player_id)
+            } else {
+              paintObjectBadge(entry.badge, townFill(town?.player_id))
+              entry.label.style.fill = town?.player_id != null ? '#ffffff' : '#111111'
+            }
             continue
           }
           if (entry.data.kind === 'pickup') {
@@ -1354,7 +1700,7 @@ export function HexMap({
             paintOwnershipRing(
               entry.ring,
               owned ? node.player_id : null,
-              featureHexSize(entry.data.q, entry.data.r).width,
+              featureHexSize(entry.data.q, entry.data.r).width * 0.58,
             )
             continue
           }
@@ -1377,7 +1723,11 @@ export function HexMap({
         placeHeroMarkers()
         placeMobMarkers()
         for (const entry of objectByKey.values()) {
-          if (entry.data.kind === 'mine' || entry.data.kind === 'pickup') {
+          if (
+            entry.data.kind === 'mine' ||
+            entry.data.kind === 'pickup' ||
+            entry.data.kind === 'town'
+          ) {
             loadObjectFeatureArt(entry)
           }
         }
