@@ -30,6 +30,11 @@ export type MapObjectData = {
   townTypeId?: number | null
   /** Horizontal mirror chosen at world placement when feature.flippable. */
   flipped?: boolean | null
+  /**
+   * Loose pile quantity rolled at generation (`resource.payload.loose_*`).
+   * Unused for mines/towns.
+   */
+  qty?: number | null
   /** Frontend-only: mine or town claimed by the hero. */
   claimed?: boolean
   /** Frontend-only: pickup already collected. */

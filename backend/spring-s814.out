@@ -1,0 +1,130 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< com.heroesofyendor:backend >---------------------
+[INFO] Building backend 0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] >>> spring-boot:3.5.16:run (default-cli) > test-compile @ backend >>>
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ backend ---
+[INFO] Copying 1 resource from src\main\resources to target\classes
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.14.1:compile (default-compile) @ backend ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ backend ---
+[INFO] skip non existing resourceDirectory C:\Users\palti\Projects\heroes\backend\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.14.1:testCompile (default-testCompile) @ backend ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] <<< spring-boot:3.5.16:run (default-cli) < test-compile @ backend <<<
+[INFO] 
+[INFO] 
+[INFO] --- spring-boot:3.5.16:run (default-cli) @ backend ---
+[INFO] Attaching agents: []
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::               (v3.5.16)
+
+2026-09-22T21:46:29.136-07:00  INFO 49936 --- [heroes-of-yendor] [           main] c.h.HeroesOfYendorApplication            : Starting HeroesOfYendorApplication using Java 21.0.10 with PID 49936 (C:\Users\palti\Projects\heroes\backend\target\classes started by palti in C:\Users\palti\Projects\heroes\backend)
+2026-09-22T21:46:29.138-07:00  INFO 49936 --- [heroes-of-yendor] [           main] c.h.HeroesOfYendorApplication            : No active profile set, falling back to 1 default profile: "default"
+2026-09-22T21:46:29.649-07:00  INFO 49936 --- [heroes-of-yendor] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-09-22T21:46:29.667-07:00  INFO 49936 --- [heroes-of-yendor] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 10 ms. Found 0 JPA repository interfaces.
+2026-09-22T21:46:30.042-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-09-22T21:46:30.055-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-09-22T21:46:30.055-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.55]
+2026-09-22T21:46:30.102-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-09-22T21:46:30.103-07:00  INFO 49936 --- [heroes-of-yendor] [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 922 ms
+2026-09-22T21:46:30.231-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-09-22T21:46:30.284-07:00  INFO 49936 --- [heroes-of-yendor] [           main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.6.53.Final
+2026-09-22T21:46:30.311-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-09-22T21:46:30.545-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-09-22T21:46:30.569-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-09-22T21:46:31.474-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@2d2fc130
+2026-09-22T21:46:31.475-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-09-22T21:46:32.114-07:00  INFO 49936 --- [heroes-of-yendor] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-1)']
+	Database driver: undefined/unknown
+	Database version: 17.6
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-09-22T21:46:32.369-07:00  INFO 49936 --- [heroes-of-yendor] [           main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-09-22T21:46:32.374-07:00  INFO 49936 --- [heroes-of-yendor] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-09-22T21:46:32.538-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Loading reference data as current_user=postgres row_security=on
+2026-09-22T21:46:32.629-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: resource — 10 rows
+2026-09-22T21:46:32.747-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: move_type — 4 rows
+2026-09-22T21:46:32.821-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: town — 9 rows
+2026-09-22T21:46:32.890-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: hero_type — 18 rows
+2026-09-22T21:46:33.116-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: building — 405 rows
+2026-09-22T21:46:33.209-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: unit — 264 rows
+2026-09-22T21:46:33.274-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: unit_tag — 12 rows
+2026-09-22T21:46:33.349-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: condition — 12 rows
+2026-09-22T21:46:33.440-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: town_name_pool — 96 rows
+2026-09-22T21:46:33.512-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: hero_pool — 126 rows
+2026-09-22T21:46:33.634-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: town_layout — 144 rows
+2026-09-22T21:46:33.748-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: market — 5 rows
+2026-09-22T21:46:33.831-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ability — 96 rows
+2026-09-22T21:46:33.958-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ability_resource — 2 rows
+2026-09-22T21:46:34.050-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ability_cooldown — 3 rows
+2026-09-22T21:46:34.120-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ability_target — 9 rows
+2026-09-22T21:46:34.193-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ability_type — 6 rows
+2026-09-22T21:46:34.260-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: discipline — 12 rows
+2026-09-22T21:46:34.329-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ability_level — 3 rows
+2026-09-22T21:46:34.435-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: hero_discipline — 36 rows
+2026-09-22T21:46:34.507-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: difficulty — 3 rows
+2026-09-22T21:46:34.572-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: player_color — 6 rows
+2026-09-22T21:46:34.635-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: terrain — 23 rows
+2026-09-22T21:46:34.716-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: prop — 30 rows
+2026-09-22T21:46:34.785-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: feature_type — 4 rows
+2026-09-22T21:46:34.857-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: feature — 47 rows
+2026-09-22T21:46:34.928-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: app_config — 67 rows
+2026-09-22T21:46:34.991-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ai_arch — 4 rows
+2026-09-22T21:46:35.057-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ai_arch_weight — 92 rows
+2026-09-22T21:46:35.121-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: levels — 25 rows
+2026-09-22T21:46:35.196-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: hero_levels — 450 rows
+2026-09-22T21:46:35.274-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.heroesofyendor.ReferenceData         : Reference data loaded: ground_effect — 8 rows
+2026-09-22T21:46:35.621-07:00  WARN 49936 --- [heroes-of-yendor] [           main] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+2026-09-22T21:46:35.622-07:00  INFO 49936 --- [heroes-of-yendor] [           main] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-09-22T21:46:35.624-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown initiated...
+2026-09-22T21:46:36.065-07:00  INFO 49936 --- [heroes-of-yendor] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown completed.
+2026-09-22T21:46:36.077-07:00  INFO 49936 --- [heroes-of-yendor] [           main] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2026-09-22T21:46:36.092-07:00 ERROR 49936 --- [heroes-of-yendor] [           main] o.s.b.d.LoggingFailureAnalysisReporter   : 
+
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+Web server failed to start. Port 8080 was already in use.
+
+Action:
+
+Identify and stop the process that's listening on port 8080 or configure this application to listen on another port.
+
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  9.108 s
+[INFO] Finished at: 2026-09-22T21:46:36-07:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.springframework.boot:spring-boot-maven-plugin:3.5.16:run (default-cli) on project backend: Process terminated with exit code: 1 -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException

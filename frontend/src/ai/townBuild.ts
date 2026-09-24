@@ -23,6 +23,7 @@ import {
   unitForBuilding,
   unitById,
   getCachedCatalog,
+  empireSpreadHexThreshold,
   type BuildingRow,
   type CostMap,
   type ReferenceCatalog,
@@ -36,6 +37,7 @@ import {
   hasTownBuiltToday,
   hireHeroFromPool,
   markTownBuiltToday,
+  afterTownBuildingPlaced,
   patchBuildingSlot,
   recruitToGarrison,
   spendResources,
@@ -53,7 +55,7 @@ import {
   type Player,
   type Town,
 } from '../session/types'
-import { neighborHexes } from '../hex/pathfinding'
+import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { isPassable } from '../hex/world'
 import { appendAiTrace } from './trace'
 import {
@@ -181,14 +183,14 @@ function costEfficiencyMult(cost: CostMap): number {
   return COST_EFFICIENCY_REF / (COST_EFFICIENCY_REF + burden)
 }
 
-/** Army bucket from dwelling growth + unit/building tier (not flat 1). */
+/** Army bucket from dwelling growth + unit.tier (not flat 1). */
 function armyValueFromGrowthTier(
   catalog: ReferenceCatalog,
   building: BuildingRow,
 ): number {
   const growth = buildingGrowth(building)
   const unit = unitForBuilding(catalog, building.id)
-  const tier = Math.max(1, unit?.tier ?? building.tier ?? 1)
+  const tier = Math.max(1, unit?.tier ?? 1)
   // growth 10 → ~1.0; tier 3 → ~1.0; combines so T6/high-growth outranks T1.
   const growthPart = Math.max(0.35, growth > 0 ? growth / 10 : 0.35)
   const tierPart = Math.max(0.5, tier / 3)
@@ -200,10 +202,37 @@ function armyValueFromUnitTier(tier: number | null | undefined): number {
   return Math.round(Math.max(0.5, t / 3) * 100) / 100
 }
 
+/** True when any pair of owned towns is farther than the spread threshold. */
+function empireTownsAreSpread(
+  session: GameSession,
+  playerId: string,
+  catalog: ReferenceCatalog,
+): boolean {
+  const towns = session.towns.filter((town) => town.player_id === playerId)
+  if (towns.length < 2) {
+    return false
+  }
+  const thr = empireSpreadHexThreshold(catalog)
+  for (let i = 0; i < towns.length; i += 1) {
+    for (let j = i + 1; j < towns.length; j += 1) {
+      if (hexDistance(towns[i]!.position, towns[j]!.position) > thr) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+const HANGER_SLOT = 8
+/** Slot-8 / Hanger hero_value when empire is spread (was ~1.0–1.15 fallback). */
+const HANGER_SPREAD_HERO_VALUE = 2.25
+
 function factorForBuilding(
   catalog: ReferenceCatalog,
   slotNum: number,
   building: BuildingRow,
+  session?: GameSession,
+  playerId?: string,
 ): Record<TownBuildFactor, number> {
   const effect = building.effect_type.trim().toLowerCase()
   if (isArmySlot(slotNum) || effect === 'unit_unlock') {
@@ -211,6 +240,21 @@ function factorForBuilding(
     return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
   const name = building.name.trim().toLowerCase()
+  const isHanger =
+    slotNum === HANGER_SLOT || name.includes('hanger') || name.includes('zeppelin')
+  if (
+    isHanger &&
+    session &&
+    playerId &&
+    empireTownsAreSpread(session, playerId, catalog)
+  ) {
+    return {
+      economy_value: 0,
+      army_value: 0,
+      defense_value: 0,
+      hero_value: HANGER_SPREAD_HERO_VALUE,
+    }
+  }
   const economy =
     isMarketplaceBuilding(building) ||
     isTavernBuilding(building) ||
@@ -233,6 +277,8 @@ function factorForBuilding(
 function factorForAction(
   catalog: ReferenceCatalog,
   action: TownAction,
+  session: GameSession,
+  playerId: string,
 ): Record<TownBuildFactor, number> {
   if (action.kind === 'hire_hero') {
     return { economy_value: 0, army_value: 0, defense_value: 0, hero_value: 1 }
@@ -249,7 +295,13 @@ function factorForAction(
     const army = armyValueFromUnitTier(base?.tier)
     return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
-  return factorForBuilding(catalog, action.slotNum, action.building)
+  return factorForBuilding(
+    catalog,
+    action.slotNum,
+    action.building,
+    session,
+    playerId,
+  )
 }
 
 function efficiencyCostForAction(
@@ -710,6 +762,12 @@ function executeBuild(intent: BuildIntent, catalog: ReferenceCatalog): string | 
         )
       }
     }
+    next = afterTownBuildingPlaced(
+      next,
+      catalog,
+      intent.townId,
+      intent.building,
+    )
     return next
   })
   return error
@@ -901,7 +959,7 @@ function applyOneTownAction(
       const label = actionLabel(intent)
       const affordError = canAfford(wallet, cost)
       if (!affordError) {
-        const factors = factorForAction(catalog, intent)
+        const factors = factorForAction(catalog, intent, session, player.id)
         const { mult } = actionScoreMult(intent, heroClassId, catalog)
         scored.push({
           id: `${intent.kind}:${intent.townId}:${intent.slotNum}:${intent.building.id}`,
@@ -936,7 +994,7 @@ function applyOneTownAction(
         skipped.push(`  skip (cannot afford 1) ${label}`)
         continue
       }
-      const factors = factorForAction(catalog, intent)
+      const factors = factorForAction(catalog, intent, session, player.id)
       const { mult } = actionScoreMult(intent, heroClassId, catalog)
       scored.push({
         id: `${intent.kind}:${intent.townId}:${intent.slotNum}:${intent.building.id}`,
@@ -955,7 +1013,7 @@ function applyOneTownAction(
         skipped.push(`  skip (${affordError}) ${label}`)
         continue
       }
-      const factors = factorForAction(catalog, intent)
+      const factors = factorForAction(catalog, intent, session, player.id)
       const { mult } = actionScoreMult(intent, heroClassId, catalog)
       scored.push({
         id: `${intent.kind}:${intent.townId}:${intent.slot.row}:${intent.slot.heroId ?? ''}:${intent.slot.slot}`,
@@ -977,7 +1035,7 @@ function applyOneTownAction(
         if (affordError) {
           skipped.push(`  skip (${affordError}) ${label}`)
         } else {
-          const factors = factorForAction(catalog, hire)
+          const factors = factorForAction(catalog, hire, session, player.id)
           const { mult } = actionScoreMult(hire, heroClassId, catalog)
           scored.push({
             id: `${hire.kind}:${hire.townId}`,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, Fragment, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   formatAmount,
+  GOLD_RESOURCE_ID,
   type ResourceWallet,
 } from '../hex/resources'
 import { ResourceBar } from '../hex/ResourceBar'
@@ -35,6 +36,7 @@ import {
   townLayoutSlotStyle,
   unitCost,
   unitForBuilding,
+  flightSpeed,
   type BuildingRow,
   type CostMap,
   type HeroPoolRow,
@@ -59,11 +61,14 @@ import { getSession, subscribe, updateSession } from '../session/store'
 import { NECROPOLIS_TOWN_TYPE_ID, type GameSession } from '../session/types'
 import {
   assignHeroesFromPool,
+  afterTownBuildingPlaced,
   dropHeldArmyStack,
   findTownById,
+  flightDestinationsFromTown,
   hireHeroFromPool,
   hireHeroCostMap,
   ensureLibraryOffers,
+  launchHeroFlight,
   patchBuildingSlot,
   placeArmyStack,
   recruitToGarrison,
@@ -72,9 +77,11 @@ import {
   spendResources,
   splitArmyStack,
   stackUpgradeOffer,
+  takeArchiveLearnNotice,
   unusedTavernPool,
   upgradeArmyStack,
   visitingHeroId,
+  type ArchiveLearnNotice,
   type ArmyRowId,
   type ArmySlotRef,
 } from '../session/accessors'
@@ -128,8 +135,11 @@ type TownManagementProps = {
   selectedHeroId?: string | null
   onOpenHero?: (heroId?: string | null) => void
   onCycleTown?: () => void
+  onArchiveLearn?: (notice: ArchiveLearnNotice) => void
   /** DEV: AI spectator looking at an AI town — no mutations. */
   readOnly?: boolean
+  /** After a successful Hanger flight launch — sync map hero / camera. */
+  onHeroFlew?: (heroId: string) => void
 }
 
 function SlotArt({
@@ -178,7 +188,9 @@ export function TownManagement({
   selectedHeroId = null,
   onOpenHero,
   onCycleTown,
+  onArchiveLearn,
   readOnly = false,
+  onHeroFlew,
 }: TownManagementProps) {
   const hasActedToday = actedToday || readOnly
   const session = useSyncExternalStore(subscribe, getSession)
@@ -337,6 +349,16 @@ export function TownManagement({
         ensureLibraryOffers(current, catalog, townId, townTypeId, id),
       )
     }
+    if (catalog) {
+      takeArchiveLearnNotice()
+      updateSession((current) =>
+        afterTownBuildingPlaced(current, catalog, townId, building),
+      )
+      const learned = takeArchiveLearnNotice()
+      if (learned) {
+        onArchiveLearn?.(learned)
+      }
+    }
     closePanel()
   }
 
@@ -367,6 +389,14 @@ export function TownManagement({
       updateSession((current) =>
         ensureLibraryOffers(current, catalog, townId, townTypeId, id),
       )
+    }
+    takeArchiveLearnNotice()
+    updateSession((current) =>
+      afterTownBuildingPlaced(current, catalog, townId, next),
+    )
+    const learned = takeArchiveLearnNotice()
+    if (learned) {
+      onArchiveLearn?.(learned)
     }
     closePanel()
   }
@@ -438,7 +468,13 @@ export function TownManagement({
         alt=""
       />
       <header className="town-management-bar">
-        <h1 id="town-management-title">{townName}</h1>
+        <h1 id="town-management-title">
+          {townName &&
+          townTypeLabel &&
+          townName.trim().toLowerCase() !== townTypeLabel.trim().toLowerCase()
+            ? `${townTypeLabel}: ${townName}`
+            : townName || townTypeLabel}
+        </h1>
         <p className="town-calendar">{calendarLabel}</p>
         <ResourceBar wallet={wallet} className="town-resource-strip" />
         <button type="button" onClick={onExit}>
@@ -574,6 +610,19 @@ export function TownManagement({
           onHire={(pick) => hireHero(pick)}
           wallet={wallet}
           builtBuildingIds={builtBuildingIds}
+          visitingHeroId={
+            (() => {
+              const town = findTownById(session, townId)
+              return town
+                ? visitingHeroId(session, town, selectedHeroId)
+                : null
+            })()
+          }
+          onFlyLaunched={(heroId) => {
+            onExit()
+            onHeroFlew?.(heroId)
+          }}
+          onFlyError={(text) => setMessage(text)}
           onOpenMarket={() => {
             if (readOnly) {
               return
@@ -1150,6 +1199,9 @@ function BuildingPanel({
   builtBuildingIds,
   onOpenMarket,
   onOpenLibrary,
+  visitingHeroId: visitorId,
+  onFlyLaunched,
+  onFlyError,
 }: {
   slotId: number
   slotState: SlotState
@@ -1172,6 +1224,9 @@ function BuildingPanel({
   builtBuildingIds: ReadonlySet<number>
   onOpenMarket: () => void
   onOpenLibrary: () => void
+  visitingHeroId: string | null
+  onFlyLaunched: (heroId: string) => void
+  onFlyError: (message: string) => void
 }) {
   const army = isArmySlot(slotId)
   const sessionNow = getSession()
@@ -1265,6 +1320,10 @@ function BuildingPanel({
           hireCandidates={hireCandidates}
           onHire={onHire}
           lockedUpgradeLine={lockedUpgradeLine}
+          visitingHeroId={visitorId}
+          hangerSlot={slotId === 8}
+          onFlyLaunched={onFlyLaunched}
+          onFlyError={onFlyError}
         />
       ) : (
         <p>Unknown building.</p>
@@ -1442,6 +1501,10 @@ function FilledSlotActions({
   hireCandidates,
   onHire,
   lockedUpgradeLine,
+  visitingHeroId: visitorId,
+  hangerSlot,
+  onFlyLaunched,
+  onFlyError,
 }: {
   army: boolean
   current: BuildingRow
@@ -1459,10 +1522,16 @@ function FilledSlotActions({
   hireCandidates: HeroPoolRow[]
   onHire: (pick: HeroPoolRow) => boolean
   lockedUpgradeLine?: string | null
+  visitingHeroId: string | null
+  hangerSlot: boolean
+  onFlyLaunched: (heroId: string) => void
+  onFlyError: (message: string) => void
 }) {
   const [confirmDestroy, setConfirmDestroy] = useState(false)
   const [recruiting, setRecruiting] = useState(false)
   const [hiring, setHiring] = useState(false)
+  const [flying, setFlying] = useState(false)
+  const [flyError, setFlyError] = useState<string | null>(null)
   const destroyCost = destroyCostOf(current)
   const unit = army ? unitForBuilding(catalog, current.id) : null
   const perUnitCost = townRecruitUnitCost(
@@ -1472,11 +1541,32 @@ function FilledSlotActions({
     unitCost(unit),
   )
   const [qtyText, setQtyText] = useState('0')
+  const sessionNow = getSession()
+  const visitor = visitorId
+    ? sessionNow.heroes.find((row) => row.id === visitorId)
+    : null
+  const canOfferFlight =
+    hangerSlot &&
+    visitor != null &&
+    !visitor.flight &&
+    visitor.player_id === findTownById(sessionNow, townId)?.player_id
+  const flightDests = canOfferFlight
+    ? flightDestinationsFromTown(
+        sessionNow,
+        catalog,
+        townId,
+        visitor.player_id,
+        visitorId,
+      )
+    : []
+  const goldOnHand = wallet[GOLD_RESOURCE_ID]?.stockpile ?? 0
 
   useEffect(() => {
     setConfirmDestroy(false)
     setRecruiting(false)
     setHiring(false)
+    setFlying(false)
+    setFlyError(null)
   }, [current.id, hasActedToday])
 
   return (
@@ -1486,6 +1576,99 @@ function FilledSlotActions({
         {unit?.name?.trim() ? ` (${unit.name.trim()})` : ''}
       </h3>
       <p>{effectLine(current)}</p>
+      {canOfferFlight ? (
+        <div className="town-hire">
+          {flying ? (
+            <div className="town-hire-list">
+              <p>Fly to (gold charged at launch):</p>
+              {flightDests.length === 0 ? (
+                <p>No other friendly Hanger towns.</p>
+              ) : (
+                flightDests.map((dest) => {
+                  const afford = goldOnHand >= dest.goldCost
+                  const selectable = afford && !dest.blocked
+                  const typeName =
+                    catalog.town.find(
+                      (row) => row.id === dest.town.town_type_id,
+                    )?.name?.trim() || 'Town'
+                  const days = Math.max(
+                    1,
+                    Math.ceil(dest.distance / flightSpeed(catalog)),
+                  )
+                  return (
+                    <button
+                      key={dest.town.id}
+                      type="button"
+                      className="town-building-action"
+                      disabled={!selectable}
+                      onClick={() => {
+                        if (!visitorId || dest.blocked) {
+                          if (dest.blocked) {
+                            onFlyError('That destination is blocked.')
+                          } else {
+                            onFlyError('No hero is visiting this town.')
+                          }
+                          return
+                        }
+                        let error: string | null = null
+                        updateSession((currentSession) => {
+                          const result = launchHeroFlight(
+                            currentSession,
+                            visitorId,
+                            dest.town.id,
+                            townId,
+                          )
+                          error = result.error
+                          return result.session
+                        })
+                        if (error) {
+                          setFlyError(error)
+                          onFlyError(error)
+                          return
+                        }
+                        setFlying(false)
+                        // Close town first; App animates flight on the world map.
+                        onFlyLaunched(visitorId)
+                      }}
+                    >
+                      {typeName}: {dest.town.name} -{' '}
+                      {formatAmount(dest.goldCost)} Gold, {days}{' '}
+                      {days === 1 ? 'Day' : 'Days'}
+                      {dest.blocked
+                        ? ' - Blocked'
+                        : afford
+                          ? ''
+                          : ' (need gold)'}
+                    </button>
+                  )
+                })
+              )}
+              {flyError ? <p className="town-building-panel-msg">{flyError}</p> : null}
+              <button
+                type="button"
+                className="town-building-action"
+                onClick={() => {
+                  setFlying(false)
+                  setFlyError(null)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="town-building-action"
+              onClick={() => {
+                setFlyError(null)
+                setFlying(true)
+              }}
+            >
+              Fly to Hanger town…
+            </button>
+          )}
+        </div>
+      ) : null}
       {next ? (
         <button
           type="button"

@@ -1,4 +1,4 @@
-import { getCachedCatalog, startingStockpileFor, yieldPerMine } from '../town/catalog'
+import { getCachedCatalog, startingStockpileFor } from '../town/catalog'
 
 export type ResourceDef = {
   id: number
@@ -38,7 +38,8 @@ const FALLBACK_RESOURCES: ResourceDef[] = [
 export let RESOURCES: ResourceDef[] = FALLBACK_RESOURCES
 
 export type ResourceEntry = {
-  claimedMines: number
+  /** Combined weekly income: town building produces + owned mines. */
+  weeklyIncome: number
   stockpile: number
 }
 
@@ -90,7 +91,7 @@ export function emptyWallet(): ResourceWallet {
   const catalog = getCachedCatalog()
   for (const resource of RESOURCES) {
     wallet[resource.id] = {
-      claimedMines: 0,
+      weeklyIncome: 0,
       stockpile: startingStockpileFor(catalog, resource),
     }
   }
@@ -106,10 +107,9 @@ export function formatResourceLine(
   resource: ResourceDef,
   entry: ResourceEntry | undefined,
 ): string {
-  const claimed = entry?.claimedMines ?? 0
+  const weekly = entry?.weeklyIncome ?? 0
   const stockpile = entry?.stockpile ?? 0
-  const dailyYield = claimed * yieldPerMine(getCachedCatalog())
-  return `${resource.name} (${formatAmount(claimed)}/${formatAmount(dailyYield)}) ${formatAmount(stockpile)}`
+  return `${resource.name} (${formatAmount(weekly)}/wk) ${formatAmount(stockpile)}`
 }
 
 export function formatResourceLines(wallet: ResourceWallet): string[] {
@@ -163,13 +163,4 @@ export function deductCost(
     }
   }
   return next
-}
-
-export function applyDailyTick(wallet: ResourceWallet): void {
-  for (const resource of RESOURCES) {
-    const entry = wallet[resource.id]
-    if (entry) {
-      entry.stockpile += entry.claimedMines * yieldPerMine(getCachedCatalog())
-    }
-  }
 }

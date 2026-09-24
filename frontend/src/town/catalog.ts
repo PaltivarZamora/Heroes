@@ -18,7 +18,6 @@ export type BuildingRow = {
   id: number
   name: string
   town_id: number
-  tier: number | null
   class_id: number | null
   cost: CostMap | null
   effect_type: string
@@ -42,7 +41,7 @@ export type UnitRow = {
   town_id: number | null
   /** Catalog `unit.class_id`. Null falls back to the dwelling's class. */
   class_id: number | null
-  /** Catalog `unit.tier`. Null falls back to the dwelling's tier/slot. */
+  /** Catalog `unit.tier`. Null falls back to dwelling army slot only. */
   tier: number | null
   cost: CostMap | null
   image_path: string | null
@@ -524,10 +523,18 @@ export type AiArchWeightRow = {
   weight: number
 }
 
+export type ResourcePayload = {
+  loose_min: number
+  loose_max: number
+  weekly_node: number
+}
+
 export type ResourceRow = {
   id: number
   name: string
   base_value: number
+  /** Mine/pile economy (`loose_min`/`loose_max`/`weekly_node`). */
+  payload: ResourcePayload | null
 }
 
 export type MarketRow = {
@@ -820,18 +827,43 @@ function asMarket(rows: unknown): MarketRow[] {
     .filter((row) => row.qty > 0 && row.conversion_rate > 0)
 }
 
+function asResourcePayload(value: unknown): ResourcePayload | null {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  const rec = value as Record<string, unknown>
+  const looseMin = Number(rec.loose_min)
+  const looseMax = Number(rec.loose_max)
+  const weekly = Number(rec.weekly_node)
+  if (
+    !Number.isFinite(looseMin) ||
+    !Number.isFinite(looseMax) ||
+    !Number.isFinite(weekly)
+  ) {
+    return null
+  }
+  const min = Math.max(0, Math.floor(looseMin))
+  const max = Math.max(min, Math.floor(looseMax))
+  return {
+    loose_min: min,
+    loose_max: max,
+    weekly_node: Math.max(0, Math.floor(weekly)),
+  }
+}
+
 function asResources(rows: unknown): ResourceRow[] {
   if (!Array.isArray(rows)) {
     return []
   }
   return rows
     .map((row) => {
-      const raw = row as Partial<ResourceRow>
+      const raw = row as Partial<ResourceRow> & { payload?: unknown }
       const name = typeof raw.name === 'string' ? raw.name.trim() : ''
       return {
         id: asInt(raw.id),
         name,
         base_value: asInt(raw.base_value),
+        payload: asResourcePayload(raw.payload),
       }
     })
     .filter((row) => row.id > 0 && row.name.length > 0)
@@ -4134,8 +4166,6 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
         id: asInt(raw.id),
         name,
         town_id: asInt(raw.town_id),
-        tier:
-          raw.tier == null || raw.tier === '' ? null : asInt(raw.tier),
         class_id:
           raw.class_id == null || raw.class_id === ''
             ? null
@@ -5446,16 +5476,22 @@ export function startingStockpileFor(
   )
 }
 
-export function pickupAmount(
+/** Whole units per week from an owned mine of this resource (`payload.weekly_node`). */
+export function resourceWeeklyNode(
   catalog: ReferenceCatalog | null | undefined,
+  resourceId: number,
 ): number {
-  return Math.max(0, Math.floor(appConfigNumber(catalog, 'pickup_amount', 1)))
+  const row =
+    catalog?.resource.find((entry) => entry.id === resourceId) ?? null
+  return Math.max(0, row?.payload?.weekly_node ?? 0)
 }
 
-export function yieldPerMine(
+/** Daily fractional mine accrual rate: weekly_node / 7. */
+export function resourceDailyMineRate(
   catalog: ReferenceCatalog | null | undefined,
+  resourceId: number,
 ): number {
-  return Math.max(0, Math.floor(appConfigNumber(catalog, 'yield_per_mine', 1)))
+  return resourceWeeklyNode(catalog, resourceId) / 7
 }
 
 export function hireHeroGoldCost(
@@ -5789,10 +5825,8 @@ function unitCreatureTier(
   if (unit.tier != null && unit.tier > 0) {
     return unit.tier
   }
+  // unit.tier is canonical; slot is only a last resort when the row is missing.
   const building = buildingById(catalog, unit.bldg_id)
-  if (building?.tier != null && building.tier > 0) {
-    return building.tier
-  }
   if (building?.slot_num != null && isArmySlot(building.slot_num)) {
     return armyTier(building.slot_num)
   }
@@ -5861,6 +5895,52 @@ export function appConfigNumber(
   const raw = catalog?.app_config.find((row) => row.key === key)?.value
   const n = raw == null || raw === '' ? NaN : Number(raw)
   return Number.isFinite(n) ? n : fallback
+}
+
+/** Hexes per day while airborne (`app_config.flight_speed`). */
+export function flightSpeed(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(1, Math.floor(appConfigNumber(catalog, 'flight_speed', 15)))
+}
+
+/** Gold charged per hex of straight-line flight at launch. */
+export function flightCostPerHex(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(
+    0,
+    Math.floor(appConfigNumber(catalog, 'flight_cost_per_hex', 50)),
+  )
+}
+
+/**
+ * Straight-line hex span treated as "more than 1 day's walk" for AI empire
+ * spread (Hanger build boost / flight usefulness).
+ *
+ * Derived from daily MP ÷ typical terrain move_cost (excludes dump-cost 99).
+ * Catalog plains-scale costs are often ~1; raw days then exceed map size, so
+ * the result is clamped to a usable band around {@link flightSpeed}.
+ */
+export function empireSpreadHexThreshold(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  const dumpCost = 99
+  const costs = (catalog?.terrain ?? [])
+    .map((row) => row.move_cost)
+    .filter(
+      (c): c is number =>
+        c != null && Number.isFinite(c) && c > 0 && c < dumpCost,
+    )
+    .sort((a, b) => a - b)
+  // Prefer cheaper (common open) terrain; fallback 100 if catalog empty/odd.
+  const typical =
+    costs.length > 0 ? costs[Math.floor(costs.length * 0.25)]! : 100
+  const dailyMp = heroMovementPoints(catalog)
+  const raw = Math.floor(dailyMp / Math.max(typical, 1e-9))
+  const flightDay = flightSpeed(catalog)
+  // At least one flight-day of hexes; cap so tiny maps still get a signal.
+  return Math.max(flightDay, Math.min(raw, Math.max(flightDay * 3, 24)))
 }
 
 /** True when app_config value is 1 / true / "1". */

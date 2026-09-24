@@ -1,7 +1,7 @@
-import { requestMapMove, selectHeroOnMap, setHeroMovementRemaining, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView } from '../hex/HexMap'
+import { requestMapMove, requestPlayHeroFlight, selectHeroOnMap, setHeroMovementRemaining, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView } from '../hex/HexMap'
 import { spendHeroInteract } from '../hex/hero'
 import { hexDistance } from '../hex/pathfinding'
-import { activePlayer, syncHero } from '../session/accessors'
+import { activePlayer, launchHeroFlight, syncHero } from '../session/accessors'
 import { seedStartingVision } from '../session/create'
 import { getSession, updateSession } from '../session/store'
 import { decideAndApplyArmyAlloc, decideAndApplyHeroTrade } from './armyAlloc'
@@ -106,7 +106,7 @@ export async function runAiTurn(
     for (const heroId of heroIds) {
       const hero =
         getSession().heroes.find((row) => row.id === heroId) ?? null
-      if (!hero) {
+      if (!hero || hero.flight) {
         continue
       }
       selectHeroOnMap(hero.id)
@@ -146,6 +146,29 @@ export async function runAiTurn(
         }
         const beforeMp = live.movement_remaining
         const beforePos = { q: live.position.q, r: live.position.r }
+        if (intent.kind === 'fly') {
+          let error: string | null = null
+          updateSession((current) => {
+            const result = launchHeroFlight(
+              current,
+              live.id,
+              intent.townId,
+            )
+            error = result.error
+            return result.session
+          })
+          if (error) {
+            appendAiTrace(
+              `AI world_move — ${live.name} fly to ${intent.townId} failed: ${error}`,
+            )
+            break
+          }
+          appendAiTrace(
+            `AI world_move — ${live.name} launches flight to town ${intent.townId}`,
+          )
+          await requestPlayHeroFlight(live.id)
+          break
+        }
         if (intent.kind === 'attack') {
           if (!samePos(live.position, intent.dest)) {
             const moved = await requestMapMove(intent.dest, intent.dest)

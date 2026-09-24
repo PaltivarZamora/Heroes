@@ -1,9 +1,13 @@
 import { calendarDayNumber, advanceDay, isWeekRollover } from '../hex/calendar'
+import { advanceAlongHexLine, nextTownCircleHex, townCircleLapSteps } from '../hex/flight'
+import { hexDistance } from '../hex/pathfinding'
 import {
   canAfford,
   deductCost,
   emptyWallet,
+  formatAmount,
   GOLD_RESOURCE_ID,
+  resourceById,
   RESOURCES,
   snapshotWallet,
   type ResourceWallet,
@@ -31,17 +35,31 @@ import {
   getCachedCatalog,
   hireHeroGoldCost,
   tavernHirePool,
-  yieldPerMine,
+  resourceDailyMineRate,
+  resourceWeeklyNode,
+  scaleCost,
+  flightSpeed,
+  flightCostPerHex,
   type HeroPoolRow,
   type ReferenceCatalog,
+  type BuildingRow,
 } from '../town/catalog'
 import {
   applyHeroTownVisitUniques,
-  applyWeeklyTownUniques,
+  applyRecruitmentBeaconsBeforeGrowth,
+  applyWeeklyTownUniquesWithReport,
+  maybeApplyInfernalArchiveAfterBuild,
+  takeArchiveLearnNotice,
   townRecruitCost,
+  townUnitUpgradeCost,
+  type ArchiveLearnNotice,
 } from '../town/townUniques'
 
-export { applyHeroTownVisitUniques } from '../town/townUniques'
+export {
+  applyHeroTownVisitUniques,
+  takeArchiveLearnNotice,
+  type ArchiveLearnNotice,
+} from '../town/townUniques'
 import { applyWeeklyMobGrowth } from './mobs'
 import { applyWeeklyNeutralTownGrowth } from './neutralTowns'
 import {
@@ -80,7 +98,9 @@ export function visitingHeroId(
   preferredId?: string | null,
 ): string | null {
   const onTown = (hero: Hero) =>
-    hero.position.q === town.position.q && hero.position.r === town.position.r
+    !hero.flight &&
+    hero.position.q === town.position.q &&
+    hero.position.r === town.position.r
   if (preferredId) {
     const preferred = session.heroes.find(
       (hero) => hero.id === preferredId && onTown(hero),
@@ -288,6 +308,7 @@ export function endTurn(session: GameSession): GameSession {
   if (ending) {
     current = regenHeroPoolsEndOfTurn(current, ending.id)
   }
+  const incomeEvents: DayIncomeEvent[] = []
   if (dayAdvance) {
     const previous = current.game.calendar
     const next = advanceDay(previous)
@@ -295,7 +316,10 @@ export function endTurn(session: GameSession): GameSession {
       ...current,
       game: { ...current.game, calendar: next },
     }
-    current = applyMineIncome(current)
+    current = advanceAllFlights(current)
+    const mineResult = applyMineIncomeWithReport(current)
+    current = mineResult.session
+    incomeEvents.push(...mineResult.events)
     current = {
       ...current,
       heroes: current.heroes.map((hero) => ({
@@ -314,7 +338,9 @@ export function endTurn(session: GameSession): GameSession {
     if (isWeekRollover(previous, next)) {
       const catalog = getCachedCatalog()
       if (catalog) {
-        current = applyWeeklyGrowth(current, catalog)
+        const weekResult = applyWeeklyGrowthWithReport(current, catalog)
+        current = weekResult.session
+        incomeEvents.push(...weekResult.events)
         current = applyWeeklyMobGrowth(current, catalog)
         current = applyWeeklyNeutralTownGrowth(current, catalog, next)
       }
@@ -324,7 +350,116 @@ export function endTurn(session: GameSession): GameSession {
   if (incoming) {
     current = restorePlayerHeroMovement(current, incoming.id)
   }
+  lastDayIncomeNoticeLines = dayAdvance
+    ? formatDayIncomeNoticeLines(incomeEvents, localHumanPlayerId(current))
+    : []
   return current
+}
+
+/** Human (non-AI) player id for HUD notices; falls back to player-1. */
+function localHumanPlayerId(session: GameSession): string {
+  return (
+    session.players.find((player) => !player.is_ai)?.id ?? HUMAN_PLAYER_ID
+  )
+}
+
+/** Day/week income lines from the last `endTurn` day advance (cleared on read). */
+let lastDayIncomeNoticeLines: string[] = []
+
+export function takeDayIncomeNoticeLines(): string[] {
+  const lines = lastDayIncomeNoticeLines
+  lastDayIncomeNoticeLines = []
+  return lines
+}
+
+type DayIncomeEvent =
+  | {
+      kind: 'building'
+      playerId: string
+      townName: string
+      buildingName: string
+      resourceId: number
+      amount: number
+    }
+  | {
+      kind: 'mine'
+      playerId: string
+      resourceId: number
+      amount: number
+      mineCount: number
+    }
+  | {
+      kind: 'unique'
+      playerId: string
+      townName: string
+      uniqueName: string
+      resourceId: number
+      amount: number
+    }
+  | {
+      kind: 'construct'
+      playerId: string
+      uniqueName: string
+      verb: 'Built' | 'Upgraded'
+      buildingName: string
+    }
+  | {
+      kind: 'growth'
+      playerId: string
+      uniqueName: string
+      buildingName: string
+      amount: number
+    }
+
+function resourceLabel(resourceId: number): string {
+  return resourceById(resourceId)?.name ?? `Resource ${resourceId}`
+}
+
+function formatDayIncomeNoticeLines(
+  events: DayIncomeEvent[],
+  playerId: string,
+): string[] {
+  const townLines: string[] = []
+  const mineLines: string[] = []
+  for (const event of events) {
+    if (event.playerId !== playerId) {
+      continue
+    }
+    if (event.kind === 'construct') {
+      townLines.push(
+        `${event.uniqueName} - ${event.verb} ${event.buildingName}`,
+      )
+      continue
+    }
+    if (event.kind === 'growth') {
+      if (event.amount <= 0) {
+        continue
+      }
+      townLines.push(
+        `${event.uniqueName} - +${formatAmount(event.amount)} ${event.buildingName}`,
+      )
+      continue
+    }
+    if (event.amount <= 0) {
+      continue
+    }
+    const res = resourceLabel(event.resourceId)
+    if (event.kind === 'building') {
+      townLines.push(
+        `${event.townName}: ${event.buildingName} - ${formatAmount(event.amount)} ${res}`,
+      )
+    } else if (event.kind === 'unique') {
+      townLines.push(
+        `${event.uniqueName}: ${formatAmount(event.amount)} ${res}`,
+      )
+    } else {
+      mineLines.push(
+        `${res} Mines (${event.mineCount}) - ${formatAmount(event.amount)} ${res}`,
+      )
+    }
+  }
+  // Towns (weekly) first, then daily mine payouts.
+  return [...townLines, ...mineLines]
 }
 
 const PLACEHOLDER_HERO_NAME = 'X1'
@@ -612,6 +747,7 @@ export function hireHeroFromPool(
       class_id: pick.class_id,
       current_level: live.current_level,
     }),
+    flight: null,
     ...heroResourcePools(getCachedCatalog(), {
       class_id: pick.class_id,
       current_level: live.current_level,
@@ -647,14 +783,10 @@ export function walletFromPlayer(
   if (!player) {
     return wallet
   }
+  const weekly = playerWeeklyIncome(session, getCachedCatalog(), player.id)
   for (const resource of RESOURCES) {
     wallet[resource.id].stockpile = player.resources[resource.id] ?? 0
-    wallet[resource.id].claimedMines = session.nodes.filter(
-      (node) =>
-        node.kind === 'mine' &&
-        node.player_id === player.id &&
-        node.resource_id === resource.id,
-    ).length
+    wallet[resource.id].weeklyIncome = weekly[resource.id] ?? 0
   }
   return wallet
 }
@@ -1053,22 +1185,86 @@ export function executeMarketMultiSell(
 }
 
 export function applyMineIncome(session: GameSession): GameSession {
+  return applyMineIncomeWithReport(session).session
+}
+
+function applyMineIncomeWithReport(session: GameSession): {
+  session: GameSession
+  events: DayIncomeEvent[]
+} {
+  const catalog = getCachedCatalog()
+  const payoutByPlayer = new Map<
+    string,
+    Map<number, { amount: number; mineCount: number }>
+  >()
+  const nodes = session.nodes.map((node) => {
+    if (node.kind !== 'mine' || node.player_id == null) {
+      return node
+    }
+    const rate = resourceDailyMineRate(catalog, node.resource_id)
+    if (rate <= 0) {
+      return node
+    }
+    let accrued = (node.accrued_fraction ?? 0) + rate
+    const whole = Math.floor(accrued)
+    accrued -= whole
+    const byRes =
+      payoutByPlayer.get(node.player_id) ??
+      new Map<number, { amount: number; mineCount: number }>()
+    const bag = byRes.get(node.resource_id) ?? { amount: 0, mineCount: 0 }
+    bag.mineCount += 1
+    if (whole > 0) {
+      bag.amount += whole
+    }
+    byRes.set(node.resource_id, bag)
+    payoutByPlayer.set(node.player_id, byRes)
+    return { ...node, accrued_fraction: accrued }
+  })
+  const events: DayIncomeEvent[] = []
+  for (const [playerId, byRes] of payoutByPlayer) {
+    for (const [resourceId, bag] of byRes) {
+      if (bag.amount > 0) {
+        events.push({
+          kind: 'mine',
+          playerId,
+          resourceId,
+          amount: bag.amount,
+          mineCount: bag.mineCount,
+        })
+      }
+    }
+  }
+  if (events.length === 0) {
+    const changed = nodes.some(
+      (node, i) => node.accrued_fraction !== session.nodes[i]?.accrued_fraction,
+    )
+    return {
+      session: changed ? { ...session, nodes } : session,
+      events,
+    }
+  }
   return {
-    ...session,
-    players: session.players.map((player) => {
-      if (isPlayerEliminated(session, player)) {
-        return player
-      }
-      const resources = { ...player.resources }
-      for (const node of session.nodes) {
-        if (node.kind !== 'mine' || node.player_id !== player.id) {
-          continue
+    session: {
+      ...session,
+      nodes,
+      players: session.players.map((player) => {
+        if (isPlayerEliminated(session, player)) {
+          return player
         }
-        resources[node.resource_id] =
-          (resources[node.resource_id] ?? 0) + yieldPerMine(getCachedCatalog())
-      }
-      return { ...player, resources }
-    }),
+        const byRes = payoutByPlayer.get(player.id)
+        if (!byRes) {
+          return player
+        }
+        const resources = { ...player.resources }
+        for (const [resourceId, bag] of byRes) {
+          if (bag.amount > 0) {
+            resources[resourceId] = (resources[resourceId] ?? 0) + bag.amount
+          }
+        }
+        return { ...player, resources }
+      }),
+    },
+    events,
   }
 }
 
@@ -1184,6 +1380,29 @@ export function patchBuildingSlot(
   }
 }
 
+/**
+ * After a building is placed/upgraded in a town: Infernal Archive grants its
+ * visit learn effect immediately if a hero is already standing in town.
+ */
+export function afterTownBuildingPlaced(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  townId: string,
+  building: BuildingRow,
+): GameSession {
+  const town = session.towns.find((row) => row.id === townId)
+  if (!town) {
+    return session
+  }
+  return maybeApplyInfernalArchiveAfterBuild(
+    session,
+    catalog,
+    town,
+    building,
+    visitingHeroId(session, town),
+  )
+}
+
 export function ensureLibraryOffers(
   session: GameSession,
   catalog: ReferenceCatalog,
@@ -1282,9 +1501,18 @@ export function applyWeeklyGrowth(
   session: GameSession,
   catalog: ReferenceCatalog,
 ): GameSession {
+  return applyWeeklyGrowthWithReport(session, catalog).session
+}
+
+function applyWeeklyGrowthWithReport(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+): { session: GameSession; events: DayIncomeEvent[] } {
+  // Beacon must roll against pre-growth Curr Recruits, then growth stacks on top.
+  const beacon = applyRecruitmentBeaconsBeforeGrowth(session, catalog)
   const grown: GameSession = {
-    ...session,
-    building_states: session.building_states.map((row) => {
+    ...beacon.session,
+    building_states: beacon.session.building_states.map((row) => {
       if (row.level < 1 || row.building_id == null || !isArmySlot(row.slot_num)) {
         return row
       }
@@ -1297,8 +1525,41 @@ export function applyWeeklyGrowth(
       return { ...row, recruit_qty: row.recruit_qty + growth }
     }),
   }
-  const withIncome = applyWeeklyBuildingIncome(grown, catalog)
-  return applyWeeklyTownUniques(withIncome, catalog)
+  const income = applyWeeklyBuildingIncomeWithReport(grown, catalog)
+  const uniques = applyWeeklyTownUniquesWithReport(income.session, catalog)
+  const uniqueEvents: DayIncomeEvent[] = []
+  for (const event of [...beacon.events, ...uniques.events]) {
+    if (event.kind === 'construct') {
+      uniqueEvents.push({
+        kind: 'construct',
+        playerId: event.playerId,
+        uniqueName: event.uniqueName,
+        verb: event.verb,
+        buildingName: event.buildingName,
+      })
+    } else if (event.kind === 'growth') {
+      uniqueEvents.push({
+        kind: 'growth',
+        playerId: event.playerId,
+        uniqueName: event.uniqueName,
+        buildingName: event.buildingName,
+        amount: event.amount,
+      })
+    } else {
+      uniqueEvents.push({
+        kind: 'unique',
+        playerId: event.playerId,
+        townName: event.townName,
+        uniqueName: event.uniqueName,
+        resourceId: event.resourceId,
+        amount: event.amount,
+      })
+    }
+  }
+  return {
+    session: uniques.session,
+    events: [...income.events, ...uniqueEvents],
+  }
 }
 
 function addGrant(
@@ -1315,12 +1576,71 @@ function addGrant(
   grants.set(playerId, current)
 }
 
+/**
+ * Fixed weekly `payload.produces` from a player's owned towns (Halls, Resource
+ * Generators, etc.). Excludes Town Unique random effects — those are applied
+ * separately and must not appear in the ResourceBar weekly total.
+ */
+export function weeklyBuildingProducesForPlayer(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+  playerId: string,
+): Record<number, number> {
+  const totals: Record<number, number> = {}
+  if (!catalog) {
+    return totals
+  }
+  for (const town of session.towns) {
+    if (town.player_id !== playerId) {
+      continue
+    }
+    for (const row of session.building_states) {
+      if (row.town_id !== town.id || row.level < 1 || row.building_id == null) {
+        continue
+      }
+      const building = buildingById(catalog, row.building_id)
+      for (const grant of buildingProduces(building)) {
+        totals[grant.resourceId] = (totals[grant.resourceId] ?? 0) + grant.qty
+      }
+    }
+  }
+  return totals
+}
+
+/** Building produces + owned mine `weekly_node` — display/tick shared total. */
+export function playerWeeklyIncome(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+  playerId: string,
+): Record<number, number> {
+  const totals = weeklyBuildingProducesForPlayer(session, catalog, playerId)
+  for (const node of session.nodes) {
+    if (node.kind !== 'mine' || node.player_id !== playerId) {
+      continue
+    }
+    const weekly = resourceWeeklyNode(catalog, node.resource_id)
+    if (weekly <= 0) {
+      continue
+    }
+    totals[node.resource_id] = (totals[node.resource_id] ?? 0) + weekly
+  }
+  return totals
+}
+
 /** Owned towns: each built building’s `payload.produces` credits the owner. */
 function applyWeeklyBuildingIncome(
   session: GameSession,
   catalog: ReferenceCatalog,
 ): GameSession {
+  return applyWeeklyBuildingIncomeWithReport(session, catalog).session
+}
+
+function applyWeeklyBuildingIncomeWithReport(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+): { session: GameSession; events: DayIncomeEvent[] } {
   const grants = new Map<string, Record<number, number>>()
+  const events: DayIncomeEvent[] = []
   for (const town of session.towns) {
     if (!town.player_id) {
       continue
@@ -1330,28 +1650,42 @@ function applyWeeklyBuildingIncome(
         continue
       }
       const building = buildingById(catalog, row.building_id)
+      if (!building) {
+        continue
+      }
       for (const grant of buildingProduces(building)) {
         addGrant(grants, town.player_id, grant.resourceId, grant.qty)
+        events.push({
+          kind: 'building',
+          playerId: town.player_id,
+          townName: town.name,
+          buildingName: building.name,
+          resourceId: grant.resourceId,
+          amount: grant.qty,
+        })
       }
     }
   }
   if (grants.size === 0) {
-    return session
+    return { session, events }
   }
   return {
-    ...session,
-    players: session.players.map((player) => {
-      const add = grants.get(player.id)
-      if (!add) {
-        return player
-      }
-      const resources = { ...player.resources }
-      for (const [key, amount] of Object.entries(add)) {
-        const id = Number(key)
-        resources[id] = (resources[id] ?? 0) + amount
-      }
-      return { ...player, resources }
-    }),
+    session: {
+      ...session,
+      players: session.players.map((player) => {
+        const add = grants.get(player.id)
+        if (!add) {
+          return player
+        }
+        const resources = { ...player.resources }
+        for (const [key, amount] of Object.entries(add)) {
+          const id = Number(key)
+          resources[id] = (resources[id] ?? 0) + amount
+        }
+        return { ...player, resources }
+      }),
+    },
+    events,
   }
 }
 
@@ -2235,7 +2569,12 @@ export function stackUpgradeOffer(
   if (!unit || !advanced) {
     return null
   }
-  const perUnit = unitUpgradeCost(unit)
+  const perUnit = townUnitUpgradeCost(
+    session,
+    catalog,
+    townId,
+    unitUpgradeCost(unit),
+  )
   if (Object.keys(perUnit).length === 0) {
     return null
   }
@@ -2588,7 +2927,9 @@ export function claimMine(
     return {
       ...session,
       nodes: session.nodes.map((node) =>
-        node.id === existing.id ? { ...node, player_id: actorId } : node,
+        node.id === existing.id
+          ? { ...node, player_id: actorId, accrued_fraction: 0 }
+          : node,
       ),
     }
   }
@@ -2602,6 +2943,8 @@ export function claimMine(
     kind: 'mine',
     player_id: actorId,
     collected: false,
+    qty: 0,
+    accrued_fraction: 0,
   }
   return { ...session, nodes: [...session.nodes, node] }
 }
@@ -2621,6 +2964,10 @@ export function collectPickup(
   const existing = session.nodes.find(
     (node) => node.kind === 'pickup' && node.position.q === q && node.position.r === r,
   )
+  const payout =
+    existing != null && existing.qty > 0
+      ? existing.qty
+      : Math.max(0, Math.floor(amount))
   const nodes = existing
     ? session.nodes.map((node) =>
         node.id === existing.id ? { ...node, collected: true } : node,
@@ -2634,6 +2981,8 @@ export function collectPickup(
           kind: 'pickup' as const,
           player_id: null,
           collected: true,
+          qty: payout,
+          accrued_fraction: 0,
         },
       ]
   return {
@@ -2645,7 +2994,7 @@ export function collectPickup(
             ...p,
             resources: {
               ...p.resources,
-              [resourceId]: (p.resources[resourceId] ?? 0) + amount,
+              [resourceId]: (p.resources[resourceId] ?? 0) + payout,
             },
           }
         : p,
@@ -2661,11 +3010,21 @@ export function syncHero(
 ): GameSession {
   return {
     ...session,
-    heroes: session.heroes.map((hero) =>
-      hero.id === heroId
-        ? { ...hero, position: { ...position }, movement_remaining: movementRemaining }
-        : hero,
-    ),
+    heroes: session.heroes.map((hero) => {
+      if (hero.id !== heroId) {
+        return hero
+      }
+      // Airborne position is owned by flight advance — don't let stale map
+      // ground coords clobber it (e.g. heroRef still at the origin town).
+      if (hero.flight) {
+        return { ...hero, movement_remaining: 0 }
+      }
+      return {
+        ...hero,
+        position: { ...position },
+        movement_remaining: movementRemaining,
+      }
+    }),
   }
 }
 
@@ -2675,11 +3034,497 @@ export function restorePlayerHeroMovement(
 ): GameSession {
   return {
     ...session,
+    heroes: session.heroes.map((hero) => {
+      if (hero.player_id !== playerId) {
+        return hero
+      }
+      // In-flight heroes get no ground movement that day (advance happens on day tick).
+      if (hero.flight) {
+        return { ...hero, movement_remaining: 0 }
+      }
+      return {
+        ...hero,
+        movement_remaining: heroMovementPoints(getCachedCatalog(), hero),
+      }
+    }),
+  }
+}
+
+const HANGER_SLOT = 8
+
+export function isHeroInFlight(hero: Hero | null | undefined): boolean {
+  return hero?.flight != null
+}
+
+/** Town has a built Hanger (slot 8). */
+export function townHasHanger(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+  townId: string,
+): boolean {
+  if (!catalog) {
+    return false
+  }
+  return session.building_states.some((row) => {
+    if (row.town_id !== townId || row.level < 1 || row.building_id == null) {
+      return false
+    }
+    if (row.slot_num === HANGER_SLOT) {
+      return true
+    }
+    const building = buildingById(catalog, row.building_id)
+    return building?.slot_num === HANGER_SLOT
+  })
+}
+
+export type FlightDestinationQuote = {
+  town: Town
+  distance: number
+  goldCost: number
+  /** True when departure rules block this pick (still listed for visibility). */
+  blocked: boolean
+}
+
+/** Another of this player's heroes already flying to this town. */
+function flightEnRouteToTown(
+  session: GameSession,
+  townId: string,
+  playerId: string,
+  exceptHeroId?: string | null,
+): boolean {
+  return session.heroes.some(
+    (hero) =>
+      hero.player_id === playerId &&
+      hero.id !== exceptHeroId &&
+      hero.flight?.destination_town_id === townId,
+  )
+}
+
+/** Friendly town hero slot held by a grounded own hero. */
+function townOwnHeroSlotOccupied(
+  session: GameSession,
+  town: Town,
+  playerId: string,
+): boolean {
+  if (town.player_id !== playerId) {
+    return false
+  }
+  const occupantId = visitingHeroId(session, town)
+  if (!occupantId) {
+    return false
+  }
+  const occupant = session.heroes.find((row) => row.id === occupantId)
+  return occupant != null && occupant.player_id === playerId
+}
+
+/** Friendly Hanger towns the visiting hero can fly to (excludes current town). */
+export function flightDestinationsFromTown(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+  fromTownId: string,
+  playerId: string,
+  flyingHeroId?: string | null,
+): FlightDestinationQuote[] {
+  if (!catalog) {
+    return []
+  }
+  const from = session.towns.find((town) => town.id === fromTownId)
+  if (!from || !townHasHanger(session, catalog, from.id)) {
+    return []
+  }
+  const perHex = flightCostPerHex(catalog)
+  const out: FlightDestinationQuote[] = []
+  for (const town of session.towns) {
+    if (town.id === from.id) {
+      continue
+    }
+    if (town.player_id !== playerId) {
+      continue
+    }
+    if (!townHasHanger(session, catalog, town.id)) {
+      continue
+    }
+    const distance = hexDistance(from.position, town.position)
+    if (distance <= 0) {
+      continue
+    }
+    const blocked =
+      townOwnHeroSlotOccupied(session, town, playerId) ||
+      flightEnRouteToTown(session, town.id, playerId, flyingHeroId)
+    out.push({
+      town,
+      distance,
+      goldCost: distance * perHex,
+      blocked,
+    })
+  }
+  return out.sort(
+    (a, b) =>
+      Number(a.blocked) - Number(b.blocked) ||
+      a.distance - b.distance ||
+      a.town.name.localeCompare(b.town.name),
+  )
+}
+
+/**
+ * Launch Hanger flight: charge gold and enter in-flight state.
+ * Does not advance position — caller animates via {@link requestPlayHeroFlight}
+ * (or day tick uses {@link advanceAllFlights}).
+ */
+export function launchHeroFlight(
+  session: GameSession,
+  heroId: string,
+  destinationTownId: string,
+  originTownId?: string,
+): { session: GameSession; error: string | null } {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return { session, error: 'Catalog not loaded.' }
+  }
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero) {
+    return { session, error: 'Hero not found.' }
+  }
+  if (hero.flight) {
+    return { session, error: 'Already in flight.' }
+  }
+  const origin =
+    (originTownId
+      ? session.towns.find((town) => town.id === originTownId)
+      : null) ?? findTownAt(session, hero.position.q, hero.position.r)
+  if (!origin || origin.player_id !== hero.player_id) {
+    return { session, error: 'Hero must be in a friendly town.' }
+  }
+  const atOrigin = findTownAt(session, hero.position.q, hero.position.r)
+  if (!atOrigin || atOrigin.id !== origin.id) {
+    return {
+      session,
+      error: 'Hero must be standing in this town to fly.',
+    }
+  }
+  if (!townHasHanger(session, catalog, origin.id)) {
+    return { session, error: 'This town has no Hanger.' }
+  }
+  const dest = session.towns.find((town) => town.id === destinationTownId)
+  if (!dest) {
+    return { session, error: 'Destination town not found.' }
+  }
+  if (dest.player_id !== hero.player_id) {
+    return { session, error: 'Destination must be a friendly town.' }
+  }
+  if (!townHasHanger(session, catalog, dest.id)) {
+    return { session, error: 'Destination has no Hanger.' }
+  }
+  if (dest.id === origin.id) {
+    return { session, error: 'Pick a different town.' }
+  }
+  if (townOwnHeroSlotOccupied(session, dest, hero.player_id)) {
+    return { session, error: 'Destination town hero slot is occupied.' }
+  }
+  if (flightEnRouteToTown(session, dest.id, hero.player_id, heroId)) {
+    return { session, error: 'Another hero is already flying there.' }
+  }
+  const distance = hexDistance(origin.position, dest.position)
+  if (!Number.isFinite(distance) || distance <= 0) {
+    return { session, error: 'Invalid flight distance.' }
+  }
+  const goldCost = distance * flightCostPerHex(catalog)
+  const spent = spendResources(session, { [GOLD_RESOURCE_ID]: goldCost })
+  if (spent.error) {
+    return { session, error: spent.error }
+  }
+  return {
+    session: {
+      ...spent.session,
+      heroes: spent.session.heroes.map((row) =>
+        row.id === heroId
+          ? {
+              ...row,
+              flight: { destination_town_id: dest.id },
+              movement_remaining: 0,
+            }
+          : row,
+      ),
+    },
+    error: null,
+  }
+}
+
+/** Update an airborne hero's map hex during flight animation. */
+export function syncHeroFlightPosition(
+  session: GameSession,
+  position: { q: number; r: number },
+  heroId: string,
+): GameSession {
+  return {
+    ...session,
     heroes: session.heroes.map((hero) =>
-      hero.player_id === playerId
-        ? { ...hero, movement_remaining: heroMovementPoints(getCachedCatalog(), hero) }
+      hero.id === heroId && hero.flight
+        ? {
+            ...hero,
+            position: { ...position },
+            movement_remaining: 0,
+          }
         : hero,
     ),
+  }
+}
+
+/**
+ * After a flight segment animation (or instant day tick move), land if the
+ * hero is on the destination hex and the town hero slot is free; otherwise
+ * stay airborne (or enter circling around a friendly occupied town).
+ */
+export function finalizeHeroFlightSegment(
+  session: GameSession,
+  heroId: string,
+): { session: GameSession; siegeTownId: string | null; arrivedTownId: string | null } {
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero?.flight) {
+    return { session, siegeTownId: null, arrivedTownId: null }
+  }
+  const dest = session.towns.find(
+    (town) => town.id === hero.flight!.destination_town_id,
+  )
+  if (!dest) {
+    return {
+      session: {
+        ...session,
+        heroes: session.heroes.map((row) =>
+          row.id === heroId ? { ...row, flight: null, movement_remaining: 0 } : row,
+        ),
+      },
+      siegeTownId: null,
+      arrivedTownId: null,
+    }
+  }
+
+  const tryLandFriendly = (): {
+    session: GameSession
+    siegeTownId: string | null
+    arrivedTownId: string | null
+  } | null => {
+    if (dest.player_id !== hero.player_id) {
+      return null
+    }
+    const occupantId = visitingHeroId(session, dest)
+    if (occupantId && occupantId !== heroId) {
+      // Slot occupied — orbit the 2×1 footprint; no progress toward landing.
+      const alreadyCircling = hero.flight?.circling === true
+      const onRing = alreadyCircling
+        ? { ...hero.position }
+        : nextTownCircleHex(dest.position, hero.position)
+      return {
+        session: {
+          ...session,
+          heroes: session.heroes.map((row) =>
+            row.id === heroId
+              ? {
+                  ...row,
+                  position: onRing,
+                  movement_remaining: 0,
+                  flight: {
+                    destination_town_id: dest.id,
+                    circling: true,
+                  },
+                }
+              : row,
+          ),
+        },
+        siegeTownId: null,
+        arrivedTownId: null,
+      }
+    }
+    const landed = {
+      ...hero,
+      position: { ...dest.position },
+      flight: null as null,
+      movement_remaining: 0,
+    }
+    return {
+      session: {
+        ...session,
+        heroes: session.heroes.map((row) => (row.id === heroId ? landed : row)),
+      },
+      siegeTownId: null,
+      arrivedTownId: dest.id,
+    }
+  }
+
+  // Already circling: try land every segment; stay on ring if still blocked.
+  if (hero.flight.circling) {
+    const friendly = tryLandFriendly()
+    if (friendly) {
+      return friendly
+    }
+    // Town flipped hostile while waiting — force siege landing.
+    const landed = {
+      ...hero,
+      position: { ...dest.position },
+      flight: null as null,
+      movement_remaining: 0,
+    }
+    return {
+      session: {
+        ...session,
+        heroes: session.heroes.map((row) => (row.id === heroId ? landed : row)),
+      },
+      siegeTownId: dest.id,
+      arrivedTownId: null,
+    }
+  }
+
+  const arrived = hexDistance(hero.position, dest.position) <= 0
+  if (!arrived) {
+    return {
+      session: {
+        ...session,
+        heroes: session.heroes.map((row) =>
+          row.id === heroId ? { ...row, movement_remaining: 0 } : row,
+        ),
+      },
+      siegeTownId: null,
+      arrivedTownId: null,
+    }
+  }
+
+  const friendly = tryLandFriendly()
+  if (friendly) {
+    return friendly
+  }
+  // Enemy / captured mid-flight — land into siege.
+  const landed = {
+    ...hero,
+    position: { ...dest.position },
+    flight: null as null,
+    movement_remaining: 0,
+  }
+  return {
+    session: {
+      ...session,
+      heroes: session.heroes.map((row) => (row.id === heroId ? landed : row)),
+    },
+    siegeTownId: dest.id,
+    arrivedTownId: null,
+  }
+}
+
+function advanceHeroFlightOnce(
+  session: GameSession,
+  heroId: string,
+): { session: GameSession; error: string | null; siegeTownId: string | null } {
+  const catalog = getCachedCatalog()
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero?.flight || !catalog) {
+    return { session, error: null, siegeTownId: null }
+  }
+  const dest = session.towns.find(
+    (town) => town.id === hero.flight!.destination_town_id,
+  )
+  if (!dest) {
+    return {
+      session: {
+        ...session,
+        heroes: session.heroes.map((row) =>
+          row.id === heroId ? { ...row, flight: null, movement_remaining: 0 } : row,
+        ),
+      },
+      error: null,
+      siegeTownId: null,
+    }
+  }
+
+  // Circling: one full orbit around the town (no flight_speed toward dest).
+  if (hero.flight.circling) {
+    const lap = townCircleLapSteps(dest.position, hero.position)
+    const end = lap[lap.length - 1] ?? nextTownCircleHex(dest.position, hero.position)
+    const moved: GameSession = {
+      ...session,
+      heroes: session.heroes.map((row) =>
+        row.id === heroId
+          ? {
+              ...row,
+              position: end,
+              movement_remaining: 0,
+              flight: {
+                destination_town_id: dest.id,
+                circling: true,
+              },
+            }
+          : row,
+      ),
+    }
+    const landed = finalizeHeroFlightSegment(moved, heroId)
+    return {
+      session: landed.session,
+      error: null,
+      siegeTownId: landed.siegeTownId,
+    }
+  }
+
+  const speed = flightSpeed(catalog)
+  const nextPos = advanceAlongHexLine(hero.position, dest.position, speed)
+  const moved: GameSession = {
+    ...session,
+    heroes: session.heroes.map((row) =>
+      row.id === heroId
+        ? {
+            ...row,
+            position: nextPos,
+            movement_remaining: 0,
+          }
+        : row,
+    ),
+  }
+  const landed = finalizeHeroFlightSegment(moved, heroId)
+  return {
+    session: landed.session,
+    error: null,
+    siegeTownId: landed.siegeTownId,
+  }
+}
+
+/** Day tick: advance every airborne hero one flight_speed segment. */
+export function advanceAllFlights(session: GameSession): GameSession {
+  let next = session
+  const sieges: Array<{ heroId: string; townId: string }> = [
+    ...(session.game.pending_flight_sieges ?? []),
+  ]
+  for (const hero of session.heroes) {
+    if (!hero.flight) {
+      continue
+    }
+    const result = advanceHeroFlightOnce(next, hero.id)
+    next = result.session
+    if (result.siegeTownId) {
+      sieges.push({ heroId: hero.id, townId: result.siegeTownId })
+    }
+  }
+  if (sieges.length === 0) {
+    return next
+  }
+  return {
+    ...next,
+    game: {
+      ...next.game,
+      pending_flight_sieges: sieges,
+    },
+  }
+}
+
+export function takePendingFlightSieges(
+  session: GameSession,
+): { session: GameSession; sieges: Array<{ heroId: string; townId: string }> } {
+  const sieges = session.game.pending_flight_sieges ?? []
+  if (sieges.length === 0) {
+    return { session, sieges: [] }
+  }
+  return {
+    session: {
+      ...session,
+      game: { ...session.game, pending_flight_sieges: [] },
+    },
+    sieges,
   }
 }
 

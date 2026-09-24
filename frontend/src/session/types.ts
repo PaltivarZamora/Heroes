@@ -27,6 +27,11 @@ export type Game = {
    * when the calendar advances — not gated on this list.
    */
   town_pool_restore_ids?: string[]
+  /**
+   * After a day-advance flight landing on an enemy town — App pops these into
+   * the normal siege flow.
+   */
+  pending_flight_sieges?: Array<{ heroId: string; townId: string }>
 }
 
 export type Player = {
@@ -70,8 +75,8 @@ export type BuildingState = {
   level: number
   recruit_qty: number
   /**
-   * Permanent weekly growth add-on (Bone Nursery / Recruitment Beacon).
-   * Stacks; survives upgrades on the same slot.
+   * Legacy permanent weekly growth add-on (no longer written by Town Uniques).
+   * Still honored if present on a slot.
    */
   growth_bonus?: number
   /** Rolled Library offers, keyed by building_id + discipline_id + level. */
@@ -88,6 +93,16 @@ export type OfferedAbilityRoll = {
 export type HeroArmy = {
   slot_0: string
   slots_1_to_6: Array<string | null>
+}
+
+/** Active Hanger flight — hero is airborne toward a town. */
+export type HeroFlight = {
+  destination_town_id: string
+  /**
+   * Waiting to land: another of our heroes occupies the town slot.
+   * Hero orbits the town footprint; no further progress toward dest.
+   */
+  circling?: boolean
 }
 
 export type Hero = {
@@ -114,6 +129,11 @@ export type Hero = {
   used_abilities_today: number[]
   /** Nullable hero archetype from `hero_pool.arch_id`. Null = pure player blend. */
   arch_id: number | null
+  /**
+   * Hanger flight in progress. Null/undefined = on the ground.
+   * While set, hero is untargetable and auto-advances each day.
+   */
+  flight: HeroFlight | null
 }
 
 /** Per-name XP/level that survives death → tavern → re-hire. */
@@ -140,6 +160,16 @@ export type Node = {
   kind: NodeKind
   player_id: string | null
   collected: boolean
+  /**
+   * Loose pile amount rolled at map generation (`loose_min`–`loose_max`).
+   * Unused for mines.
+   */
+  qty: number
+  /**
+   * Mine fractional daily accrual (`weekly_node / 7`). Whole units pay out
+   * when this reaches ≥ 1; remainder carries. Reset on capture/steal.
+   */
+  accrued_fraction: number
 }
 
 export type Mob = {

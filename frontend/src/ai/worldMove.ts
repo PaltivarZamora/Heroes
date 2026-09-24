@@ -4,6 +4,7 @@ import type { Axial } from '../hex/hero'
 import {
   getCachedCatalog,
   heroMovementPoints,
+  flightSpeed,
   type ReferenceCatalog,
   type ResourceRow,
 } from '../town/catalog'
@@ -12,7 +13,14 @@ import { appendAiTrace } from './trace'
 import { garrisonArmyValue, slotsArmyValue } from './armyAlloc'
 import { firstAffordableLearn } from './libraryLearn'
 import { mobLabel } from '../session/mobs'
-import { visitingHeroId, townIsUndefended } from '../session/accessors'
+import {
+  visitingHeroId,
+  townIsUndefended,
+  townHasHanger,
+  flightDestinationsFromTown,
+  findTownAt,
+} from '../session/accessors'
+import { GOLD_RESOURCE_ID } from '../hex/resources'
 import {
   WORLD_MOVE_DECISION,
   WORLD_MOVE_FACTORS,
@@ -58,6 +66,7 @@ export type WorldMoveIntent =
   | { kind: 'return'; dest: Axial; townId: string }
   | { kind: 'capture'; dest: Axial; townId: string }
   | { kind: 'seek_library'; dest: Axial; townId: string }
+  | { kind: 'fly'; dest: Axial; townId: string }
   | { kind: 'attack'; dest: Axial; target: WorldAttackTarget }
 
 function blankFactors(
@@ -116,6 +125,9 @@ function blockedHexes(
     blocked.add(hexKey)
   }
   for (const hero of session.heroes) {
+    if (hero.flight) {
+      continue
+    }
     add(hero.position.q, hero.position.r)
   }
   for (const town of session.towns) {
@@ -548,6 +560,9 @@ export function decideWorldMove(
     if (other.id === hero.id || other.player_id === player.id) {
       continue
     }
+    if (other.flight) {
+      continue
+    }
     if (!visibleToPlayer(seen, other.position)) {
       continue
     }
@@ -577,6 +592,69 @@ export function decideWorldMove(
       slotsArmyValue(session, catalog, mob.slots_1_to_6),
       { type: 'mob', mobId: mob.id },
     )
+  }
+
+  // Hanger flight between owned towns (same departure rules as the player).
+  const originTown = findTownAt(session, hero.position.q, hero.position.r)
+  if (
+    catalog &&
+    originTown &&
+    originTown.player_id === player.id &&
+    townHasHanger(session, catalog, originTown.id)
+  ) {
+    const gold = player.resources[GOLD_RESOURCE_ID] ?? 0
+    const speed = flightSpeed(catalog)
+    const quotes = flightDestinationsFromTown(
+      session,
+      catalog,
+      originTown.id,
+      player.id,
+      hero.id,
+    )
+    for (const quote of quotes) {
+      if (quote.blocked || gold < quote.goldCost) {
+        continue
+      }
+      const urgency = returnHomeUrgency(hero, quote.town, maxMp)
+      const garrison = garrisonValueAt(session, catalog, quote.town)
+      const ability = firstAffordableLearn(
+        session,
+        catalog,
+        player,
+        hero,
+        quote.town,
+      )
+      // Skip pointless short hops with no reinforce/learn reason — walk is free.
+      if (urgency <= 0 && garrison <= 0 && !ability && quote.distance <= speed) {
+        continue
+      }
+      const flightDays = Math.max(1, Math.ceil(quote.distance / speed))
+      const falloff = distanceFalloff(flightDays, 1)
+      // Mild gold tax so a free short walk can still beat an expensive hop.
+      const goldMult = clamp01(
+        1 -
+          (quote.goldCost / Math.max(gold, quote.goldCost, 1)) * 0.35,
+      )
+      const factors = blankFactors({
+        safety: 0.95,
+        return_home: Math.max(urgency, garrison > 0 || ability ? 0.45 : 0.25),
+        garrison_value: garrison,
+        learn_ability_value: ability ? 1 : 0,
+      })
+      const raw = scoreOption(factors, weights)
+      options.push({
+        id: `fly:${quote.town.id}`,
+        label: `fly ${quote.town.name} @ ${posKey(quote.town.position)} days=${flightDays} gold=${quote.goldCost} ×${falloff.toFixed(2)}×g${goldMult.toFixed(2)}`,
+        factors,
+        weights,
+        score: Math.round(raw * falloff * goldMult * 100) / 100,
+        data: {
+          kind: 'fly',
+          dest: { ...quote.town.position },
+          townId: quote.town.id,
+        },
+      })
+    }
   }
 
   const exploreDest = fogFrontier(hero.position)

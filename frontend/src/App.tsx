@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { HexMap, clearCachedGrid, getSelectedMapHeroId, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView } from './hex/HexMap'
+import { HexMap, clearCachedGrid, getSelectedMapHeroId, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView, requestPlayHeroFlight } from './hex/HexMap'
 import {
   formatDebugSections,
   formatDebugText,
@@ -58,10 +58,12 @@ import {
   markTownBuiltToday,
   matchVictoryResult,
   persistActiveExplored,
+  takeDayIncomeNoticeLines,
   visitingHeroId,
   claimTown,
   townIsUndefended,
   walletFromSession,
+  type ArchiveLearnNotice,
 } from './session/accessors'
 import { addWorldMobs } from './session/mobs'
 import { appendAiTrace, clearAiTraces, getAiTraceBlocks, subscribeAiTraces } from './ai/trace'
@@ -163,6 +165,9 @@ function App() {
     lines?: string[]
   } | null>(null)
   const [levelUpNotice, setLevelUpNotice] = useState<LevelUpNotice | null>(null)
+  const [archiveLearn, setArchiveLearn] = useState<ArchiveLearnNotice | null>(
+    null,
+  )
   const [optionsHudNotice, setOptionsHudNotice] = useState<string | null>(null)
   const [surrenderPrompt, setSurrenderPrompt] = useState<{
     mobId: string
@@ -217,6 +222,9 @@ function App() {
       : undefined
     const other = current.heroes.find((row) => row.id === targetHeroId)
     if (!self || !other || self.id === other.id) {
+      return
+    }
+    if (other.flight || self.flight) {
       return
     }
     setWelcomeTown(null)
@@ -501,6 +509,40 @@ function App() {
     },
     [showDateThenLevelUp],
   )
+  const flushPendingFlightSieges = useCallback(() => {
+    const current = getSession()
+    const actor = activePlayer(current)
+    if (!actor) {
+      return
+    }
+    const pending = current.game.pending_flight_sieges ?? []
+    if (pending.length === 0) {
+      return
+    }
+    const mine: typeof pending = []
+    const rest: typeof pending = []
+    for (const siege of pending) {
+      const hero = current.heroes.find((row) => row.id === siege.heroId)
+      if (hero && hero.player_id === actor.id) {
+        mine.push(siege)
+      } else {
+        rest.push(siege)
+      }
+    }
+    if (mine.length === 0) {
+      return
+    }
+    updateSession((session) => ({
+      ...session,
+      game: {
+        ...session.game,
+        pending_flight_sieges: [...rest, ...mine.slice(1)],
+      },
+    }))
+    const first = mine[0]
+    selectHeroOnMap(first.heroId)
+    onSiegeTown(first.townId)
+  }, [onSiegeTown])
   const onEndTurn = useCallback(() => {
     setWelcomeTown(null)
     setHeroScreen(false)
@@ -513,12 +555,18 @@ function App() {
     syncActivePlayerView()
     const next = getSession().game.calendar
     const title = calendarRolloverTitle(previous, next)
+    const incomeLines = takeDayIncomeNoticeLines()
     if (title && !matchVictoryResult(getSession())) {
-      setDateNotice({ title, date: formatCalendar(next) })
+      setDateNotice({
+        title,
+        date: formatCalendar(next),
+        lines: incomeLines.length > 0 ? incomeLines : undefined,
+      })
     } else {
       maybeShowMatchEnd()
+      flushPendingFlightSieges()
     }
-  }, [closeCombat, maybeShowMatchEnd])
+  }, [closeCombat, maybeShowMatchEnd, flushPendingFlightSieges])
   const onStartGame = useCallback((config: GameConfig) => {
     void (async () => {
       try {
@@ -536,6 +584,7 @@ function App() {
       done?.()
       setDateNotice(null)
       setLevelUpNotice(null)
+      setArchiveLearn(null)
       pendingLevelUpRef.current = null
       setSurrenderPrompt(null)
       matchEndShownRef.current = false
@@ -807,11 +856,19 @@ function App() {
     if (!dateNotice) {
       return
     }
+    const ms = (dateNotice.lines?.length ?? 0) > 0 ? 4500 : 1500
     const timer = window.setTimeout(() => {
       setDateNotice(null)
-    }, 1500)
+    }, ms)
     return () => window.clearTimeout(timer)
   }, [dateNotice])
+
+  useEffect(() => {
+    if (dateNotice || combat) {
+      return
+    }
+    flushPendingFlightSieges()
+  }, [dateNotice, combat, flushPendingFlightSieges, session.game.pending_flight_sieges])
 
   useEffect(() => {
     syncActivePlayerView()
@@ -1097,6 +1154,7 @@ function App() {
               closeCombat()
               setDateNotice(null)
               setLevelUpNotice(null)
+              setArchiveLearn(null)
               setOptionsHudNotice(null)
               pendingLevelUpRef.current = null
               lastTownRef.current = null
@@ -1129,6 +1187,7 @@ function App() {
         onHeroState={onHeroState}
         onResources={onResources}
         onTownWelcome={onTownWelcome}
+        onArchiveLearn={setArchiveLearn}
         onHeroMeet={onHeroMeet}
         onSiegeTown={onSiegeTown}
         onMobMeet={onMobMeet}
@@ -1260,8 +1319,60 @@ function App() {
           selectedHeroId={selectedHero?.id ?? null}
           onOpenHero={openHeroScreen}
           onCycleTown={cycleTown}
+          onArchiveLearn={setArchiveLearn}
           readOnly={Boolean(actor?.is_ai)}
+          onHeroFlew={(heroId) => {
+            adoptHero(heroId)
+            setMapInputLocked(true)
+            setMapCameraFollowMoves(true)
+            void (async () => {
+              // Let town UI unmount so the world is visible before animating.
+              await Promise.resolve()
+              const result = await requestPlayHeroFlight(heroId)
+              setMapInputLocked(false)
+              adoptHero(heroId)
+              if (result.siegeTownId) {
+                onSiegeTown(result.siegeTownId)
+                return
+              }
+              if (result.arrivedTownId) {
+                const town = findTownById(getSession(), result.arrivedTownId)
+                if (town) {
+                  const next = { id: town.id, name: town.name }
+                  lastTownRef.current = next
+                  setWelcomeTown(next)
+                }
+              }
+            })()
+          }}
         />
+      ) : null}
+      {archiveLearn ? (
+        <div
+          className="date-notice"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="archive-learn-title"
+          onClick={() => setArchiveLearn(null)}
+        >
+          <div
+            className="date-notice-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h1 id="archive-learn-title">Infernal Archive</h1>
+            <p>{archiveLearn.heroName} learned:</p>
+            {archiveLearn.abilityNames.map((name) => (
+              <p key={name}>{name}</p>
+            ))}
+            <button
+              type="button"
+              className="date-notice-ok"
+              onClick={() => setArchiveLearn(null)}
+            >
+              OK
+            </button>
+          </div>
+        </div>
       ) : null}
       {heroScreen && selectedHero ? (
         <HeroScreen

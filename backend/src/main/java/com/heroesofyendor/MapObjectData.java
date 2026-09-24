@@ -12,5 +12,7 @@ public record MapObjectData(
         String name,
         Integer townTypeId,
         /** Horizontal mirror when placed; null/false = no flip. */
-        Boolean flipped) {
+        Boolean flipped,
+        /** Loose pile qty rolled at generation; null for mines/towns. */
+        Integer qty) {
 }

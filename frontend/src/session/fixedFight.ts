@@ -507,6 +507,7 @@ function ensureOpponentHero(
     arch_id: null,
     current_mana: pools.current_mana,
     current_energy: pools.current_energy,
+    flight: null,
   }
   return {
     session: {
@@ -581,6 +582,7 @@ function ensureMirrorDefender(
     arch_id: attacker.arch_id,
     current_mana: attacker.current_mana,
     current_energy: attacker.current_energy,
+    flight: null,
   }
   return {
     session: {

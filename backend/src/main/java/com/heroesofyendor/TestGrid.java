@@ -261,7 +261,7 @@ final class TestGrid {
         int row = entry[1];
         int q = col - offsetFromZero(row);
         int r = row;
-        objects.add(new MapObjectData(q, r, "town", null, "T", flavorName, townTypeId, null));
+        objects.add(new MapObjectData(q, r, "town", null, "T", flavorName, townTypeId, null, null));
         return true;
     }
 
@@ -532,7 +532,132 @@ final class TestGrid {
         if (featureFlippable(data, resourceId, kind) && rng.nextBoolean()) {
             flipped = true;
         }
-        return new MapObjectData(q, r, kind, resourceId, marker, null, null, flipped);
+        Integer qty = null;
+        if ("pickup".equals(kind)) {
+            qty = rollLooseQty(data, resourceId, rng);
+        }
+        return new MapObjectData(q, r, kind, resourceId, marker, null, null, flipped, qty);
+    }
+
+    /**
+     * One-time pile amount from {@code resource.payload.loose_min}–{@code loose_max}
+     * (inclusive). Falls back to 1 if payload is missing.
+     */
+    private static int rollLooseQty(ReferenceData data, int resourceId, Random rng) {
+        int min = 1;
+        int max = 1;
+        for (Map<String, Object> row : data.rows("resource")) {
+            Integer id = intId(row, "id");
+            if (id == null || id != resourceId) {
+                continue;
+            }
+            int[] range = looseRange(row.get("payload"));
+            min = range[0];
+            max = range[1];
+            break;
+        }
+        if (max < min) {
+            max = min;
+        }
+        if (max == min) {
+            return min;
+        }
+        return min + rng.nextInt(max - min + 1);
+    }
+
+    /** Returns {@code [loose_min, loose_max]} from resource.payload JSONB/map. */
+    private static int[] looseRange(Object payload) {
+        Object decoded = decodeJsonb(payload);
+        int min = 1;
+        int max = 1;
+        if (decoded instanceof Map<?, ?> raw) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = (Map<String, Object>) raw;
+            Integer lo = intId(map, "loose_min");
+            Integer hi = intId(map, "loose_max");
+            if (lo != null) {
+                min = Math.max(0, lo);
+            }
+            if (hi != null) {
+                max = Math.max(min, hi);
+            } else {
+                max = min;
+            }
+            return new int[] {min, max};
+        }
+        if (decoded instanceof String text) {
+            String trimmed = text.trim();
+            if (trimmed.startsWith("{")) {
+                Integer lo = jsonInt(trimmed, "loose_min");
+                Integer hi = jsonInt(trimmed, "loose_max");
+                if (lo != null) {
+                    min = Math.max(0, lo);
+                }
+                if (hi != null) {
+                    max = Math.max(min, hi);
+                } else {
+                    max = min;
+                }
+            }
+        }
+        return new int[] {min, max};
+    }
+
+    /** Unwrap PGobject / JSON string payloads from JDBC ColumnMapRowMapper. */
+    private static Object decodeJsonb(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Map || value instanceof List) {
+            return value;
+        }
+        if (value instanceof String text) {
+            String trimmed = text.trim();
+            if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                return trimmed;
+            }
+            return value;
+        }
+        try {
+            Object raw = value.getClass().getMethod("getValue").invoke(value);
+            if (raw instanceof String text) {
+                String trimmed = text.trim();
+                if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                    return trimmed;
+                }
+            }
+            return raw;
+        } catch (ReflectiveOperationException ignored) {
+            return value;
+        }
+    }
+
+    private static Integer jsonInt(String json, String key) {
+        String needle = "\"" + key + "\"";
+        int at = json.indexOf(needle);
+        if (at < 0) {
+            return null;
+        }
+        int colon = json.indexOf(':', at + needle.length());
+        if (colon < 0) {
+            return null;
+        }
+        int i = colon + 1;
+        while (i < json.length() && Character.isWhitespace(json.charAt(i))) {
+            i++;
+        }
+        int start = i;
+        while (i < json.length() && (Character.isDigit(json.charAt(i)) || json.charAt(i) == '-')) {
+            i++;
+        }
+        if (start == i) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(json.substring(start, i));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**

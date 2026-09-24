@@ -157,9 +157,7 @@ function assignTownTypesFromPlayerClasses(
     return towns
   }
 
-  const patchByTownId = new Map<string, { townTypeId: number; name: string }>()
-  const nameFor = (townTypeId: number, fallback: string) =>
-    catalog.town.find((row) => row.id === townTypeId)?.name?.trim() || fallback
+  const patchByTownId = new Map<string, { townTypeId: number }>()
 
   const neutrals = towns.filter((town) => town.player_id == null)
   const anchors = pickSpreadTowns(
@@ -174,7 +172,6 @@ function assignTownTypesFromPlayerClasses(
       typePool[i % typePool.length]!
     patchByTownId.set(anchors[i]!.id, {
       townTypeId,
-      name: nameFor(townTypeId, anchors[i]!.name),
     })
   }
 
@@ -190,7 +187,6 @@ function assignTownTypesFromPlayerClasses(
     next += 1
     patchByTownId.set(town.id, {
       townTypeId,
-      name: nameFor(townTypeId, town.name),
     })
   }
 
@@ -199,10 +195,11 @@ function assignTownTypesFromPlayerClasses(
     if (!patch) {
       return town
     }
-    if (town.town_type_id === patch.townTypeId && town.name === patch.name) {
+    if (town.town_type_id === patch.townTypeId) {
       return town
     }
-    return { ...town, town_type_id: patch.townTypeId, name: patch.name }
+    // Keep unique map name from town_name_pool; only retype the faction.
+    return { ...town, town_type_id: patch.townTypeId }
   })
 }
 
@@ -236,9 +233,7 @@ function syncTownTypesToSpawnedHeroes(session: GameSession): GameSession {
     }
   }
   if (changedIds.size === 0) {
-    // Names may still need a faction label update with no type change.
-    const nameOnly = typed.some((town, i) => town.name !== session.towns[i]?.name)
-    return nameOnly ? { ...session, towns: typed } : session
+    return session
   }
   const cleared: GameSession = {
     ...session,
@@ -276,15 +271,13 @@ function applyHeroTownType(
   if (!town) {
     return session
   }
-  const name =
-    catalog.town.find((row) => row.id === townTypeId)?.name?.trim() || town.name
-  if (town.town_type_id === townTypeId && town.name === name) {
+  if (town.town_type_id === townTypeId) {
     return session
   }
   const cleared: GameSession = {
     ...session,
     towns: session.towns.map((row) =>
-      row.id === townId ? { ...row, town_type_id: townTypeId, name } : row,
+      row.id === townId ? { ...row, town_type_id: townTypeId } : row,
     ),
     building_states: session.building_states.map((row) =>
       row.town_id === townId
@@ -357,6 +350,11 @@ export function hydrateMapObjects(
         kind: obj.kind,
         player_id: ownerId,
         collected: obj.kind === 'pickup' ? !!obj.collected : false,
+        qty:
+          obj.kind === 'pickup'
+            ? Math.max(0, Math.floor(Number(obj.qty) || 0))
+            : 0,
+        accrued_fraction: 0,
       })
     }
   }
@@ -416,6 +414,7 @@ export function addHumanHero(
     used_abilities_this_battle: [],
     used_abilities_today: [],
     arch_id: null,
+    flight: null,
     ...heroResourcePools(getCachedCatalog(), {
       class_id: null,
       current_level: 1,
@@ -503,6 +502,7 @@ function spawnPlayerHero(
     used_abilities_this_battle: [],
     used_abilities_today: [],
     arch_id: heroArchId,
+    flight: null,
     ...heroResourcePools(getCachedCatalog(), {
       class_id: classId,
       current_level: live.current_level,

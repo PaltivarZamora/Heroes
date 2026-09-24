@@ -14,6 +14,7 @@ import {
   type Axial,
 } from './hero'
 import { approachHex, hexDistance } from './pathfinding'
+import { flightSegmentSteps, townCircleLapSteps } from './flight'
 import {
   createWaypointPlan,
   tryAppendWaypoint,
@@ -65,7 +66,7 @@ import {
   seedWorldMobs,
 } from '../session/mobs'
 import { HERO_ID } from '../session/types'
-import { fetchCatalog, featureForResource, getCachedCatalog, heroMovementPoints, mapShowHexesWorld, mapUseTerrainImages, ownerTint, pickupAmount, subscribeCatalog, unitById, visionRange } from '../town/catalog'
+import { fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, unitById, visionRange } from '../town/catalog'
 import { unitPortraitUrl } from '../town/slotArt'
 import {
   activePlayer,
@@ -76,9 +77,14 @@ import {
   findTownAt,
   persistActiveExplored,
   syncHero,
+  syncHeroFlightPosition,
+  finalizeHeroFlightSegment,
   townIsUndefended,
   walletFromSession,
   applyHeroTownVisitUniques,
+  takeArchiveLearnNotice,
+  findTownById,
+  type ArchiveLearnNotice,
 } from '../session/accessors'
 
 type HexMapProps = {
@@ -89,6 +95,7 @@ type HexMapProps = {
   onHeroState: (state: HeroHudState) => void
   onResources: (wallet: ResourceWallet) => void
   onTownWelcome: (townName: string, townId: string) => void
+  onArchiveLearn?: (notice: ArchiveLearnNotice) => void
   onHeroMeet: (targetHeroId: string) => void
   onSiegeTown: (townId: string) => void
   onMobMeet: (mobId: string) => void
@@ -110,6 +117,11 @@ let cameraFollowMoves = true
 let requestMapMoveFn:
   | ((to: Axial, walkOnto?: Axial | null) => Promise<boolean>)
   | null = null
+let playHeroFlightFn:
+  | ((
+      heroId: string,
+    ) => Promise<{ arrivedTownId: string | null; siegeTownId: string | null }>)
+  | null = null
 
 export function setMapInputLocked(locked: boolean): void {
   mapInputLocked = locked
@@ -124,6 +136,16 @@ export function requestMapMove(
   walkOnto?: Axial | null,
 ): Promise<boolean> {
   return requestMapMoveFn?.(to, walkOnto) ?? Promise.resolve(false)
+}
+
+/** Animate this turn's Hanger flight segment; lands / clears flight if arrived. */
+export function requestPlayHeroFlight(
+  heroId: string,
+): Promise<{ arrivedTownId: string | null; siegeTownId: string | null }> {
+  return (
+    playHeroFlightFn?.(heroId) ??
+    Promise.resolve({ arrivedTownId: null, siegeTownId: null })
+  )
 }
 
 export function clearCachedGrid(): void {
@@ -205,6 +227,10 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     blocked.add(hexKey)
   }
   for (const hero of session.heroes) {
+    // Airborne heroes don't block ground paths.
+    if (hero.flight) {
+      continue
+    }
     add(hero.position.q, hero.position.r)
   }
   for (const town of session.towns) {
@@ -250,6 +276,7 @@ function otherHeroAt(q: number, r: number, selfId: string) {
   return getSession().heroes.find(
     (hero) =>
       hero.id !== selfId &&
+      !hero.flight &&
       hero.position.q === q &&
       hero.position.r === r &&
       heroVisibleOnMap(hero),
@@ -322,6 +349,7 @@ export function HexMap({
   onHeroState,
   onResources,
   onTownWelcome,
+  onArchiveLearn,
   onHeroMeet,
   onSiegeTown,
   onMobMeet,
@@ -333,10 +361,14 @@ export function HexMap({
   const onHeroMeetRef = useRef(onHeroMeet)
   const onSiegeTownRef = useRef(onSiegeTown)
   const onMobMeetRef = useRef(onMobMeet)
+  const onArchiveLearnRef = useRef(onArchiveLearn)
 
   useEffect(() => {
     walletRef.current = snapshotWallet(wallet)
   }, [wallet])
+  useEffect(() => {
+    onArchiveLearnRef.current = onArchiveLearn
+  }, [onArchiveLearn])
 
   useEffect(() => {
     onHeroMeetRef.current = onHeroMeet
@@ -915,6 +947,7 @@ export function HexMap({
           const claimedTown = findTownAt(getSession(), q, r)
           const catalog = getCachedCatalog()
           if (catalog && claimedTown && heroId) {
+            takeArchiveLearnNotice()
             updateSession((current) =>
               applyHeroTownVisitUniques(
                 current,
@@ -923,6 +956,10 @@ export function HexMap({
                 heroId,
               ),
             )
+            const learned = takeArchiveLearnNotice()
+            if (learned && !activePlayer(getSession())?.is_ai) {
+              onArchiveLearnRef.current?.(learned)
+            }
           }
           paintObjectBadge(entry.badge, townFill(claimedTown?.player_id))
           entry.label.style.fill = claimedTown?.player_id != null ? '#ffffff' : '#111111'
@@ -959,7 +996,7 @@ export function HexMap({
               q,
               r,
               resourceId,
-              pickupAmount(getCachedCatalog()),
+              findNodeAt(getSession(), q, r)?.qty ?? 0,
               moverId,
             ),
           )
@@ -1613,7 +1650,7 @@ export function HexMap({
       const switchToMapHero = (id: string) => {
         const session = getSession()
         const actor = activePlayer(session)
-        const row = session.heroes.find((hero) => hero.id === id)
+        let row = session.heroes.find((hero) => hero.id === id)
         if (!row) {
           return
         }
@@ -1623,6 +1660,62 @@ export function HexMap({
           !actor.hero_ids.includes(row.id)
         ) {
           return
+        }
+        // Circling: re-check landing on select (don't wait for next day).
+        if (row.flight?.circling && !moving) {
+          let arrivedTownId: string | null = null
+          let siegeTownId: string | null = null
+          updateSession((current) => {
+            const result = finalizeHeroFlightSegment(current, id)
+            arrivedTownId = result.arrivedTownId
+            siegeTownId = result.siegeTownId
+            return result.session
+          })
+          row = getSession().heroes.find((hero) => hero.id === id) ?? row
+          if (siegeTownId) {
+            selectedMapHeroId = row.id
+            heroRef.current = {
+              id: row.id,
+              q: row.position.q,
+              r: row.position.r,
+              remaining: row.movement_remaining,
+            }
+            onHeroState({
+              id: row.id,
+              q: row.position.q,
+              r: row.position.r,
+              remaining: row.movement_remaining,
+            })
+            panToHex(row.position.q, row.position.r)
+            placeHeroMarkers()
+            placeMobMarkers()
+            onSiegeTownRef.current(siegeTownId)
+            return
+          }
+          if (arrivedTownId) {
+            selectedMapHeroId = row.id
+            heroRef.current = {
+              id: row.id,
+              q: row.position.q,
+              r: row.position.r,
+              remaining: row.movement_remaining,
+            }
+            onHeroState({
+              id: row.id,
+              q: row.position.q,
+              r: row.position.r,
+              remaining: row.movement_remaining,
+            })
+            panToHex(row.position.q, row.position.r)
+            placeHeroMarkers()
+            placeMobMarkers()
+            const town = findTownById(getSession(), arrivedTownId)
+            if (town && !activePlayer(getSession())?.is_ai) {
+              onTownWelcome(town.name, town.id)
+            }
+            return
+          }
+          // Still blocked / circling — fall through to normal select.
         }
         selectedMapHeroId = row.id
         moveGen += 1
@@ -1873,6 +1966,10 @@ export function HexMap({
         if (!hero || moving) {
           return Promise.resolve(false)
         }
+        const liveHero = getSession().heroes.find((row) => row.id === hero.id)
+        if (liveHero?.flight) {
+          return Promise.resolve(false)
+        }
         if (to.q === hero.q && to.r === hero.r) {
           resolveHex(to.q, to.r)
           after?.()
@@ -1951,6 +2048,113 @@ export function HexMap({
       }
       requestMapMoveFn = (to, walkOnto) => tryMoveTo(to, undefined, walkOnto)
 
+      playHeroFlightFn = (heroId) => {
+        const live = getSession().heroes.find((row) => row.id === heroId)
+        if (!live?.flight || moving) {
+          return Promise.resolve({ arrivedTownId: null, siegeTownId: null })
+        }
+        const dest = getSession().towns.find(
+          (town) => town.id === live.flight!.destination_town_id,
+        )
+        if (!dest) {
+          return Promise.resolve({ arrivedTownId: null, siegeTownId: null })
+        }
+        switchToMapHero(heroId)
+        const speed = flightSpeed(getCachedCatalog())
+        // Circling: one full orbit around the town. En route: straight segment.
+        const path = live.flight.circling
+          ? townCircleLapSteps(dest.position, live.position)
+          : flightSegmentSteps(live.position, dest.position, speed)
+        const gen = ++moveGen
+        moving = true
+        clearWaypoints()
+        clearPreview()
+        const followWas = cameraFollowMoves
+        cameraFollowMoves = true
+
+        const walkPath = async (steps: Axial[]) => {
+          for (const hex of steps) {
+            if (signal.aborted || gen !== moveGen || !heroRef.current) {
+              return
+            }
+            heroRef.current.q = hex.q
+            heroRef.current.r = hex.r
+            heroRef.current.remaining = 0
+            onHeroState({
+              id: heroRef.current.id,
+              q: heroRef.current.q,
+              r: heroRef.current.r,
+              remaining: 0,
+            })
+            updateSession((current) =>
+              syncHeroFlightPosition(
+                current,
+                { q: hex.q, r: hex.r },
+                heroId,
+              ),
+            )
+            placeHeroMarkers()
+            placeMobMarkers()
+            followHero()
+            await sleep(MOVE_STEP_MS, signal)
+          }
+        }
+
+        return new Promise((resolve) => {
+          void (async () => {
+            await walkPath(path)
+            let arrivedTownId: string | null = null
+            let siegeTownId: string | null = null
+            if (gen === moveGen) {
+              updateSession((current) => {
+                const result = finalizeHeroFlightSegment(current, heroId)
+                arrivedTownId = result.arrivedTownId
+                siegeTownId = result.siegeTownId
+                return result.session
+              })
+              // Just entered circling after reaching dest — orbit once this turn.
+              const after = getSession().heroes.find((h) => h.id === heroId)
+              if (
+                after?.flight?.circling &&
+                !live.flight.circling &&
+                gen === moveGen
+              ) {
+                const lap = townCircleLapSteps(
+                  dest.position,
+                  after.position,
+                )
+                await walkPath(lap)
+                if (gen === moveGen) {
+                  updateSession((current) => {
+                    const result = finalizeHeroFlightSegment(current, heroId)
+                    arrivedTownId = result.arrivedTownId
+                    siegeTownId = result.siegeTownId
+                    return result.session
+                  })
+                }
+              }
+              const row = getSession().heroes.find((h) => h.id === heroId)
+              if (row && heroRef.current) {
+                heroRef.current.q = row.position.q
+                heroRef.current.r = row.position.r
+                heroRef.current.remaining = 0
+                onHeroState({
+                  id: row.id,
+                  q: row.position.q,
+                  r: row.position.r,
+                  remaining: 0,
+                })
+                placeHeroMarkers()
+                followHero()
+              }
+              moving = false
+            }
+            cameraFollowMoves = followWas
+            resolve({ arrivedTownId, siegeTownId })
+          })()
+        })
+      }
+
       canvas.addEventListener(
         'pointerdown',
         (event) => {
@@ -2011,6 +2215,23 @@ export function HexMap({
         }
         const hero = heroRef.current
         if (!hero) {
+          return
+        }
+        // Click own circling / in-flight hero (or re-click self) to select + recheck land.
+        const selfRow = getSession().heroes.find((row) => row.id === hero.id)
+        const allyOnHex = selfRow
+          ? getSession().heroes.find(
+              (row) =>
+                row.player_id === selfRow.player_id &&
+                row.position.q === hex.q &&
+                row.position.r === hex.r,
+            )
+          : undefined
+        if (
+          allyOnHex &&
+          (allyOnHex.flight != null || allyOnHex.id === hero.id)
+        ) {
+          switchToMapHero(allyOnHex.id)
           return
         }
         const commitViaWaypoints = (
@@ -2331,6 +2552,7 @@ export function HexMap({
       selectMapHero = null
       applyHotseatView = null
       requestMapMoveFn = null
+      playHeroFlightFn = null
       abort.abort()
       app?.destroy()
     }

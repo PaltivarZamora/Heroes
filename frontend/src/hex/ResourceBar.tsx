@@ -11,7 +11,6 @@ import {
   featureForResource,
   getCachedCatalog,
   subscribeCatalog,
-  yieldPerMine,
 } from '../town/catalog'
 
 /** Loose pickup / UI icon only — never `{Resource}_Node.png`. */
@@ -83,14 +82,10 @@ function ResourceIcon({ resource }: { resource: ResourceDef }) {
   )
 }
 
-function resourceCounts(
-  resource: ResourceDef,
-  entry: ResourceEntry | undefined,
-): string {
-  const claimed = entry?.claimedMines ?? 0
+function resourceCounts(entry: ResourceEntry | undefined): string {
+  const weekly = entry?.weeklyIncome ?? 0
   const stockpile = entry?.stockpile ?? 0
-  const dailyYield = claimed * yieldPerMine(getCachedCatalog())
-  return `(${formatAmount(claimed)}/${formatAmount(dailyYield)}) ${formatAmount(stockpile)}`
+  return `(${formatAmount(weekly)}/wk) ${formatAmount(stockpile)}`
 }
 
 type ResourceBarProps = {
@@ -98,7 +93,7 @@ type ResourceBarProps = {
   className?: string
 }
 
-/** Top / town resource strip: icon + (mines/yield) stockpile. */
+/** Top / town resource strip: icon + (weekly income/wk) stockpile. */
 export function ResourceBar({ wallet, className }: ResourceBarProps) {
   const [, bump] = useState(0)
   useEffect(() => subscribeCatalog(() => bump((n) => n + 1)), [])
@@ -109,7 +104,7 @@ export function ResourceBar({ wallet, className }: ResourceBarProps) {
         <span key={resource.id} className="resource-bar-item">
           <ResourceIcon resource={resource} />
           <span className="resource-bar-counts">
-            {resourceCounts(resource, wallet[resource.id])}
+            {resourceCounts(wallet[resource.id])}
           </span>
         </span>
       ))}
