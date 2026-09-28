@@ -39,7 +39,11 @@ public record TileData(
         /** The one open hex of a pocket. The guard stands here. */
         Boolean pocketEntrance,
         /** Island landing guard tier. Null when this hex has no island guard. */
-        Integer islandGuardTier) {
+        Integer islandGuardTier,
+        /** Horizontal mirror for world props when {@code prop.flippable}. */
+        Boolean propFlipped,
+        /** Visual scale from {@code prop.render_scale} (blocking unchanged). */
+        Double propRenderScale) {
 
     public TileData(
             int q, int r, String terrain, Double movementCostMultiplier, boolean blocked) {
@@ -49,6 +53,8 @@ public record TileData(
                 terrain,
                 movementCostMultiplier,
                 blocked,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -78,6 +84,8 @@ public record TileData(
                 movementCostMultiplier,
                 blocked,
                 chunkId,
+                null,
+                null,
                 null,
                 null,
                 null,

@@ -443,6 +443,8 @@ export type PropRow = {
    * Battle-only footprint shape (`1x1` default). World map always paints 1x1.
    */
   footprint: string
+  /** Visual scale on the world map (blocking unchanged). Default 1. */
+  render_scale: number
 }
 
 /** Adventure-map feature kinds (`feature_type` table). */
@@ -468,6 +470,8 @@ export type FeatureRow = {
    * Defaults true when the column is absent.
    */
   flippable: boolean
+  /** Visual scale on the world map (blocking unchanged). Default 1. */
+  render_scale: number
 }
 
 /** World sign copy pool (`sign_text` table). */
@@ -1285,10 +1289,24 @@ function asProps(rows: unknown): PropRow[] {
         naval_only: asPropNavalOnly(rec.terrain_rules),
         wall: asPropWall(rec.terrain_rules),
         footprint: parseFootprintCode(footprintRaw),
+        render_scale: (() => {
+          const n = Number(rec.render_scale)
+          return Number.isFinite(n) && n > 0 ? n : 1
+        })(),
       }
     })
     .filter((row) => row.id > 0 && row.file_name.length > 0)
     .sort((a, b) => a.id - b.id)
+}
+
+export function propRowById(
+  catalog: ReferenceCatalog | null | undefined,
+  propId: number | null | undefined,
+): PropRow | null {
+  if (catalog == null || propId == null || propId <= 0) {
+    return null
+  }
+  return catalog.prop.find((row) => row.id === propId) ?? null
 }
 
 function normalizeAssetFileName(raw: unknown): string {
@@ -1348,10 +1366,20 @@ function asFeatures(rows: unknown): FeatureRow[] {
           rec.flippable == null || rec.flippable === ''
             ? true
             : asBoolFlag(rec.flippable),
+        render_scale: (() => {
+          const n = Number(rec.render_scale)
+          return Number.isFinite(n) && n > 0 ? n : 1
+        })(),
       }
     })
     .filter((row) => row.id > 0 && row.image_path.length > 0)
     .sort((a, b) => a.id - b.id)
+}
+
+/** Catalog `feature.render_scale` (default 1). Read at draw time, not from tiles. */
+export function featureRenderScale(row: FeatureRow | null | undefined): number {
+  const n = row?.render_scale
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 1
 }
 
 function asSignText(rows: unknown): SignTextRow[] {

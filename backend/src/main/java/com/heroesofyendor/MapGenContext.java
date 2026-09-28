@@ -77,6 +77,18 @@ final class MapGenContext {
     TestGrid.MapPlaceConfig cfg;
     TestGrid.TownNameSession names;
 
+    /** Final reachability: town keep hexes (rebuilt when towns move). */
+    boolean[][] reachKeepBlocked;
+    /** Final reachability: non-town features by grid cell. */
+    MapObjectData[][] reachFeatureAt;
+
+    /** Layer-1 terrain rules (WaterTerrain.Rules), set during paint. */
+    Object waterTerrainRules;
+    /** Symmetric terrain exclusion pairs loaded for this map. */
+    int terrainExclusionPairs;
+    /** Mainland hexes eligible for permanent buildings (L5a). */
+    boolean[][] buildingLand;
+
     /** One chain link's planned hexes (axial), before washout and orphan trim. */
     static final class RoadDebugLink {
         final String from;

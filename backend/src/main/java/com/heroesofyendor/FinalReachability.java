@@ -24,6 +24,7 @@ final class FinalReachability {
             MapGenPipeline.logCounts(LAYER, "no towns");
             return;
         }
+        buildReachIndexes(ctx);
         int carves = 0;
         int relocations = 0;
         int skipped = 0;
@@ -138,6 +139,87 @@ final class FinalReachability {
                         + repair[2]
                         + " wallsRemoved="
                         + repair[3]);
+        MapGenTimings.current()
+                .layerDetail(
+                        "L7",
+                        "repairPasses="
+                                + repair[4]
+                                + " props="
+                                + repair[0]
+                                + " featMove="
+                                + repair[1]
+                                + " featDrop="
+                                + repair[2]
+                                + " walls="
+                                + repair[3]);
+        ctx.reachKeepBlocked = null;
+        ctx.reachFeatureAt = null;
+    }
+
+    private static void buildReachIndexes(MapGenContext ctx) {
+        ctx.reachKeepBlocked = new boolean[ctx.height][ctx.width];
+        for (TownSite site : ctx.townSites) {
+            int keepCol = site.keepCol();
+            int row = site.row();
+            if (keepCol >= 0 && row >= 0 && keepCol < ctx.width && row < ctx.height) {
+                ctx.reachKeepBlocked[row][keepCol] = true;
+            }
+        }
+        rebuildFeatureIndex(ctx);
+    }
+
+    private static void rebuildFeatureIndex(MapGenContext ctx) {
+        ctx.reachFeatureAt = new MapObjectData[ctx.height][ctx.width];
+        if (ctx.objects == null) {
+            return;
+        }
+        for (MapObjectData obj : ctx.objects) {
+            if ("town".equals(obj.kind())) {
+                continue;
+            }
+            int col = HexCoords.colOf(obj.q(), obj.r());
+            int row = obj.r();
+            if (col >= 0 && row >= 0 && col < ctx.width && row < ctx.height) {
+                ctx.reachFeatureAt[row][col] = obj;
+            }
+        }
+    }
+
+    /** Grow {@code reached} across newly opened hexes without a full-map flood. */
+    private static void expandReachable(
+            MapGenContext ctx, Set<String> reached, List<int[]> seeds) {
+        if (seeds == null || seeds.isEmpty()) {
+            return;
+        }
+        Queue<int[]> q = new ArrayDeque<>();
+        for (int[] hex : seeds) {
+            int col = hex[0];
+            int row = hex[1];
+            if (!walkable(ctx, col, row)) {
+                continue;
+            }
+            String key = HexCoords.key(HexCoords.qOf(col, row), row);
+            if (reached.add(key)) {
+                q.add(new int[] {col, row});
+            }
+        }
+        while (!q.isEmpty()) {
+            int[] cur = q.poll();
+            int cq = HexCoords.qOf(cur[0], cur[1]);
+            int cr = cur[1];
+            for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                int nq = cq + d[0];
+                int nr = cr + d[1];
+                int ncol = HexCoords.colOf(nq, nr);
+                if (!walkable(ctx, ncol, nr)) {
+                    continue;
+                }
+                String nk = HexCoords.key(nq, nr);
+                if (reached.add(nk)) {
+                    q.add(new int[] {ncol, nr});
+                }
+            }
+        }
     }
 
     private static boolean containsSite(List<TownSite> sites, TownSite want) {
@@ -179,13 +261,7 @@ final class FinalReachability {
         if (featureAt(ctx, col, row) != null) {
             return false;
         }
-        // Keep (left) hex of any town is blocked for walking through.
-        for (TownSite site : ctx.townSites) {
-            if (site.row() == row && site.keepCol() == col) {
-                return false;
-            }
-        }
-        return true;
+        return ctx.reachKeepBlocked == null || !ctx.reachKeepBlocked[row][col];
     }
 
     /** Walkable ignoring props (for carve planning). */
@@ -200,12 +276,7 @@ final class FinalReachability {
         if (ctx.pocketRing != null && ctx.pocketRing[row][col]) {
             return false;
         }
-        for (TownSite site : ctx.townSites) {
-            if (site.row() == row && site.keepCol() == col) {
-                return false;
-            }
-        }
-        return true;
+        return ctx.reachKeepBlocked == null || !ctx.reachKeepBlocked[row][col];
     }
 
     private static Set<String> floodFromStarts(MapGenContext ctx) {
@@ -495,6 +566,7 @@ final class FinalReachability {
                 }
             }
         }
+        buildReachIndexes(ctx);
     }
 
     /** Feature or land hex the final flood still has to reach. */
@@ -532,8 +604,10 @@ final class FinalReachability {
         }
         int minArea = Math.max(1, MapConfig.cfgInt(ctx.data, "reach_min_area", ctx.sizeName(), 6));
         Set<String> gaveUp = new HashSet<>();
+        Set<String> reached = floodFromStarts(ctx);
+        int passes = 0;
         for (int pass = 0; pass < 80; pass++) {
-            Set<String> reached = floodFromStarts(ctx);
+            passes = pass + 1;
             Goal goal = nextGoal(ctx, reached, minArea, gaveUp);
             if (goal == null) {
                 break;
@@ -543,6 +617,7 @@ final class FinalReachability {
                 int cleared = clearProps(ctx, scatter, wallIds, false);
                 if (cleared > 0) {
                     props += cleared;
+                    expandReachable(ctx, reached, scatter);
                     gaveUp.clear();
                     continue;
                 }
@@ -555,6 +630,8 @@ final class FinalReachability {
                 if (counts[0] + counts[1] > 0) {
                     moved += counts[0];
                     removed += counts[1];
+                    rebuildFeatureIndex(ctx);
+                    expandReachable(ctx, reached, across);
                     gaveUp.clear();
                     continue;
                 }
@@ -564,13 +641,14 @@ final class FinalReachability {
                 int opened = clearProps(ctx, walled, wallIds, true);
                 if (opened > 0) {
                     walls += opened;
+                    expandReachable(ctx, reached, walled);
                     gaveUp.clear();
                     continue;
                 }
             }
             gaveUp.add(goal.id);
         }
-        return new int[] {props, moved, removed, walls};
+        return new int[] {props, moved, removed, walls, passes};
     }
 
     private static Goal nextGoal(
@@ -683,15 +761,26 @@ final class FinalReachability {
             MapGenContext ctx, Set<String> reached, Goal goal, Open mode, Set<Integer> wallIds) {
         Queue<int[]> q = new ArrayDeque<>();
         Map<String, String> parent = new HashMap<>();
-        for (int row = 0; row < ctx.height; row++) {
-            for (int col = 0; col < ctx.width; col++) {
-                if (!reachedAt(ctx, reached, col, row) || !walkable(ctx, col, row)) {
-                    continue;
-                }
-                String key = col + "," + row;
-                parent.put(key, "");
-                q.add(new int[] {col, row});
+        for (String axial : reached) {
+            int comma = axial.indexOf(',');
+            if (comma <= 0) {
+                continue;
             }
+            int qv = Integer.parseInt(axial.substring(0, comma));
+            int r = Integer.parseInt(axial.substring(comma + 1));
+            int col = HexCoords.colOf(qv, r);
+            if (col < 0 || r < 0 || col >= ctx.width || r >= ctx.height) {
+                continue;
+            }
+            if (!walkable(ctx, col, r)) {
+                continue;
+            }
+            String key = col + "," + r;
+            if (parent.containsKey(key)) {
+                continue;
+            }
+            parent.put(key, "");
+            q.add(new int[] {col, r});
         }
         String goalKey = null;
         while (!q.isEmpty()) {
@@ -893,6 +982,7 @@ final class FinalReachability {
                                 obj.launchR(),
                                 obj.linkedTownQ(),
                                 obj.linkedTownR()));
+                rebuildFeatureIndex(ctx);
                 return true;
             }
         }
@@ -919,7 +1009,13 @@ final class FinalReachability {
     }
 
     private static MapObjectData featureAt(MapGenContext ctx, int col, int row) {
-        if (ctx.objects == null || col < 0 || row < 0 || col >= ctx.width || row >= ctx.height) {
+        if (col < 0 || row < 0 || col >= ctx.width || row >= ctx.height) {
+            return null;
+        }
+        if (ctx.reachFeatureAt != null) {
+            return ctx.reachFeatureAt[row][col];
+        }
+        if (ctx.objects == null) {
             return null;
         }
         int q = HexCoords.qOf(col, row);
@@ -966,5 +1062,103 @@ final class FinalReachability {
             ctx.objects.removeIf(
                     o -> "town".equals(o.kind()) && o.q() == q && o.r() == site.row());
         }
+        buildReachIndexes(ctx);
+    }
+
+    /**
+     * Passable mainland components with area ≥ reach_min_area that touch the
+     * on-foot flood from starting towns. Used before permanent building placement.
+     */
+    static boolean[][] buildingLandMask(MapGenContext ctx) {
+        int minArea =
+                Math.max(1, MapConfig.cfgInt(ctx.data, "reach_min_area", ctx.sizeName(), 6));
+        Set<String> reached = floodFromStartsTerrain(ctx);
+        boolean[][] ok = new boolean[ctx.height][ctx.width];
+        boolean[][] seen = new boolean[ctx.height][ctx.width];
+        for (int row = 0; row < ctx.height; row++) {
+            for (int col = 0; col < ctx.width; col++) {
+                if (seen[row][col] || !passable(ctx, col, row)) {
+                    continue;
+                }
+                if (WaterTerrain.onIsland(ctx, col, row)) {
+                    continue;
+                }
+                List<int[]> area = new ArrayList<>();
+                List<int[]> stack = new ArrayList<>();
+                stack.add(new int[] {col, row});
+                seen[row][col] = true;
+                boolean touches = reached.contains(HexCoords.key(HexCoords.qOf(col, row), row));
+                while (!stack.isEmpty()) {
+                    int[] cur = stack.remove(stack.size() - 1);
+                    area.add(cur);
+                    int q = HexCoords.qOf(cur[0], cur[1]);
+                    for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                        int nr = cur[1] + d[1];
+                        int ncol = HexCoords.colOf(q + d[0], nr);
+                        if (ncol < 0 || nr < 0 || ncol >= ctx.width || nr >= ctx.height) {
+                            continue;
+                        }
+                        if (seen[nr][ncol] || !passable(ctx, ncol, nr)) {
+                            continue;
+                        }
+                        if (WaterTerrain.onIsland(ctx, ncol, nr)) {
+                            continue;
+                        }
+                        seen[nr][ncol] = true;
+                        if (reached.contains(HexCoords.key(HexCoords.qOf(ncol, nr), nr))) {
+                            touches = true;
+                        }
+                        stack.add(new int[] {ncol, nr});
+                    }
+                }
+                if (touches && area.size() >= minArea) {
+                    for (int[] hex : area) {
+                        ok[hex[1]][hex[0]] = true;
+                    }
+                }
+            }
+        }
+        return ok;
+    }
+
+    /** Foot flood from starting town entries (terrain only, before L5 features). */
+    private static Set<String> floodFromStartsTerrain(MapGenContext ctx) {
+        Set<String> seen = new HashSet<>();
+        Queue<int[]> q = new ArrayDeque<>();
+        for (TownSite site : ctx.townSites) {
+            if (!site.starting()) {
+                continue;
+            }
+            int col = site.col();
+            int row = site.row();
+            String key = HexCoords.key(HexCoords.qOf(col, row), row);
+            if (passable(ctx, col, row) && seen.add(key)) {
+                q.add(new int[] {col, row});
+            }
+            if (passable(ctx, col + 1, row)) {
+                String fk = HexCoords.key(HexCoords.qOf(col + 1, row), row);
+                if (seen.add(fk)) {
+                    q.add(new int[] {col + 1, row});
+                }
+            }
+        }
+        while (!q.isEmpty()) {
+            int[] cur = q.poll();
+            int cq = HexCoords.qOf(cur[0], cur[1]);
+            int cr = cur[1];
+            for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                int nq = cq + d[0];
+                int nr = cr + d[1];
+                int ncol = HexCoords.colOf(nq, nr);
+                if (!passable(ctx, ncol, nr) || townKeep(ctx, ncol, nr)) {
+                    continue;
+                }
+                String nk = HexCoords.key(nq, nr);
+                if (seen.add(nk)) {
+                    q.add(new int[] {ncol, nr});
+                }
+            }
+        }
+        return seen;
     }
 }

@@ -56,6 +56,7 @@ type OptionsMenuProps = {
   onDataStatus: (status: DataStatus) => void
   onCopyDebug: () => void
   onStartGame: (config: GameConfig) => void
+  mapGenerating?: boolean
   onLevelUpNotice: (notice: LevelUpNotice | null) => void
   /** Lift green status into the map HUD gap (between End Turn and Debug). */
   onHudNotice?: (notice: string | null) => void
@@ -237,6 +238,7 @@ export function OptionsMenu({
   onDataStatus,
   onCopyDebug,
   onStartGame,
+  mapGenerating = false,
   onLevelUpNotice,
   onHudNotice,
   onStartFixedFight,
@@ -978,6 +980,7 @@ export function OptionsMenu({
 
       {panel === 'new' ? (
         <NewGameScreen
+          generating={mapGenerating}
           onClose={closePanel}
           onStartGame={(config) => {
             onStartGame(config)

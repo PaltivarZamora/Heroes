@@ -27,9 +27,26 @@ final class WorldProps {
             String fileName,
             int variantCount,
             boolean blocker,
+            boolean flippable,
+            double renderScale,
             Map<Integer, Double> terrainRules) {}
 
-    record Seed(int propId, int variant, String fileName, boolean blocker) {}
+    record Seed(
+            int propId,
+            int variant,
+            String fileName,
+            boolean blocker,
+            boolean flipped,
+            double renderScale) {
+
+        Seed(int propId, int variant, String fileName, boolean blocker) {
+            this(propId, variant, fileName, blocker, false, 1.0);
+        }
+
+        Seed(int propId, int variant, String fileName, boolean blocker, boolean flipped) {
+            this(propId, variant, fileName, blocker, flipped, 1.0);
+        }
+    }
 
     private WorldProps() {}
 
@@ -81,7 +98,33 @@ final class WorldProps {
         // Equal weight across all variants (not terrain's skewed table).
         int variants = Math.max(1, pick.variantCount());
         int variant = rng.nextInt(variants) + 1;
-        return new Seed(pick.id(), variant, pick.fileName(), pick.blocker());
+        return new Seed(
+                pick.id(), variant, pick.fileName(), pick.blocker(), false, pick.renderScale());
+    }
+
+    static boolean isFlippable(List<PropDef> defs, int propId) {
+        for (PropDef def : defs) {
+            if (def.id() == propId) {
+                return def.flippable();
+            }
+        }
+        return false;
+    }
+
+    /** Flip roll uses its own sub-seed so scatter RNG order stays unchanged. */
+    static Seed withPlacementFlip(
+            MapGenContext ctx, int col, int row, Seed seed, List<PropDef> defs) {
+        if (seed == null || !isFlippable(defs, seed.propId())) {
+            return seed;
+        }
+        boolean flipped = ctx.rngFor("prop-flip:" + col + "," + row).nextBoolean();
+        return new Seed(
+                seed.propId(),
+                seed.variant(),
+                seed.fileName(),
+                seed.blocker(),
+                flipped,
+                seed.renderScale());
     }
 
     private static PropDef fromRow(Map<String, Object> row) {
@@ -107,6 +150,7 @@ final class WorldProps {
         }
         int variantCount = Math.max(1, asInt(row.get("variant_count"), 1));
         boolean blocker = asBool(row.get("is_blocker"), false);
+        boolean flippable = asBool(row.get("flippable"), true);
         boolean navalOnly = parseFlag(row.get("terrain_rules"), "naval_only");
         boolean wall = parseFlag(row.get("terrain_rules"), "wall");
         Map<Integer, Double> rules = parseTerrainRules(row.get("terrain_rules"));
@@ -117,7 +161,13 @@ final class WorldProps {
         if (rules.isEmpty()) {
             return null;
         }
-        return new PropDef(id, fileName, variantCount, blocker, rules);
+        return new PropDef(
+                id, fileName, variantCount, blocker, flippable, readRenderScale(row), rules);
+    }
+
+    static double readRenderScale(Map<String, Object> row) {
+        Double scale = MapConfig.asDouble(row.get("render_scale"));
+        return scale != null && scale > 0 ? scale : 1.0;
     }
 
     /** Wall-type props ({@code terrain_rules.wall = true}), lowest id first. */
@@ -158,6 +208,7 @@ final class WorldProps {
                             fileName,
                             Math.max(1, asInt(row.get("variant_count"), 1)),
                             asBool(row.get("is_blocker"), true),
+                            readRenderScale(row),
                             parseTerrainList(row.get("terrain_rules"))));
         }
         out.sort((a, b) -> Integer.compare(a.id(), b.id()));
@@ -191,6 +242,7 @@ final class WorldProps {
             String fileName,
             int variantCount,
             boolean blocker,
+            double renderScale,
             List<Integer> terrains) {}
 
     private static boolean parseFlag(Object raw, String flagName) {

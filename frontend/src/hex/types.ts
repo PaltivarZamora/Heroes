@@ -14,6 +14,10 @@ export type TileData = {
   propVariant?: number | null
   /** Base prop file name under `/assets/props/` (no extension). */
   propFile?: string | null
+  /** Seeded horizontal mirror when prop.flippable (persists on tile). */
+  propFlipped?: boolean | null
+  /** From {@code prop.render_scale} on the map tile (visual only). */
+  propRenderScale?: number | null
   /**
    * Auto-generated road overlay. Does not replace `terrain` — only movement
    * cost (via `road_move_cost`) and placeholder road rendering.

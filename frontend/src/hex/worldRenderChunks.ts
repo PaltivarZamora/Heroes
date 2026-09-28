@@ -29,6 +29,8 @@ import {
   parseCssHexColor,
   wedgesForHex,
 } from './terrainTransition'
+import { layoutWorldMapPropSprite, type PropCullBox } from './propTextures'
+import { propRowById } from '../town/catalog'
 import { forEachTile, getTile, isExplored } from './world'
 
 /** Fixed bake / cull block size in offset hexes. */
@@ -175,6 +177,7 @@ export class WorldChunkRenderer {
   private buckets = new Map<string, ChunkBucket>()
   private chunkDecors = new Map<string, ChunkTextureDecor>()
   private propByHex = new Map<string, Sprite>()
+  private propCullByHex = new Map<string, PropCullBox>()
   private lastRepaintMs = 0
   private frameMs = 16.7
   private avgFrameMs = 16.7
@@ -196,6 +199,7 @@ export class WorldChunkRenderer {
     this.wedgesEnabled = opts.wedgesEnabled
     this.hexTerrainTextures = opts.hexTerrainTextures
     this.getCatalog = opts.getCatalog
+    this.propLayer.sortableChildren = true
     this.buildBuckets()
     this.rebuildDecors()
   }
@@ -549,7 +553,7 @@ export class WorldChunkRenderer {
       file: string,
       variant: number,
     ) => Promise<Texture | null>,
-    addSprite: (
+    _addSprite: (
       parent: Container,
       texture: Texture,
       x: number,
@@ -558,12 +562,15 @@ export class WorldChunkRenderer {
       hexH: number,
     ) => Sprite,
   ) {
+    void _addSprite
     const jobs: Array<{
       key: string
       q: number
       r: number
       file: string
       variant: number
+      flipped: boolean
+      propId: number | null
       hex: Hex
     }> = []
     for (const { q, r } of hexes) {
@@ -585,6 +592,8 @@ export class WorldChunkRenderer {
         r,
         file: tile.propFile,
         variant: tile.propVariant ?? 1,
+        flipped: tile.propFlipped === true,
+        propId: tile.propId ?? null,
         hex,
       })
     }
@@ -595,16 +604,73 @@ export class WorldChunkRenderer {
           return
         }
         const center = hexCenter(job.hex, this.offsetX, this.offsetY)
-        const sprite = addSprite(
-          this.propLayer,
+        const tile = getTile(job.q, job.r)
+        const row = propRowById(this.getCatalog(), job.propId)
+        const renderScale =
+          tile?.propRenderScale ??
+          row?.render_scale ??
+          1
+        const sprite = new Sprite()
+        this.propLayer.addChild(sprite)
+        const cull = layoutWorldMapPropSprite(
+          sprite,
           texture,
           center.x,
           center.y,
           job.hex.width,
           job.hex.height,
+          {
+            renderScale,
+            wall: row?.wall === true,
+            mapSeed: this.seed,
+            q: job.q,
+            r: job.r,
+            flipped: job.flipped,
+          },
         )
         this.propByHex.set(job.key, sprite)
+        this.propCullByHex.set(job.key, cull)
       }),
+    )
+    this.syncPropDrawOrder()
+  }
+
+  /** Lower on screen (larger y) draws in front — props and feature views together. */
+  syncMapArtDepth(
+    featureViews: Array<{ container: Container; sortY: number }>,
+  ) {
+    for (const sprite of this.propByHex.values()) {
+      sprite.zIndex = Math.round(sprite.y * 1000)
+    }
+    for (const { container, sortY } of featureViews) {
+      container.zIndex = Math.round(sortY * 1000)
+    }
+    this.propLayer.sortChildren()
+  }
+
+  /** @deprecated internal — use {@link syncMapArtDepth} from the map after feature layout. */
+  private syncPropDrawOrder() {
+    this.syncMapArtDepth([])
+  }
+
+  /** Axis-aligned cull in world space (same margins as props / chunks). */
+  cullWorldBox(
+    box: PropCullBox,
+    cameraX: number,
+    cameraY: number,
+    viewW: number,
+    viewH: number,
+  ): boolean {
+    const left = cameraX - CULL_MARGIN_PX
+    const top = cameraY - CULL_MARGIN_PX
+    const right = cameraX + viewW + CULL_MARGIN_PX
+    const bottom = cameraY + viewH + CULL_MARGIN_PX
+    const { cullX: cx, cullY: cy, cullMargin: margin } = box
+    return (
+      cx + margin >= left &&
+      cx - margin <= right &&
+      cy + margin >= top &&
+      cy - margin <= bottom
     )
   }
 
@@ -624,6 +690,7 @@ export class WorldChunkRenderer {
     ) => Sprite,
   ) {
     this.propByHex.clear()
+    this.propCullByHex.clear()
     for (const child of this.propLayer.removeChildren()) {
       child.destroy({ children: true })
     }
@@ -668,10 +735,17 @@ export class WorldChunkRenderer {
       bucket.fogGfx.visible = on
       bucket.fogGfx.renderable = on
     }
-    for (const sprite of this.propByHex.values()) {
-      const x = sprite.x
-      const y = sprite.y
-      const on = x >= left && x <= right && y >= top && y <= bottom
+    for (const [key, sprite] of this.propByHex) {
+      const cull = this.propCullByHex.get(key)
+      const cx = cull?.cullX ?? sprite.x
+      const cy = cull?.cullY ?? sprite.y
+      const margin =
+        cull?.cullMargin ?? this.hexSize * 1.5
+      const on =
+        cx + margin >= left &&
+        cx - margin <= right &&
+        cy + margin >= top &&
+        cy - margin <= bottom
       sprite.visible = on
       sprite.renderable = on
     }
@@ -733,6 +807,7 @@ export class WorldChunkRenderer {
     }
     this.buckets.clear()
     this.propByHex.clear()
+    this.propCullByHex.clear()
     this.chunkDecors.clear()
   }
 }

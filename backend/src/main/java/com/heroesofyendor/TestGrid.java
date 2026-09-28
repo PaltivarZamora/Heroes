@@ -45,7 +45,15 @@ final class TestGrid {
         {1, 0}, {1, -1}, {0, -1}, {-1, 0}, {-1, 1}, {0, 1},
     };
 
+    private static volatile String pendingServerTiming = "";
+
     private TestGrid() {
+    }
+
+    static String consumeServerTiming() {
+        String header = pendingServerTiming;
+        pendingServerTiming = "";
+        return header;
     }
 
     static TestGridResponse generate(ReferenceData data) {
@@ -97,6 +105,7 @@ final class TestGrid {
                         ? mapSize
                         : MapSize.fromName(data, MapConfig.defaultSizeName(data));
         long totalStart = System.nanoTime();
+        MapGenTimings.start();
         log.info(
                 "Map gen start: size={} ({}×{}) seed={}",
                 size.name(),
@@ -106,9 +115,16 @@ final class TestGrid {
         try {
             TestGridResponse response =
                     generateTimed(seed, data, players, size, playerTownTypes);
+            long totalMs = (System.nanoTime() - totalStart) / 1_000_000L;
+            MapGenTimings timings = MapGenTimings.take();
+            if (timings != null) {
+                timings.total(totalMs);
+                log.info(timings.logLine());
+                pendingServerTiming = timings.serverTimingHeader();
+            }
             log.info(
                     "Map gen total: {} ms ({}×{} seed={})",
-                    (System.nanoTime() - totalStart) / 1_000_000L,
+                    totalMs,
                     size.width(),
                     size.height(),
                     seed);
@@ -149,19 +165,19 @@ final class TestGrid {
         // 1. Terrain
         MapGenPipeline.runLayer(
                 ctx,
-                "terrain",
+                "L1",
                 WaterTerrain::paint);
 
         // 2. Towns (new rules)
-        MapGenPipeline.runLayer(ctx, "towns", TownsLayer::run);
+        MapGenPipeline.runLayer(ctx, "L2", TownsLayer::run);
 
         // 3. Zones + walls
-        MapGenPipeline.runLayer(ctx, "walls", WallsLayer::run);
+        MapGenPipeline.runLayer(ctx, "L3", WallsLayer::run);
 
         // 4. Roads (skipped while map_config.roads_enabled is 0)
         MapGenPipeline.runLayer(
                 ctx,
-                "roads",
+                "L4",
                 c -> {
                     c.hasRoad = new boolean[c.height][c.width];
                     c.roadMask = new int[c.height][c.width];
@@ -177,7 +193,7 @@ final class TestGrid {
         // 5a. Permanent buildings (existing placement rules, plus gap / terrain / adjacency).
         MapGenPipeline.runLayer(
                 ctx,
-                "features",
+                "L5a",
                 c -> {
                     if (c.propSeeds == null) {
                         c.propSeeds = new WorldProps.Seed[c.height][c.width];
@@ -188,6 +204,7 @@ final class TestGrid {
                         c.roadMask = new int[c.height][c.width];
                     }
                     c.featureRules = FeatureRules.load(c);
+                    c.buildingLand = FinalReachability.buildingLandMask(c);
                     Random rng = c.rngFor("features");
                     List<int[]> featurePlaceable = openForFeatures(c);
                     c.objects =
@@ -213,12 +230,12 @@ final class TestGrid {
                 });
 
         // 5b. Branch roads to permanent buildings that are far from the interstate.
-        MapGenPipeline.runLayer(ctx, "branch-roads", BranchRoads::run);
+        MapGenPipeline.runLayer(ctx, "L5b", BranchRoads::run);
 
         // 5c–5e. Signs (need branches), mines, loose piles, chests.
         MapGenPipeline.runLayer(
                 ctx,
-                "features-spread",
+                "L5c",
                 c -> {
                     if (c.featureRules == null) {
                         c.featureRules = FeatureRules.load(c);
@@ -229,15 +246,15 @@ final class TestGrid {
                 });
 
         // 5g. Pocket loot, extra to the normal totals. Filler props live here.
-        MapGenPipeline.runLayer(ctx, "pockets-loot", Pockets::fill);
+        MapGenPipeline.runLayer(ctx, "L5g", Pockets::fill);
 
         // Island loot is extra, after pockets. Also emits the S9-24 report.
-        MapGenPipeline.runLayer(ctx, "island-loot", WaterTerrain::fillIslands);
+        MapGenPipeline.runLayer(ctx, "L5g-island", WaterTerrain::fillIslands);
 
         // 5f. Prop scatter, after features so blockers cannot seal a passage or an approach.
         MapGenPipeline.runLayer(
                 ctx,
-                "props",
+                "L5f",
                 c -> {
                     if (c.featureRules == null) {
                         c.featureRules = FeatureRules.load(c);
@@ -254,11 +271,11 @@ final class TestGrid {
         // 6. Random mobs — frontend (see report). Empty backend slot.
         MapGenPipeline.runLayer(
                 ctx,
-                "mobs",
+                "L6",
                 c -> MapGenPipeline.logCounts("mobs", "frontend (unchanged)"));
 
         // 7. Final reachability
-        MapGenPipeline.runLayer(ctx, "final", FinalReachability::run);
+        MapGenPipeline.runLayer(ctx, "L7", FinalReachability::run);
 
         // Assemble tiles after final repairs (props may have been cleared).
         long t = System.nanoTime();
@@ -319,7 +336,9 @@ final class TestGrid {
                                         : null,
                                 ctx.islandGuardTier != null && ctx.islandGuardTier[row][col] > 0
                                         ? ctx.islandGuardTier[row][col]
-                                        : null));
+                                        : null,
+                                prop != null && prop.flipped() ? Boolean.TRUE : null,
+                                prop != null ? prop.renderScale() : null));
             }
         }
         List<List<TestGridResponse.RoadPoint>> roads = new ArrayList<>(ctx.roadPaths.size());
@@ -331,6 +350,8 @@ final class TestGrid {
             roads.add(List.copyOf(pts));
         }
         TestGridResponse.RoadPlan roadPlan = roadPlan(ctx);
+        long asmMs = msSince(t);
+        MapGenTimings.current().layer("asm", asmMs);
         logStep("assemble", t);
         return new TestGridResponse(
                 seed, List.copyOf(tiles), List.copyOf(ctx.objects), List.copyOf(roads), roadPlan);

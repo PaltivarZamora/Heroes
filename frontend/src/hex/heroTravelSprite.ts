@@ -1,5 +1,6 @@
 import { Assets, Texture } from 'pixi.js'
 import type { AxialPos, GameSession, Hero } from '../session/types'
+import { getCachedCatalog, heroTypeName, type ReferenceCatalog } from '../town/catalog'
 import { boatOccupiedByHero } from './boat'
 
 /**
@@ -18,14 +19,31 @@ type TravelArt = {
 }
 
 const TRAVEL_ART = {
-  horse: { file: 'Horse.png', artFaces: 'left' },
   balloon: { file: 'Balloon.png', artFaces: 'right' },
   boat: { file: 'Boat.png', artFaces: 'right' },
-} as const satisfies Record<string, TravelArt>
+  mount: { artFaces: 'left' },
+} as const satisfies Record<string, TravelArt | { artFaces: HeroTravelFacing }>
+
+/** Land mount filename from hero_type.name (spaces → underscores). */
+export function mountSpriteFile(className: string): string {
+  const base = className.trim().replace(/\s+/g, '_')
+  return `Mount_${base}.png`
+}
+
+export function mountSpriteFileForHero(
+  hero: Hero,
+  catalog?: ReferenceCatalog | null,
+): string {
+  const ref = catalog ?? getCachedCatalog()
+  const name = ref ? heroTypeName(ref, hero.class_id) : ''
+  if (!name) {
+    throw new Error(`hero ${hero.id} missing class mount (class_id=${hero.class_id})`)
+  }
+  return mountSpriteFile(name)
+}
 
 /** Filenames only (preload / boat markers). */
 export const HERO_TRAVEL_FILES = {
-  horse: TRAVEL_ART.horse.file,
   balloon: TRAVEL_ART.balloon.file,
   boat: TRAVEL_ART.boat.file,
 } as const
@@ -49,15 +67,26 @@ export function heroTravelSprite(
 ): HeroTravelSprite {
   const boarded =
     session != null && boatOccupiedByHero(session, hero.id) != null
-  const art = boarded
-    ? TRAVEL_ART.boat
-    : hero.flight
-      ? TRAVEL_ART.balloon
-      : TRAVEL_ART.horse
+  if (boarded) {
+    const facing = hero.travel_facing ?? 'right'
+    return {
+      file: TRAVEL_ART.boat.file,
+      flipX: facing !== TRAVEL_ART.boat.artFaces,
+    }
+  }
+  if (hero.flight) {
+    const facing = hero.travel_facing ?? 'right'
+    return {
+      file: TRAVEL_ART.balloon.file,
+      flipX: facing !== TRAVEL_ART.balloon.artFaces,
+    }
+  }
+  const file = mountSpriteFileForHero(hero)
   const facing = hero.travel_facing ?? 'right'
-  // Mirror only when desired facing disagrees with the raw PNG.
-  const flipX = facing !== art.artFaces
-  return { file: art.file, flipX }
+  return {
+    file,
+    flipX: facing !== TRAVEL_ART.mount.artFaces,
+  }
 }
 
 /**
@@ -150,9 +179,16 @@ export async function loadTravelTexture(
   }
 }
 
-/** Warm Horse / Balloon / Boat once with other map art. */
-export function preloadHeroTravelSprites(): void {
-  for (const file of Object.values(HERO_TRAVEL_FILES)) {
-    void loadTravelTexture(file)
+/** Warm Balloon / Boat and all class mounts once with other map art. */
+export function preloadHeroTravelSprites(catalog?: ReferenceCatalog | null): void {
+  void loadTravelTexture(HERO_TRAVEL_FILES.balloon)
+  void loadTravelTexture(HERO_TRAVEL_FILES.boat)
+  const ref = catalog ?? getCachedCatalog()
+  if (ref) {
+    for (const row of ref.hero_type) {
+      if (row.name?.trim()) {
+        void loadTravelTexture(mountSpriteFile(row.name))
+      }
+    }
   }
 }

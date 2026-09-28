@@ -6,35 +6,8 @@ import {
   type ResourceEntry,
   type ResourceWallet,
 } from '../hex/resources'
-import { featureArtUrl } from '../hex/featureTextures'
-import {
-  featureForResource,
-  getCachedCatalog,
-  subscribeCatalog,
-} from '../town/catalog'
-
-/** Loose pickup / UI icon only — never `{Resource}_Node.png`. */
-function resourceIconUrl(resource: ResourceDef): string | null {
-  const catalog = getCachedCatalog()
-  const primary = featureForResource(catalog, resource.id, 'pickup')?.image_path
-  const nameBase = resource.name.trim().replaceAll(' ', '_')
-  const file = primary?.trim() || `${nameBase}.png`
-  // Guard against a mis-pointed catalog row.
-  if (/_node\.png$/i.test(file)) {
-    return featureArtUrl(`${nameBase}.png`)
-  }
-  return featureArtUrl(file)
-}
-
-async function isImageUrl(url: string): Promise<boolean> {
-  try {
-    const response = await fetch(url)
-    const contentType = response.headers.get('content-type') ?? ''
-    return response.ok && contentType.toLowerCase().startsWith('image/')
-  } catch {
-    return false
-  }
-}
+import { resolveResourceIconUrl } from './resourceIconCache'
+import { subscribeCatalog } from '../town/catalog'
 
 function ResourceIcon({ resource }: { resource: ResourceDef }) {
   const [src, setSrc] = useState<string | null>(null)
@@ -42,16 +15,9 @@ function ResourceIcon({ resource }: { resource: ResourceDef }) {
   useEffect(() => {
     let cancelled = false
     const resolve = () => {
-      const url = resourceIconUrl(resource)
-      if (!url) {
+      void resolveResourceIconUrl(resource).then((url) => {
         if (!cancelled) {
-          setSrc(null)
-        }
-        return
-      }
-      void isImageUrl(url).then((ok) => {
-        if (!cancelled) {
-          setSrc(ok ? url : null)
+          setSrc(url)
         }
       })
     }

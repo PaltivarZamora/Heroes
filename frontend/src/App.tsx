@@ -134,6 +134,8 @@ function App() {
   const wallet = walletFromSession(session)
   const onMapInfo = useCallback(
     (info: { width: number; height: number; seed: number }) => {
+      mapGeneratingRef.current = false
+      setMapGenerating(false)
       setMapInfo(info)
       updateSession((current) => {
         const currentName = current.game.name.trim()
@@ -197,6 +199,8 @@ function App() {
   const pendingLevelUpRef = useRef<LevelUpNotice | null>(null)
   const lastTownRef = useRef<{ id: string; name: string } | null>(null)
   const [mapEpoch, setMapEpoch] = useState(0)
+  const [mapGenerating, setMapGenerating] = useState(false)
+  const mapGeneratingRef = useRef(false)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
   const [aiPhase, setAiPhase] = useState<'idle' | 'running' | 'review'>('idle')
   const [terrainWedgesEnabled, setTerrainWedgesEnabled] = useState(true)
@@ -798,6 +802,11 @@ function App() {
     }
   }, [closeCombat, maybeShowMatchEnd, flushPendingFlightSieges])
   const onStartGame = useCallback((config: GameConfig) => {
+    if (mapGeneratingRef.current) {
+      return
+    }
+    mapGeneratingRef.current = true
+    setMapGenerating(true)
     void (async () => {
       try {
         await refreshCatalogFromDb()
@@ -1528,6 +1537,7 @@ function App() {
             onDataStatus={setDataStatus}
             onCopyDebug={copyDebug}
             onStartGame={onStartGame}
+            mapGenerating={mapGenerating}
           />
         </div>
         <ResourceBar wallet={wallet} />

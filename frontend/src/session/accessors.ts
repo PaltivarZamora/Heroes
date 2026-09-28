@@ -46,14 +46,11 @@ import {
   type BuildingRow,
 } from '../town/catalog'
 import {
-  applyHeroTownVisitUniques,
   applyRecruitmentBeaconsBeforeGrowth,
   applyWeeklyTownUniquesWithReport,
   maybeApplyInfernalArchiveAfterBuild,
-  takeArchiveLearnNotice,
   townRecruitCost,
   townUnitUpgradeCost,
-  type ArchiveLearnNotice,
 } from '../town/townUniques'
 
 export {
@@ -1687,14 +1684,6 @@ export function playerWeeklyIncome(
     totals[node.resource_id] = (totals[node.resource_id] ?? 0) + weekly
   }
   return totals
-}
-
-/** Owned towns: each built building’s `payload.produces` credits the owner. */
-function applyWeeklyBuildingIncome(
-  session: GameSession,
-  catalog: ReferenceCatalog,
-): GameSession {
-  return applyWeeklyBuildingIncomeWithReport(session, catalog).session
 }
 
 function applyWeeklyBuildingIncomeWithReport(

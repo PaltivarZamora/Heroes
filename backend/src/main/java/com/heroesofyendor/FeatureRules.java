@@ -24,6 +24,10 @@ final class FeatureRules {
     final List<Integer> fairResources;
     final int fairRadius;
     final int townClear;
+    /** Min hex distance from town footprint for permanent features and blocking props. */
+    final int permTownClear;
+    /** Hexes within {@link #permTownClear} of any town footprint (built once). */
+    boolean[][] permTownClearHex;
     final List<String> notes = new ArrayList<>();
     private final Map<String, Boolean> disappearsByType = new HashMap<>();
     private final Map<String, Integer> typeIds = new HashMap<>();
@@ -35,24 +39,55 @@ final class FeatureRules {
             Set<Integer> tempNoTerrain,
             List<Integer> fairResources,
             int fairRadius,
-            int townClear) {
+            int townClear,
+            int permTownClear) {
         this.ctx = ctx;
         this.permNoTerrain = permNoTerrain;
         this.tempNoTerrain = tempNoTerrain;
         this.fairResources = fairResources;
         this.fairRadius = fairRadius;
         this.townClear = townClear;
+        this.permTownClear = permTownClear;
     }
 
     static FeatureRules load(MapGenContext ctx) {
         String size = ctx.sizeName();
-        return new FeatureRules(
-                ctx,
-                intSet(ctx.data, "perm_no_terrain", size, 3, 20, 21),
-                intSet(ctx.data, "temp_no_terrain", size, 3),
-                intList(ctx.data, "fair_start_resources", size, 1, 2, 3),
-                Math.max(1, MapConfig.cfgInt(ctx.data, "fair_start_radius", size, 12)),
-                Math.max(0, MapConfig.cfgInt(ctx.data, "wall_town_clear", size, 3)));
+        FeatureRules rules =
+                new FeatureRules(
+                        ctx,
+                        intSet(ctx.data, "perm_no_terrain", size, 3, 20, 21),
+                        intSet(ctx.data, "temp_no_terrain", size, 3),
+                        intList(ctx.data, "fair_start_resources", size, 1, 2, 3),
+                        Math.max(1, MapConfig.cfgInt(ctx.data, "fair_start_radius", size, 12)),
+                        Math.max(0, MapConfig.cfgInt(ctx.data, "wall_town_clear", size, 3)),
+                        Math.max(0, MapConfig.cfgInt(ctx.data, "feature_town_clear", size, 1)));
+        rules.buildPermTownClearHex();
+        return rules;
+    }
+
+    private void buildPermTownClearHex() {
+        if (permTownClear <= 0 || ctx.townSites == null || ctx.townSites.isEmpty()) {
+            return;
+        }
+        permTownClearHex = new boolean[ctx.height][ctx.width];
+        for (TownSite site : ctx.townSites) {
+            int[][] feet = {{site.col(), site.row()}, {site.keepCol(), site.row()}};
+            for (int[] foot : feet) {
+                if (foot[0] < 0 || foot[0] >= ctx.width || foot[1] < 0 || foot[1] >= ctx.height) {
+                    continue;
+                }
+                int aq = HexCoords.qOf(foot[0], foot[1]);
+                int ar = foot[1];
+                for (int row = 0; row < ctx.height; row++) {
+                    for (int col = 0; col < ctx.width; col++) {
+                        int q = HexCoords.qOf(col, row);
+                        if (HexCoords.hexDistance(q, row, aq, ar) <= permTownClear) {
+                            permTownClearHex[row][col] = true;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -67,6 +102,12 @@ final class FeatureRules {
         }
         if (ctx.townReserved != null && ctx.townReserved[row][col]) {
             return "town";
+        }
+        if (inPermTownClear(HexCoords.qOf(col, row), row)) {
+            return "town";
+        }
+        if (ctx.buildingLand != null && !ctx.buildingLand[row][col]) {
+            return "land";
         }
         if (ctx.propBlocked != null && ctx.propBlocked[row][col]) {
             return "blocked";
@@ -158,6 +199,25 @@ final class FeatureRules {
     boolean inTownClear(int q, int r) {
         for (TownSite site : ctx.townSites) {
             if (townDistance(site, q, r) <= townClear) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean inPermTownClear(int q, int r) {
+        if (permTownClear <= 0) {
+            return false;
+        }
+        if (permTownClearHex != null) {
+            int col = HexCoords.colOf(q, r);
+            if (col < 0 || r < 0 || col >= ctx.width || r >= ctx.height) {
+                return false;
+            }
+            return permTownClearHex[r][col];
+        }
+        for (TownSite site : ctx.townSites) {
+            if (townDistance(site, q, r) <= permTownClear) {
                 return true;
             }
         }

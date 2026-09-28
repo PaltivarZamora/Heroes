@@ -208,7 +208,7 @@ final class FeatureSpread {
                     if (rules.inGap(col, row)) {
                         continue;
                     }
-                    if (rules.inTownClear(q, row)) {
+                    if (rules.inPermTownClear(q, row)) {
                         continue;
                     }
                     if (rules.stealsLastApproach(ctx.objects, col, row, virtual)) {
@@ -217,6 +217,7 @@ final class FeatureSpread {
                 }
                 placed++;
                 if (write) {
+                    prop = WorldProps.withPlacementFlip(ctx, col, row, prop, ctx.propDefs);
                     ctx.propSeeds[row][col] = prop;
                     if (prop.blocker()) {
                         ctx.propBlocked[row][col] = true;

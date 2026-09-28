@@ -788,7 +788,18 @@ final class WallsLayer {
             return false;
         }
         int variant = 1 + rng.nextInt(Math.max(1, prop.variantCount()));
-        ctx.propSeeds[row][col] = new WorldProps.Seed(prop.id(), variant, prop.fileName(), prop.blocker());
+        if (ctx.propDefs == null || ctx.propDefs.isEmpty()) {
+            ctx.propDefs = WorldProps.all(ctx.data);
+        }
+        WorldProps.Seed seed =
+                new WorldProps.Seed(
+                        prop.id(),
+                        variant,
+                        prop.fileName(),
+                        prop.blocker(),
+                        false,
+                        prop.renderScale());
+        ctx.propSeeds[row][col] = WorldProps.withPlacementFlip(ctx, col, row, seed, ctx.propDefs);
         ctx.propBlocked[row][col] = prop.blocker();
         return true;
     }

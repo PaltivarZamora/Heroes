@@ -1,5 +1,6 @@
 package com.heroesofyendor;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,7 +22,7 @@ public class MapController {
      * @param townTypes comma-separated town type ids per player (own-type towns)
      */
     @GetMapping("/api/map/test-grid")
-    public TestGridResponse testGrid(
+    public ResponseEntity<TestGridResponse> testGrid(
             @RequestParam(required = false) Integer seed,
             @RequestParam(required = false) Integer players,
             @RequestParam(required = false) Integer size,
@@ -32,10 +33,18 @@ public class MapController {
                         ? MapSize.fromNewMapSize(referenceData, size)
                         : MapSize.fromLabel(referenceData, mapSize);
         int[] playerTownTypes = parseTownTypes(townTypes);
-        if (seed == null) {
-            return TestGrid.generate(referenceData, players, resolved, playerTownTypes);
+        TestGridResponse body =
+                seed == null
+                        ? TestGrid.generate(referenceData, players, resolved, playerTownTypes)
+                        : TestGrid.generate(
+                                seed, referenceData, players, resolved, playerTownTypes);
+        String timing = TestGrid.consumeServerTiming();
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
+        if (timing != null && !timing.isEmpty()) {
+            builder.header("Server-Timing", timing)
+                    .header("Access-Control-Expose-Headers", "Server-Timing");
         }
-        return TestGrid.generate(seed, referenceData, players, resolved, playerTownTypes);
+        return builder.body(body);
     }
 
     private static int[] parseTownTypes(String raw) {

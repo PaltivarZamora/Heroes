@@ -1,6 +1,9 @@
 import type { Axial } from './hero'
 import { footprintBottomRow, footprintHexes } from '../combat/footprint'
 import type { FeatureRow, ReferenceCatalog } from '../town/catalog'
+import { featureForResource } from '../town/catalog'
+import type { MapObjectData } from './types'
+import { mapObjectResourceId, mapObjectTownTypeId } from './types'
 
 /**
  * Town map footprint: 2×1. Stored position is the entry (drawbridge) hex.
@@ -281,4 +284,52 @@ export function featureForNoticeBoard(
     return undefined
   }
   return catalog.feature.find((row) => row.feature_type_id === typeId)
+}
+
+/** Resolve catalog `feature` row for a world-map object (for draw-time render_scale). */
+export function featureRowForMapObject(
+  catalog: ReferenceCatalog | null | undefined,
+  data: MapObjectData,
+  opts?: {
+    townTypeId?: number | null
+    chestLevel?: number
+  },
+): FeatureRow | undefined {
+  switch (data.kind) {
+    case 'town':
+      return featureForTownType(
+        catalog,
+        opts?.townTypeId ?? mapObjectTownTypeId(data) ?? null,
+      )
+    case 'fountain':
+      return featureForFountain(catalog)
+    case 'chest': {
+      const level =
+        opts?.chestLevel ??
+        (typeof data.level === 'number' ? data.level : 0)
+      return featureForChest(catalog, level)
+    }
+    case 'sign':
+      return featureForSign(catalog)
+    case 'library':
+      return featureForWorldLibrary(catalog)
+    case 'hanger':
+      return featureForWorldHanger(catalog)
+    case 'dock':
+      return featureForWorldDock(catalog)
+    case 'recruits':
+      return featureForWorldRecruits(catalog)
+    case 'notice_board':
+      return featureForNoticeBoard(catalog)
+    case 'mine':
+    case 'pickup': {
+      const resourceId = mapObjectResourceId(data)
+      if (resourceId == null) {
+        return undefined
+      }
+      return featureForResource(catalog, resourceId, data.kind)
+    }
+    default:
+      return undefined
+  }
 }

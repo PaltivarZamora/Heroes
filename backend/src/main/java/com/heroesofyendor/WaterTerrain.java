@@ -2,12 +2,15 @@ package com.heroesofyendor;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Random;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -24,6 +27,8 @@ final class WaterTerrain {
     private static final TypeReference<List<Object>> LIST_TYPE = new TypeReference<>() {};
     private static final int MIN_BLOB = 25;
     private static final int SEPARATION = 10;
+    /** Unstamped cells are treated as far from any lake. */
+    private static final int SEP_UNSET = 100;
 
     static final class Lake {
         final int id;
@@ -87,8 +92,18 @@ final class WaterTerrain {
     }
 
     static void paint(MapGenContext ctx) {
+        long tAll = System.nanoTime();
+        long tCarve = 0;
+        long tShallow = 0;
+        long tIslands = 0;
+        long tPaint = 0;
+        long tGap = 0;
+        long tBeach = 0;
+        long tRepair = 0;
         Random rng = ctx.rngFor("terrain");
         Rules rules = load(ctx);
+        ctx.waterTerrainRules = rules;
+        ctx.terrainExclusionPairs = rules.exclusionPairs;
         int h = ctx.height;
         int w = ctx.width;
         ctx.cells = new HexTerrain[h][w];
@@ -105,6 +120,7 @@ final class WaterTerrain {
 
         double chance = percent(ctx, "water_chance", 50);
         ctx.waterRolled = rng.nextDouble() * 100 < chance;
+        int[][] sep = newSeparationGrid(h, w);
         if (ctx.waterRolled && rules.water != null) {
             int lakes = lakeCount(ctx);
             int[] lakeSize = MapConfig.cfgIntRange(ctx.data, "lake_size", ctx.sizeName(), 150, 400);
@@ -112,22 +128,92 @@ final class WaterTerrain {
             int inset = Math.max(0, MapConfig.cfgInt(ctx.data, "lake_edge_inset", ctx.sizeName(), 4));
             int[] beachW = MapConfig.cfgIntRange(ctx.data, "beach_width", ctx.sizeName(), 1, 5);
             int deepInset = inset + shallowW[1] + beachW[1];
-            List<int[]> taken = new ArrayList<>();
+            List<int[]> shallowStamp = new ArrayList<>();
             for (int n = 0; n < lakes; n++) {
-                Lake lake = carveLake(ctx, rng, rules, locked, taken, nextId, lakeSize, shallowW, deepInset);
-                if (lake == null) {
+                long t0 = System.nanoTime();
+                DeepCarve carved =
+                        carveLakeDeep(
+                                ctx,
+                                rng,
+                                rules,
+                                locked,
+                                sep,
+                                nextId,
+                                lakeSize,
+                                deepInset);
+                tCarve += (System.nanoTime() - t0) / 1_000_000L;
+                if (carved == null) {
                     break;
                 }
+                Lake lake = carved.lake;
+                int width =
+                        shallowW[0]
+                                + (shallowW[1] > shallowW[0]
+                                        ? rng.nextInt(shallowW[1] - shallowW[0] + 1)
+                                        : 0);
+                long t1 = System.nanoTime();
+                maybeIsland(ctx, rng, rules, locked, nextId, lake, carved.deep);
+                tIslands += (System.nanoTime() - t1) / 1_000_000L;
+                long t2 = System.nanoTime();
+                lake.shallow =
+                        shallowRing(
+                                ctx,
+                                rules,
+                                locked,
+                                nextId,
+                                lake,
+                                width,
+                                carved.deep,
+                                shallowStamp);
+                tShallow += (System.nanoTime() - t2) / 1_000_000L;
+                List<int[]> stamp = new ArrayList<>(carved.deep);
+                stamp.addAll(shallowStamp);
+                shallowStamp.clear();
+                stampSeparation(sep, ctx, stamp);
                 ctx.lakes.add(lake);
+            }
+            if (rules.water != null && rules.shallow != null) {
+                cleanupLakeSpecks(ctx, rules, locked);
             }
         }
 
+        long tLandStart = System.nanoTime();
         paintLand(ctx, rng, rules, locked, nextId);
+        tPaint = (System.nanoTime() - tLandStart) / 1_000_000L;
+        long tGapStart = System.nanoTime();
+        fillGaps(ctx, rng, rules, locked, nextId);
         absorb(ctx, rules, locked);
+        tGap = (System.nanoTime() - tGapStart) / 1_000_000L;
+        long tBeachStart = System.nanoTime();
         if (ctx.waterRolled && rules.beach != null && rules.water != null) {
-            paintBeaches(ctx, rng, rules, locked, nextId);
+            paintBeaches(ctx, rng, rules, locked, nextId, buildShoreIndex(ctx, rules));
         }
+        tBeach = (System.nanoTime() - tBeachStart) / 1_000_000L;
+        long tRepairStart = System.nanoTime();
         repair(ctx, rules, locked);
+        tRepair = (System.nanoTime() - tRepairStart) / 1_000_000L;
+        int excludedAdj = countExcluded(ctx);
+        MapGenTimings.current()
+                .layerDetail(
+                        "L1",
+                        "carve="
+                                + tCarve
+                                + " shallow="
+                                + tShallow
+                                + " islands="
+                                + tIslands
+                                + " beaches="
+                                + tBeach
+                                + " paint="
+                                + tPaint
+                                + " gap="
+                                + tGap
+                                + " repair="
+                                + tRepair
+                                + " exclusionPairs="
+                                + rules.exclusionPairs
+                                + " excludedAdj="
+                                + excludedAdj);
         ctx.placeable = new ArrayList<>();
         for (int row = 0; row < h; row++) {
             for (int col = 0; col < w; col++) {
@@ -145,8 +231,74 @@ final class WaterTerrain {
                         + ctx.lakes.size()
                         + " islands="
                         + ctx.islands.size()
+                        + " exclusionPairs="
+                        + rules.exclusionPairs
+                        + " excludedAdj="
+                        + excludedAdj
                         + " passable="
                         + ctx.placeable.size());
+    }
+
+    private static final class DeepCarve {
+        final Lake lake;
+        final List<int[]> deep;
+
+        DeepCarve(Lake lake, List<int[]> deep) {
+            this.lake = lake;
+            this.deep = deep;
+        }
+    }
+
+    private static int[][] newSeparationGrid(int height, int width) {
+        int[][] sep = new int[height][width];
+        for (int row = 0; row < height; row++) {
+            Arrays.fill(sep[row], SEP_UNSET);
+        }
+        return sep;
+    }
+
+    private static boolean sepOk(int[][] sep, int row, int col) {
+        return sep[row][col] >= SEPARATION;
+    }
+
+    /** Mark lake water and shallow as taken; propagate distance up to {@link #SEPARATION}. */
+    private static void stampSeparation(int[][] sep, MapGenContext ctx, List<int[]> hexes) {
+        Queue<int[]> q = new ArrayDeque<>();
+        for (int[] hex : hexes) {
+            int col = hex[0];
+            int row = hex[1];
+            if (sep[row][col] > 0) {
+                sep[row][col] = 0;
+                q.add(hex);
+            }
+        }
+        while (!q.isEmpty()) {
+            int[] cur = q.poll();
+            int dist = sep[cur[1]][cur[0]];
+            if (dist >= SEPARATION - 1) {
+                continue;
+            }
+            int qax = HexCoords.qOf(cur[0], cur[1]);
+            for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                int nr = cur[1] + d[1];
+                int ncol = HexCoords.colOf(qax + d[0], nr);
+                if (!inside(ctx, ncol, nr)) {
+                    continue;
+                }
+                int next = dist + 1;
+                if (sep[nr][ncol] > next) {
+                    sep[nr][ncol] = next;
+                    q.add(new int[] {ncol, nr});
+                }
+            }
+        }
+    }
+
+    private static Rules rulesFor(MapGenContext ctx) {
+        if (ctx.waterTerrainRules instanceof Rules rules) {
+            return rules;
+        }
+        return load(ctx);
     }
 
     /** Extra island loot, then the S9-24 report. Guards are stamped for the client. */
@@ -220,22 +372,20 @@ final class WaterTerrain {
         }
     }
 
-    private static Lake carveLake(
+    private static DeepCarve carveLakeDeep(
             MapGenContext ctx,
             Random rng,
             Rules rules,
             boolean[][] locked,
-            List<int[]> taken,
+            int[][] sep,
             int[] nextId,
             int[] lakeSize,
-            int[] shallowW,
             int deepInset) {
         int want = lakeSize[0] + (lakeSize[1] > lakeSize[0] ? rng.nextInt(lakeSize[1] - lakeSize[0] + 1) : 0);
-        int width = shallowW[0] + (shallowW[1] > shallowW[0] ? rng.nextInt(shallowW[1] - shallowW[0] + 1) : 0);
         List<int[]> seeds = new ArrayList<>();
         for (int row = deepInset; row < ctx.height - deepInset; row++) {
             for (int col = deepInset; col < ctx.width - deepInset; col++) {
-                if (ctx.cells[row][col] != null || tooClose(ctx, col, row, taken)) {
+                if (ctx.cells[row][col] != null || !sepOk(sep, row, col)) {
                     continue;
                 }
                 seeds.add(new int[] {col, row});
@@ -245,13 +395,18 @@ final class WaterTerrain {
         int tries = Math.min(24, seeds.size());
         for (int i = 0; i < tries; i++) {
             int[] seed = seeds.get(i);
-            List<int[]> blob = growSet(ctx, seed, want, (col, row) ->
-                    col >= deepInset
-                            && row >= deepInset
-                            && col < ctx.width - deepInset
-                            && row < ctx.height - deepInset
-                            && ctx.cells[row][col] == null
-                            && !tooClose(ctx, col, row, taken));
+            List<int[]> blob =
+                    growSet(
+                            ctx,
+                            seed,
+                            want,
+                            (col, row) ->
+                                    col >= deepInset
+                                            && row >= deepInset
+                                            && col < ctx.width - deepInset
+                                            && row < ctx.height - deepInset
+                                            && ctx.cells[row][col] == null
+                                            && sepOk(sep, row, col));
             if (blob.size() < lakeSize[0] && blob.size() < want) {
                 continue;
             }
@@ -265,12 +420,9 @@ final class WaterTerrain {
                 ctx.chunkIds[hex[1]][hex[0]] = chunk;
                 ctx.lakeIds[hex[1]][hex[0]] = lake.id;
                 locked[hex[1]][hex[0]] = true;
-                taken.add(hex);
             }
             lake.deep = blob.size();
-            maybeIsland(ctx, rng, rules, locked, nextId, lake, blob);
-            lake.shallow = shallowRing(ctx, rules, locked, nextId, lake, width, taken);
-            return lake;
+            return new DeepCarve(lake, blob);
         }
         return null;
     }
@@ -291,7 +443,7 @@ final class WaterTerrain {
         int[] rimR = MapConfig.cfgIntRange(ctx.data, "island_beach_rim", ctx.sizeName(), 1, 2);
         int target = sizeR[0] + (sizeR[1] > sizeR[0] ? rng.nextInt(sizeR[1] - sizeR[0] + 1) : 0);
         int rim = rimR[0] + (rimR[1] > rimR[0] ? rng.nextInt(rimR[1] - rimR[0] + 1) : 0);
-        int[][] dist = waterDistance(ctx, lake.id);
+        int[][] dist = waterDistance(ctx, lake.id, water);
         List<int[]> pocket = new ArrayList<>();
         for (int[] hex : water) {
             if (dist[hex[1]][hex[0]] >= 3) {
@@ -401,19 +553,16 @@ final class WaterTerrain {
             int[] nextId,
             Lake lake,
             int width,
-            List<int[]> taken) {
+            List<int[]> lakeDeep,
+            List<int[]> shallowOut) {
         if (rules.shallow == null || width <= 0) {
             return 0;
         }
         int chunk = nextId[0]++;
         int painted = 0;
         Set<String> edge = new HashSet<>();
-        for (int row = 0; row < ctx.height; row++) {
-            for (int col = 0; col < ctx.width; col++) {
-                if (ctx.lakeIds[row][col] == lake.id) {
-                    edge.add(col + "," + row);
-                }
-            }
+        for (int[] hex : lakeDeep) {
+            edge.add(hex[0] + "," + hex[1]);
         }
         for (int layer = 0; layer < width; layer++) {
             List<int[]> add = new ArrayList<>();
@@ -441,7 +590,7 @@ final class WaterTerrain {
                 ctx.cells[hex[1]][hex[0]] = rules.shallow;
                 ctx.chunkIds[hex[1]][hex[0]] = chunk;
                 locked[hex[1]][hex[0]] = true;
-                taken.add(hex);
+                shallowOut.add(hex);
                 edge.add(hex[0] + "," + hex[1]);
                 painted++;
             }
@@ -459,8 +608,7 @@ final class WaterTerrain {
                 }
             }
         }
-        int guard = ctx.width * ctx.height;
-        while (remaining >= MIN_BLOB && guard-- > 0) {
+        for (int pass = 0; pass < 512 && remaining >= MIN_BLOB; pass++) {
             int[] seed = randomEmpty(ctx, rng);
             if (seed == null) {
                 break;
@@ -503,54 +651,74 @@ final class WaterTerrain {
                 }
             }
         }
-        fillGaps(ctx, rng, rules, locked, nextId);
     }
 
     private static void fillGaps(
             MapGenContext ctx, Random rng, Rules rules, boolean[][] locked, int[] nextId) {
-        boolean progress = true;
-        while (progress) {
-            progress = false;
-            for (int row = 0; row < ctx.height; row++) {
-                for (int col = 0; col < ctx.width; col++) {
-                    if (ctx.cells[row][col] != null) {
+        List<int[]> empty = new ArrayList<>();
+        for (int row = 0; row < ctx.height; row++) {
+            for (int col = 0; col < ctx.width; col++) {
+                if (ctx.cells[row][col] == null) {
+                    empty.add(new int[] {col, row});
+                }
+            }
+        }
+        while (!empty.isEmpty()) {
+            boolean progress = false;
+            List<int[]> nextEmpty = new ArrayList<>();
+            for (int[] cell : empty) {
+                int col = cell[0];
+                int row = cell[1];
+                if (ctx.cells[row][col] != null) {
+                    continue;
+                }
+                HexTerrain adopt = null;
+                int chunk = 0;
+                int q = HexCoords.qOf(col, row);
+                for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                    int nr = row + d[1];
+                    int ncol = HexCoords.colOf(q + d[0], nr);
+                    if (!inside(ctx, ncol, nr) || ctx.cells[nr][ncol] == null) {
                         continue;
                     }
-                    HexTerrain adopt = null;
-                    int chunk = 0;
-                    int q = HexCoords.qOf(col, row);
-                    for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
-                        int nr = row + d[1];
-                        int ncol = HexCoords.colOf(q + d[0], nr);
-                        if (!inside(ctx, ncol, nr) || ctx.cells[nr][ncol] == null) {
-                            continue;
-                        }
-                        HexTerrain candidate = ctx.cells[nr][ncol];
-                        if (rules.water != null && candidate.id() == rules.water.id()) {
-                            continue;
-                        }
-                        if (fits(ctx, rules, candidate, col, row)) {
-                            adopt = candidate;
-                            chunk = ctx.chunkIds[nr][ncol];
-                            break;
-                        }
+                    HexTerrain candidate = ctx.cells[nr][ncol];
+                    if (rules.water != null && candidate.id() == rules.water.id()) {
+                        continue;
                     }
-                    if (adopt == null) {
-                        adopt = buffer(ctx, rules, neighborTerrains(ctx, col, row), rng);
-                        chunk = nextId[0]++;
-                        ctx.terrainBuffers++;
+                    if (fits(ctx, rules, candidate, col, row)) {
+                        adopt = candidate;
+                        chunk = ctx.chunkIds[nr][ncol];
+                        break;
                     }
+                }
+                if (adopt != null) {
                     ctx.cells[row][col] = adopt;
                     ctx.chunkIds[row][col] = chunk;
                     progress = true;
+                } else {
+                    nextEmpty.add(cell);
                 }
             }
+            if (!progress) {
+                for (int[] cell : nextEmpty) {
+                    int col = cell[0];
+                    int row = cell[1];
+                    if (ctx.cells[row][col] != null) {
+                        continue;
+                    }
+                    HexTerrain adopt = buffer(ctx, rules, neighborTerrains(ctx, col, row), rng);
+                    ctx.cells[row][col] = adopt;
+                    ctx.chunkIds[row][col] = nextId[0]++;
+                    ctx.terrainBuffers++;
+                }
+                break;
+            }
+            empty = nextEmpty;
         }
     }
 
     private static void absorb(MapGenContext ctx, Rules rules, boolean[][] locked) {
-        int guard = ctx.width * ctx.height;
-        while (guard-- > 0) {
+        for (int pass = 0; pass < 64; pass++) {
             boolean changed = false;
             for (int row = 0; row < ctx.height; row++) {
                 for (int col = 0; col < ctx.width; col++) {
@@ -595,27 +763,126 @@ final class WaterTerrain {
         }
     }
 
+    /**
+     * Remove star-shaped deep/shallow specks on lake edges (deterministic row-major
+     * scan; no RNG). Runs after lake carve, before land paint and beaches.
+     */
+    private static void cleanupLakeSpecks(MapGenContext ctx, Rules rules, boolean[][] locked) {
+        int deepId = rules.water.id();
+        int shallowId = rules.shallow.id();
+        List<int[]> toShallow = new ArrayList<>();
+        List<int[]> toDeep = new ArrayList<>();
+        for (int row = 0; row < ctx.height; row++) {
+            for (int col = 0; col < ctx.width; col++) {
+                HexTerrain self = ctx.cells[row][col];
+                if (self == null) {
+                    continue;
+                }
+                int id = self.id();
+                if (id != deepId && id != shallowId) {
+                    continue;
+                }
+                if (ctx.lakeIds[row][col] <= 0) {
+                    continue;
+                }
+                int same = 0;
+                int q = HexCoords.qOf(col, row);
+                boolean allOtherWaterShallow = true;
+                boolean allOtherWaterDeep = true;
+                boolean hasWaterNeighbor = false;
+                for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                    int nr = row + d[1];
+                    int ncol = HexCoords.colOf(q + d[0], nr);
+                    if (!inside(ctx, ncol, nr)) {
+                        continue;
+                    }
+                    HexTerrain neighbor = ctx.cells[nr][ncol];
+                    if (neighbor == null) {
+                        continue;
+                    }
+                    int nid = neighbor.id();
+                    if (nid == id) {
+                        same++;
+                    }
+                    if (nid == deepId || nid == shallowId) {
+                        hasWaterNeighbor = true;
+                        if (nid != shallowId) {
+                            allOtherWaterShallow = false;
+                        }
+                        if (nid != deepId) {
+                            allOtherWaterDeep = false;
+                        }
+                    }
+                }
+                if (same > 1) {
+                    continue;
+                }
+                if (id == deepId && allOtherWaterShallow && hasWaterNeighbor) {
+                    toShallow.add(new int[] {col, row});
+                } else if (id == shallowId && allOtherWaterDeep && hasWaterNeighbor) {
+                    toDeep.add(new int[] {col, row});
+                }
+            }
+        }
+        for (int[] hex : toShallow) {
+            ctx.cells[hex[1]][hex[0]] = rules.shallow;
+        }
+        for (int[] hex : toDeep) {
+            ctx.cells[hex[1]][hex[0]] = rules.water;
+        }
+    }
+
+    private static Map<Integer, List<int[]>> buildShoreIndex(MapGenContext ctx, Rules rules) {
+        Map<Integer, List<int[]>> byLake = new HashMap<>();
+        if (rules.shallow == null) {
+            return byLake;
+        }
+        int shallowId = rules.shallow.id();
+        for (int row = 0; row < ctx.height; row++) {
+            for (int col = 0; col < ctx.width; col++) {
+                HexTerrain terrain = ctx.cells[row][col];
+                if (terrain == null || terrain.id() != shallowId) {
+                    continue;
+                }
+                int lakeId = adjacentLakeId(ctx, col, row);
+                if (lakeId <= 0) {
+                    continue;
+                }
+                byLake.computeIfAbsent(lakeId, k -> new ArrayList<>()).add(new int[] {col, row});
+            }
+        }
+        return byLake;
+    }
+
+    private static int adjacentLakeId(MapGenContext ctx, int col, int row) {
+        int q = HexCoords.qOf(col, row);
+        for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+            int nr = row + d[1];
+            int ncol = HexCoords.colOf(q + d[0], nr);
+            if (!inside(ctx, ncol, nr)) {
+                continue;
+            }
+            int id = ctx.lakeIds[nr][ncol];
+            if (id > 0) {
+                return id;
+            }
+        }
+        return 0;
+    }
+
     private static void paintBeaches(
-            MapGenContext ctx, Random rng, Rules rules, boolean[][] locked, int[] nextId) {
+            MapGenContext ctx,
+            Random rng,
+            Rules rules,
+            boolean[][] locked,
+            int[] nextId,
+            Map<Integer, List<int[]>> shoreByLake) {
         int[] pct = MapConfig.cfgIntRange(ctx.data, "beach_shore_pct", ctx.sizeName(), 25, 50);
         int shorePct = pct[0] + (pct[1] > pct[0] ? rng.nextInt(pct[1] - pct[0] + 1) : 0);
         int[] widths = MapConfig.cfgIntRange(ctx.data, "beach_width", ctx.sizeName(), 1, 5);
         for (Lake lake : ctx.lakes) {
-            List<int[]> shore = new ArrayList<>();
-            for (int row = 0; row < ctx.height; row++) {
-                for (int col = 0; col < ctx.width; col++) {
-                    if (ctx.cells[row][col] == null || rules.shallow == null) {
-                        continue;
-                    }
-                    if (ctx.cells[row][col].id() != rules.shallow.id()) {
-                        continue;
-                    }
-                    if (touchesLakeWater(ctx, col, row, lake.id)) {
-                        shore.add(new int[] {col, row});
-                    }
-                }
-            }
-            if (shore.isEmpty()) {
+            List<int[]> shore = shoreByLake.get(lake.id);
+            if (shore == null || shore.isEmpty()) {
                 continue;
             }
             List<int[]> coast = traceCoast(ctx, shore, lake.id);
@@ -721,43 +988,46 @@ final class WaterTerrain {
     }
 
     private static void repair(MapGenContext ctx, Rules rules, boolean[][] locked) {
-        for (int pass = 0; pass < 8; pass++) {
-            boolean changed = false;
-            for (int row = 0; row < ctx.height; row++) {
-                for (int col = 0; col < ctx.width; col++) {
-                    HexTerrain self = ctx.cells[row][col];
-                    if (self == null) {
-                        continue;
-                    }
-                    int q = HexCoords.qOf(col, row);
-                    for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
-                        int nr = row + d[1];
-                        int ncol = HexCoords.colOf(q + d[0], nr);
-                        if (!inside(ctx, ncol, nr) || ctx.cells[nr][ncol] == null) {
+        if (!rules.excluded.isEmpty()) {
+            for (int pass = 0; pass < 8; pass++) {
+                boolean changed = false;
+                for (int row = 0; row < ctx.height; row++) {
+                    for (int col = 0; col < ctx.width; col++) {
+                        HexTerrain self = ctx.cells[row][col];
+                        if (self == null) {
                             continue;
                         }
-                        if (!excluded(rules, self.id(), ctx.cells[nr][ncol].id())) {
-                            continue;
+                        int q = HexCoords.qOf(col, row);
+                        for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                            int nr = row + d[1];
+                            int ncol = HexCoords.colOf(q + d[0], nr);
+                            if (!inside(ctx, ncol, nr) || ctx.cells[nr][ncol] == null) {
+                                continue;
+                            }
+                            if (!excluded(rules, self.id(), ctx.cells[nr][ncol].id())) {
+                                continue;
+                            }
+                            int fixCol = col;
+                            int fixRow = row;
+                            if (locked[row][col] && !locked[nr][ncol]) {
+                                fixCol = ncol;
+                                fixRow = nr;
+                            } else if (locked[row][col]) {
+                                continue;
+                            }
+                            HexTerrain next =
+                                    buffer(ctx, rules, neighborTerrains(ctx, fixCol, fixRow), null);
+                            if (next == null || next.id() == ctx.cells[fixRow][fixCol].id()) {
+                                continue;
+                            }
+                            ctx.cells[fixRow][fixCol] = next;
+                            changed = true;
                         }
-                        int fixCol = col;
-                        int fixRow = row;
-                        if (locked[row][col] && !locked[nr][ncol]) {
-                            fixCol = ncol;
-                            fixRow = nr;
-                        } else if (locked[row][col]) {
-                            continue;
-                        }
-                        HexTerrain next = buffer(ctx, rules, neighborTerrains(ctx, fixCol, fixRow), null);
-                        if (next == null || next.id() == ctx.cells[fixRow][fixCol].id()) {
-                            continue;
-                        }
-                        ctx.cells[fixRow][fixCol] = next;
-                        changed = true;
                     }
                 }
-            }
-            if (!changed) {
-                break;
+                if (!changed) {
+                    break;
+                }
             }
         }
         for (Map.Entry<Integer, Integer> req : rules.requires.entrySet()) {
@@ -998,7 +1268,7 @@ final class WaterTerrain {
     }
 
     private static int countExcluded(MapGenContext ctx) {
-        Rules rules = load(ctx);
+        Rules rules = rulesFor(ctx);
         int n = 0;
         if (ctx.cells == null) {
             return 0;
@@ -1179,35 +1449,50 @@ final class WaterTerrain {
         }
     }
 
-    private static int[][] waterDistance(MapGenContext ctx, int lakeId) {
+    /** Distance from the lake shore (in water hexes only). */
+    private static int[][] waterDistance(MapGenContext ctx, int lakeId, List<int[]> lakeDeep) {
         int[][] dist = new int[ctx.height][ctx.width];
         for (int row = 0; row < ctx.height; row++) {
-            java.util.Arrays.fill(dist[row], -1);
+            Arrays.fill(dist[row], -1);
         }
-        List<int[]> queue = new ArrayList<>();
-        for (int row = 0; row < ctx.height; row++) {
-            for (int col = 0; col < ctx.width; col++) {
-                if (ctx.lakeIds[row][col] != lakeId) {
-                    dist[row][col] = 0;
-                    queue.add(new int[] {col, row});
-                }
+        Queue<int[]> q = new ArrayDeque<>();
+        for (int[] hex : lakeDeep) {
+            int col = hex[0];
+            int row = hex[1];
+            if (touchesNonLakeWater(ctx, col, row, lakeId)) {
+                dist[row][col] = 0;
+                q.add(hex);
             }
         }
-        int qi = 0;
-        while (qi < queue.size()) {
-            int[] cur = queue.get(qi++);
-            int q = HexCoords.qOf(cur[0], cur[1]);
+        while (!q.isEmpty()) {
+            int[] cur = q.poll();
+            int qax = HexCoords.qOf(cur[0], cur[1]);
             for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
                 int nr = cur[1] + d[1];
-                int ncol = HexCoords.colOf(q + d[0], nr);
-                if (!inside(ctx, ncol, nr) || dist[nr][ncol] >= 0 || ctx.lakeIds[nr][ncol] != lakeId) {
+                int ncol = HexCoords.colOf(qax + d[0], nr);
+                if (!inside(ctx, ncol, nr) || ctx.lakeIds[nr][ncol] != lakeId || dist[nr][ncol] >= 0) {
                     continue;
                 }
                 dist[nr][ncol] = dist[cur[1]][cur[0]] + 1;
-                queue.add(new int[] {ncol, nr});
+                q.add(new int[] {ncol, nr});
             }
         }
         return dist;
+    }
+
+    private static boolean touchesNonLakeWater(MapGenContext ctx, int col, int row, int lakeId) {
+        int q = HexCoords.qOf(col, row);
+        for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+            int nr = row + d[1];
+            int ncol = HexCoords.colOf(q + d[0], nr);
+            if (!inside(ctx, ncol, nr)) {
+                return true;
+            }
+            if (ctx.lakeIds[nr][ncol] != lakeId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean touchesWater(MapGenContext ctx, int col, int row, int lakeId, Set<String> inside) {
@@ -1230,16 +1515,6 @@ final class WaterTerrain {
 
     private static boolean touchesLakeWater(MapGenContext ctx, int col, int row, int lakeId) {
         return waterNeighbor(ctx, col, row, lakeId) != null;
-    }
-
-    private static boolean tooClose(MapGenContext ctx, int col, int row, List<int[]> taken) {
-        int q = HexCoords.qOf(col, row);
-        for (int[] hex : taken) {
-            if (HexCoords.hexDistance(q, row, HexCoords.qOf(hex[0], hex[1]), hex[1]) < SEPARATION) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -1705,6 +1980,11 @@ final class WaterTerrain {
             }
         }
         rules.exclusionPairs = rules.excluded.size();
+        if (rules.exclusionPairs > 0) {
+            log.debug(
+                    "terrain exclusions loaded: {} symmetric pairs from terrain.exclusion",
+                    rules.exclusionPairs);
+        }
         Object rawReq = MapConfig.mapCfg(ctx.data, "terrain_requires", ctx.sizeName());
         if (rawReq instanceof Map<?, ?> map && !map.isEmpty()) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
@@ -1766,17 +2046,7 @@ final class WaterTerrain {
     }
 
     private static List<Integer> idList(Object raw, Rules rules) {
-        Object value = raw;
-        if (value != null && !(value instanceof List<?>) && !(value instanceof Map<?, ?>)) {
-            String text = value.toString().trim();
-            if (text.startsWith("[")) {
-                try {
-                    value = JSON.readValue(text, LIST_TYPE);
-                } catch (Exception ignored) {
-                    value = List.of();
-                }
-            }
-        }
+        Object value = decodeJsonList(raw);
         if (!(value instanceof List<?> list)) {
             return List.of();
         }
@@ -1788,5 +2058,26 @@ final class WaterTerrain {
             }
         }
         return out;
+    }
+
+    private static Object decodeJsonList(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof List<?> || raw instanceof Map<?, ?>) {
+            return raw;
+        }
+        String text = raw.toString().trim();
+        if (text.isEmpty() || "{}".equals(text)) {
+            return List.of();
+        }
+        if (text.startsWith("[")) {
+            try {
+                return JSON.readValue(text, LIST_TYPE);
+            } catch (Exception ignored) {
+                return List.of();
+            }
+        }
+        return raw;
     }
 }

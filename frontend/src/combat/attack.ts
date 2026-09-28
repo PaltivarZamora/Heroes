@@ -1658,6 +1658,8 @@ export function resolveAttack(
   hitColor: HitFlashColor
   /** Updated hero mana from Tower Wizard/Sorcerer passives (when changed). */
   heroes?: CombatHeroes
+  /** Inquisitor Grand: extra turn after a kill (when triggered). */
+  grantExtraTurn?: boolean
 } | null {
   const before = battle.stacks.find((row) => row.id === attackerId)
   if (!before || before.qty <= 0) {
@@ -2932,7 +2934,7 @@ export function resolveAttack(
       ),
     )
   }
-  let nextBattle = { ...battle, stacks, unitDeaths, roundUnitDeaths }
+  let nextBattle: CombatBattle = { ...battle, stacks, unitDeaths, roundUnitDeaths }
   // Pyromaniac SPIRAL: Fire trail after the primary hit (no AOE damage).
   if (spec.shape === 'spiral' && atk) {
     const spiral = applySpiralFireFromAttacker(

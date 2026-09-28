@@ -275,7 +275,11 @@ final class Pockets {
             if (prop == null) {
                 continue;
             }
-            ctx.propSeeds[hex[1]][hex[0]] = prop;
+            if (ctx.propDefs == null || ctx.propDefs.isEmpty()) {
+                ctx.propDefs = WorldProps.all(ctx.data);
+            }
+            ctx.propSeeds[hex[1]][hex[0]] =
+                    WorldProps.withPlacementFlip(ctx, hex[0], hex[1], prop, ctx.propDefs);
             pocket.fillers++;
         }
     }
@@ -482,6 +486,10 @@ final class Pockets {
         for (int i = 0; i < toBlock.size(); i++) {
             int[] hex = toBlock.get(i);
             WorldProps.Seed prop = ringProps.get(i);
+            if (ctx.propDefs == null || ctx.propDefs.isEmpty()) {
+                ctx.propDefs = WorldProps.all(ctx.data);
+            }
+            prop = WorldProps.withPlacementFlip(ctx, hex[0], hex[1], prop, ctx.propDefs);
             ctx.propSeeds[hex[1]][hex[0]] = prop;
             ctx.propBlocked[hex[1]][hex[0]] = prop.blocker();
             mark(ctx, hex[0], hex[1], id, tier, false, true, false);

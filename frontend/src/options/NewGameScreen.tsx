@@ -29,6 +29,7 @@ import {
 type NewGameScreenProps = {
   onClose: () => void
   onStartGame: (config: GameConfig) => void
+  generating?: boolean
 }
 
 function heroLabel(
@@ -54,7 +55,11 @@ function parseHeroValue(value: string): number | null {
   return Number.isInteger(id) && id > 0 ? id : null
 }
 
-export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
+export function NewGameScreen({
+  onClose,
+  onStartGame,
+  generating = false,
+}: NewGameScreenProps) {
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const bootDefaults = defaultGameConfig(catalog)
   const [mapSize, setMapSize] = useState<MapSizeName>(bootDefaults.mapSize)
@@ -150,6 +155,9 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
   }
 
   const onStart = () => {
+    if (generating) {
+      return
+    }
     const config = assembleGameConfig(
       {
         mapSize,
@@ -307,8 +315,8 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
           <p className="options-empty">Loading hero types…</p>
         ) : null}
         <div className="options-actions">
-          <button type="button" onClick={onStart}>
-            Start Game
+          <button type="button" onClick={onStart} disabled={generating}>
+            {generating ? 'Generating map…' : 'Start Game'}
           </button>
           <button type="button" onClick={onClose}>
             Cancel

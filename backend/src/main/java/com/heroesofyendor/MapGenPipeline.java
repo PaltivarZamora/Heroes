@@ -34,6 +34,7 @@ final class MapGenPipeline {
             throw e;
         }
         long ms = (System.nanoTime() - t0) / 1_000_000L;
+        MapGenTimings.current().layer(name, ms);
         if (ms >= STEP_WARN_MS) {
             log.warn("Map gen layer '{}' took {} ms (slow)", name, ms);
         } else {

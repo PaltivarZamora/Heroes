@@ -1445,7 +1445,7 @@ function EmptySlotActions({
 function LibraryFilledActions({
   current,
   next,
-  catalog,
+  catalog: _catalog,
   hasActedToday,
   buildCost,
   onUpgrade,

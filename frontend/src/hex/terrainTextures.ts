@@ -14,6 +14,8 @@ const AXIAL_NEIGHBORS = [
   { q: 0, r: 1 },
 ] as const
 
+const chunkUpscaleWarned = new Set<string>()
+
 export type TerrainTextureVariant = {
   texture: Texture
   weight: number
@@ -241,9 +243,12 @@ export function buildTerrainChunkDecors(
       sourceH: sampled.sourceH,
     }
     if (boundsW > sampled.sourceW * 1.05 || boundsH > sampled.sourceH * 1.05) {
-      console.warn(
-        `[hex] chunk texture "${terrain}" footprint ${Math.round(boundsW)}×${Math.round(boundsH)} exceeds source ${sampled.sourceW}×${sampled.sourceH} — upscaling`,
-      )
+      if (!chunkUpscaleWarned.has(terrain)) {
+        chunkUpscaleWarned.add(terrain)
+        console.warn(
+          `[hex] chunk texture "${terrain}" footprint ${Math.round(boundsW)}×${Math.round(boundsH)} exceeds source ${sampled.sourceW}×${sampled.sourceH} — upscaling`,
+        )
+      }
     }
     for (const cell of component) {
       byHex.set(coordKey(cell.q, cell.r), decor)

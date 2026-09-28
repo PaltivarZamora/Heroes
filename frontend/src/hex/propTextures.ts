@@ -183,6 +183,81 @@ export function layoutHexFootprintSprite(
   }
 }
 
+/** Deterministic [0, 1) from map seed + hex + salt (world prop jitter). */
+export function propVisualUnit01(
+  mapSeed: number,
+  q: number,
+  r: number,
+  salt: string,
+): number {
+  let h = (mapSeed | 0) ^ Math.imul(q | 0, 0x9e3779b1) ^ Math.imul(r | 0, 0x85ebca6b)
+  for (let i = 0; i < salt.length; i++) {
+    h = Math.imul(h ^ salt.charCodeAt(i), 0x5bd1e995)
+  }
+  h ^= h >>> 13
+  h = Math.imul(h, 0x5bd1e995)
+  h ^= h >>> 15
+  return (h >>> 0) / 4294967296
+}
+
+export type WorldPropVisualOpts = {
+  renderScale: number
+  wall: boolean
+  mapSeed: number
+  q: number
+  r: number
+  flipped: boolean
+}
+
+/** Visual-only scale + x shift (blocking unchanged). Call after base layout, before flip. */
+export function applyWorldPropVisual(
+  sprite: Sprite,
+  opts: Omit<WorldPropVisualOpts, 'flipped'> & { hexWidth: number },
+): void {
+  let scaleMult = opts.renderScale > 0 ? opts.renderScale : 1
+  let dx = 0
+  if (opts.wall) {
+    const uScale = propVisualUnit01(opts.mapSeed, opts.q, opts.r, 'wall-prop-scale')
+    const uX = propVisualUnit01(opts.mapSeed, opts.q, opts.r, 'wall-prop-x')
+    scaleMult *= 1 + (uScale * 2 - 1) * 0.08
+    dx = (uX * 2 - 1) * 0.1 * opts.hexWidth
+  }
+  sprite.scale.x *= scaleMult
+  sprite.scale.y *= scaleMult
+  sprite.x += dx
+}
+
+export type PropCullBox = { cullX: number; cullY: number; cullMargin: number }
+
+/**
+ * World-map prop draw order: layout → render_scale → wall jitter → flip (last).
+ */
+export function layoutWorldMapPropSprite(
+  sprite: Sprite,
+  texture: Texture,
+  cx: number,
+  cy: number,
+  hexWidth: number,
+  hexHeight: number,
+  opts: WorldPropVisualOpts,
+): PropCullBox {
+  layoutHexFootprintSprite(
+    sprite,
+    texture,
+    [{ x: cx, y: cy }],
+    [{ x: cx, y: cy }],
+    hexWidth,
+    hexHeight,
+  )
+  applyWorldPropVisual(sprite, { ...opts, hexWidth })
+  if (opts.flipped) {
+    sprite.scale.x = -Math.abs(sprite.scale.x)
+  }
+  const jitterScale = opts.wall ? 1.08 : 1
+  const margin = hexWidth * (opts.renderScale > 0 ? opts.renderScale : 1) * jitterScale * 1.5
+  return { cullX: sprite.x, cullY: sprite.y, cullMargin: margin }
+}
+
 /** 1×1 hex fit — same constants as {@link addPropSprite}. */
 export function layoutHexSprite(
   sprite: Sprite,
@@ -200,4 +275,45 @@ export function layoutHexSprite(
     hexWidth,
     hexHeight,
   )
+}
+
+/** Visual-only scale for world-map features (no jitter). After base layout, before flip. */
+export function applyWorldFeatureRenderScale(
+  sprite: Sprite,
+  renderScale: number,
+): void {
+  const mult = renderScale > 0 ? renderScale : 1
+  sprite.scale.x *= mult
+  sprite.scale.y *= mult
+}
+
+export function worldMapFeatureCullMargin(
+  hexWidth: number,
+  renderScale: number,
+  sizeFactor = 1,
+): number {
+  return hexWidth * (renderScale > 0 ? renderScale : 1) * sizeFactor * 1.5
+}
+
+/**
+ * World-map feature draw order: layout (incl. kind tweaks) → render_scale → flip.
+ * `cullAnchorWorld` is the grounded anchor in world space (not getBounds()).
+ */
+export function finishWorldMapFeatureSprite(
+  sprite: Sprite,
+  renderScale: number,
+  flipped: boolean,
+  cullAnchorWorld: { x: number; y: number },
+  hexWidth: number,
+  cullSizeFactor = 1,
+): PropCullBox {
+  applyWorldFeatureRenderScale(sprite, renderScale)
+  if (flipped) {
+    sprite.scale.x = -Math.abs(sprite.scale.x)
+  }
+  return {
+    cullX: cullAnchorWorld.x,
+    cullY: cullAnchorWorld.y,
+    cullMargin: worldMapFeatureCullMargin(hexWidth, renderScale, cullSizeFactor),
+  }
 }

@@ -60,6 +60,10 @@ function asWorldTile(raw: TileData): TileData {
     prop_id?: unknown
     prop_variant?: unknown
     prop_file?: unknown
+    prop_flipped?: unknown
+    propFlipped?: unknown
+    prop_render_scale?: unknown
+    propRenderScale?: unknown
     has_road?: unknown
     road_mask?: unknown
     zone_id?: unknown
@@ -100,6 +104,20 @@ function asWorldTile(raw: TileData): TileData {
     typeof propFileRaw === 'string' && propFileRaw.trim() !== ''
       ? propFileRaw.trim().replace(/\.png$/i, '')
       : null
+  const propFlipRaw = raw.propFlipped ?? extra.propFlipped ?? extra.prop_flipped
+  const propFlipped =
+    propFlipRaw === true ||
+    propFlipRaw === 1 ||
+    String(propFlipRaw ?? '')
+      .trim()
+      .toLowerCase() === 'true'
+      ? true
+      : undefined
+  const propScaleRaw = raw.propRenderScale ?? extra.propRenderScale ?? extra.prop_render_scale
+  const propScaleN =
+    propScaleRaw == null || propScaleRaw === '' ? NaN : Number(propScaleRaw)
+  const propRenderScale =
+    Number.isFinite(propScaleN) && propScaleN > 0 ? propScaleN : undefined
   const roadFlag: unknown = raw.hasRoad ?? extra.has_road
   const hasRoad =
     roadFlag === true ||
@@ -127,6 +145,8 @@ function asWorldTile(raw: TileData): TileData {
         ? Math.floor(propVariantN)
         : null,
     propFile,
+    propFlipped,
+    propRenderScale,
     hasRoad: hasRoad || undefined,
     roadMask: Number.isFinite(maskN) ? Math.floor(maskN) : undefined,
     zoneId: (() => {
@@ -252,11 +272,14 @@ export function resetExplored(): void {
   explored = new Set()
 }
 
+let activeGridFetch: AbortController | null = null
+
 export async function fetchTestGrid(
   seed?: number,
   players?: number,
   mapSize?: string | number,
   townTypes?: string,
+  signal?: AbortSignal,
 ): Promise<TestGridResponse> {
   try {
     const params = new URLSearchParams()
@@ -275,7 +298,10 @@ export async function fetchTestGrid(
       params.set('townTypes', townTypes.trim())
     }
     const query = params.toString() ? `?${params.toString()}` : ''
-    const response = await fetch(`/api/map/test-grid${query}`)
+    const response = await fetch(`/api/map/test-grid${query}`, { signal })
+    if (signal?.aborted) {
+      return { seed: 0, tiles: [], objects: [] }
+    }
     if (!response.ok) {
       console.log('Failed to fetch test grid:', response.status)
       return { seed: 0, tiles: [], objects: [] }
@@ -305,8 +331,39 @@ export async function fetchTestGrid(
     resetExplored()
     return payload
   } catch (error) {
+    if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      return { seed: 0, tiles: [], objects: [] }
+    }
     console.log('Failed to fetch test grid:', error)
     return { seed: 0, tiles: [], objects: [] }
+  }
+}
+
+/** One in-flight grid request; cancels any previous call (e.g. Strict Mode remount). */
+export async function fetchTestGridOnce(
+  seed?: number,
+  players?: number,
+  mapSize?: string | number,
+  townTypes?: string,
+  signal?: AbortSignal,
+): Promise<TestGridResponse> {
+  activeGridFetch?.abort()
+  const own = new AbortController()
+  activeGridFetch = own
+  const linked = signal
+  if (linked) {
+    if (linked.aborted) {
+      own.abort()
+    } else {
+      linked.addEventListener('abort', () => own.abort(), { once: true })
+    }
+  }
+  try {
+    return await fetchTestGrid(seed, players, mapSize, townTypes, own.signal)
+  } finally {
+    if (activeGridFetch === own) {
+      activeGridFetch = null
+    }
   }
 }
 
