@@ -163,6 +163,19 @@ export function librarySlotKind(
   return 'locked'
 }
 
+/**
+ * World Library cards are always "open" (no building tier). Same green / yellow
+ * / grey rules as {@link librarySlotKind} for a max-level town Library.
+ */
+export function worldLibrarySlotKind(
+  abilityId: number,
+  visiting: { classId: number | null; learned: number[] } | null,
+  catalog: ReferenceCatalog,
+  disciplineId: number,
+): LibrarySlotKind {
+  return librarySlotKind(3, 1, abilityId, visiting, catalog, disciplineId)
+}
+
 export function goldCostForLevel(levelId: number): Record<number, number> {
   return { [GOLD_RESOURCE_ID]: libraryGoldCost(getCachedCatalog(), levelId) }
 }

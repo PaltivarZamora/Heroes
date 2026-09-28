@@ -17,6 +17,7 @@ import {
   unitRetaliation,
   wallDamageMult,
 } from '../town/catalog'
+import { moveKindForUnit } from './movement'
 import {
   combatSpeedChangedSides,
   isHeroStack,
@@ -250,6 +251,43 @@ export function attackDistance(from: CombatStack, to: CombatStack): number {
     { q: from.q, r: from.r },
     { q: to.q, r: to.r },
   )
+}
+
+/**
+ * Melee delivery for Hover ×0.5: unit max_range ≤ 1 (damage type ignored).
+ * charge_line is always melee even if the row still has a long max_range.
+ */
+export function isMeleeDelivery(
+  unit: UnitRow | null | undefined,
+): boolean {
+  if (unitAttackShape(unit).shape === 'charge_line') {
+    return true
+  }
+  return (unit?.max_range ?? 1) <= 1
+}
+
+/**
+ * Walker melee → Hover: ×0.5 (same floor pipeline as min-range penalty).
+ * Flyer/Hover melee and all ranged attacks are full damage.
+ */
+export function hoverGroundMeleePenaltyApplies(
+  striker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  const targetUnit = unitById(catalog, target.unitId)
+  if (moveKindForUnit(targetUnit, catalog) !== 'hover') {
+    return false
+  }
+  const strikerUnit = unitById(catalog, striker.unitId)
+  // Null move_type = non-mover, not a Walker.
+  if (strikerUnit?.move_type_id == null) {
+    return false
+  }
+  if (moveKindForUnit(strikerUnit, catalog) !== 'ground') {
+    return false
+  }
+  return isMeleeDelivery(strikerUnit)
 }
 
 /**
@@ -932,9 +970,10 @@ type BlockLabel = 'Defense' | 'Resistance'
 
 /**
  * Per attacking creature roll, then one mitigation pass (BR 4-12):
- * roll → dmg_pct → min_range penalty (summed) → flat Defense/Resistance ×
- * defender qty (floor ≥ connecting attackers) → hero % → incoming buff % →
- * stack outgoing % → per-connecting crit → bonus_dmg_tag/mult on the total.
+ * roll → dmg_pct → min_range penalty → Hover ground-melee ×0.5 (summed) →
+ * flat Defense/Resistance × defender qty (floor ≥ connecting attackers) →
+ * hero % → incoming buff % → stack outgoing % → per-connecting crit →
+ * bonus_dmg_tag/mult on the total.
  */
 export function computeStrikeDamage(
   striker: CombatStack,
@@ -946,8 +985,15 @@ export function computeStrikeDamage(
   defenderHero?: Hero,
   attackerHero?: Hero,
   mods?: StrikeMods,
-): { damage: number; blocked: number; rangePenalty: boolean; crits: number } {
+): {
+  damage: number
+  blocked: number
+  rangePenalty: boolean
+  hoverPenalty: boolean
+  crits: number
+} {
   const strikerUnit = unitById(catalog, striker.unitId)
+  const hoverPenalty = hoverGroundMeleePenaltyApplies(striker, target, catalog)
   const kind = mods?.damageKind ?? damageKindOf(strikerUnit)
   const minBase =
     mods?.minDmg != null
@@ -1017,6 +1063,9 @@ export function computeStrikeDamage(
       if (rangePenalty) {
         raw = Math.floor(raw * minRangePenaltyMult(catalog))
       }
+      if (hoverPenalty) {
+        raw = Math.floor(raw * 0.5)
+      }
     }
     totalRaw += raw
   }
@@ -1025,6 +1074,7 @@ export function computeStrikeDamage(
       damage: 0,
       blocked: 0,
       rangePenalty: guaranteed != null ? false : rangePenalty,
+      hoverPenalty: guaranteed != null ? false : hoverPenalty,
       crits: 0,
     }
   }
@@ -1062,6 +1112,7 @@ export function computeStrikeDamage(
     damage,
     blocked,
     rangePenalty: guaranteed != null ? false : rangePenalty,
+    hoverPenalty: guaranteed != null ? false : hoverPenalty,
     crits,
   }
 }
@@ -1081,6 +1132,7 @@ export function applyStrike(
   blocked: number
   blockBy: BlockLabel | null
   rangePenalty: boolean
+  hoverPenalty: boolean
   killed: number
   crits: number
   parried: boolean
@@ -1106,6 +1158,7 @@ export function applyStrike(
       blocked: 0,
       blockBy: null,
       rangePenalty,
+      hoverPenalty: false,
       killed: 0,
       crits: 0,
       parried: false,
@@ -1125,6 +1178,7 @@ export function applyStrike(
       blocked: 0,
       blockBy: null,
       rangePenalty: false,
+      hoverPenalty: false,
       killed: 0,
       crits: 0,
       parried: true,
@@ -1144,6 +1198,7 @@ export function applyStrike(
       blocked: 0,
       blockBy: null,
       rangePenalty: false,
+      hoverPenalty: false,
       killed: 0,
       crits: 0,
       parried: false,
@@ -1161,6 +1216,7 @@ export function applyStrike(
       blocked: 0,
       blockBy: null,
       rangePenalty: false,
+      hoverPenalty: false,
       killed: 0,
       crits: 0,
       parried: false,
@@ -1183,6 +1239,7 @@ export function applyStrike(
       blocked: 0,
       blockBy: null,
       rangePenalty: false,
+      hoverPenalty: false,
       killed: 0,
       crits: 0,
       parried: false,
@@ -1265,6 +1322,7 @@ export function applyStrike(
       blocked: 0,
       blockBy: null,
       rangePenalty: false,
+      hoverPenalty: false,
       killed: applied.killed,
       crits: 0,
       parried: false,
@@ -1325,7 +1383,8 @@ export function applyStrike(
     damage: applied.negated === true ? 0 : damage,
     blocked: applied.negated === true ? 0 : blocked,
     blockBy: applied.negated === true ? null : blocked > 0 ? label : null,
-    rangePenalty,
+    rangePenalty: rolled.rangePenalty,
+    hoverPenalty: rolled.hoverPenalty,
     killed: applied.killed,
     crits: applied.negated === true ? 0 : rolled.crits,
     parried: false,
@@ -1505,6 +1564,7 @@ function hitLogLine(
   blindMiss = false,
   fortifyNegated = false,
   missChancePct?: number,
+  hoverPenalty = false,
 ): string {
   const atkName = stackName(catalog, striker.unitId)
   const defName = stackName(catalog, targetBefore.unitId)
@@ -1535,6 +1595,9 @@ function hitLogLine(
   }
   if (rangePenalty) {
     notes.push('range penalty')
+  }
+  if (hoverPenalty) {
+    notes.push('−50% (Hover)')
   }
   if (blockBy) {
     notes.push(`${blocked} blocked by ${blockBy}`)
@@ -2089,6 +2152,7 @@ export function resolveAttack(
               struck.blindMiss === true,
               struck.fortifyNegated === true,
               struck.missChancePct,
+              struck.hoverPenalty,
             ),
           )
           if (struck.spellReflectSource) {
@@ -2449,6 +2513,7 @@ export function resolveAttack(
           struck.blindMiss === true,
           struck.fortifyNegated === true,
           struck.missChancePct,
+          struck.hoverPenalty,
         ),
       )
       if (struck.spellReflectSource) {

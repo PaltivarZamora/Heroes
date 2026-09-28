@@ -9,7 +9,7 @@ import java.util.Random;
 
 /**
  * Organic terrain chunks for the hex/`terrain` wedge system.
- * Contiguous blobs (~3–9 × 3–9) of one seedable {@link HexTerrain}.
+ * Contiguous blobs (~5–10 × 5–10) of one seedable {@link HexTerrain}.
  * Solid fills automatically keep "cores" from touching foreign cores — the
  * shared edge hexes are always border hexes of their own chunk.
  * Post-paint {@link #absorbOrphans} removes 1-hex islands and thin tips that
@@ -20,8 +20,8 @@ import java.util.Random;
  */
 final class TerrainChunks {
 
-    private static final int MIN_SPAN = 3;
-    private static final int MAX_SPAN = 9;
+    private static final int MIN_SPAN = 5;
+    private static final int MAX_SPAN = 10;
     /** Smallest blob we will seed; leftovers below this merge via fillGaps. */
     private static final int MIN_BLOB_CELLS = MIN_SPAN * MIN_SPAN;
 

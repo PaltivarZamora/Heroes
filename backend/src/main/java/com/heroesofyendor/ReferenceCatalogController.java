@@ -51,7 +51,11 @@ public class ReferenceCatalogController {
         body.put("prop", decodeRows(referenceData.rows("prop"), resourceNameToId));
         body.put("feature_type", decodeRows(referenceData.rows("feature_type"), resourceNameToId));
         body.put("feature", decodeRows(referenceData.rows("feature"), resourceNameToId));
+        body.put("sign_text", decodeRows(referenceData.rows("sign_text"), resourceNameToId));
+        body.put("quest_text", decodeRows(referenceData.rows("quest_text"), resourceNameToId));
         body.put("app_config", decodeRows(referenceData.rows("app_config"), resourceNameToId));
+        body.put("map_config", decodeRows(referenceData.rows("map_config"), resourceNameToId));
+        body.put("ai_config", decodeRows(referenceData.rows("ai_config"), resourceNameToId));
         body.put("ai_arch", decodeRows(referenceData.rows("ai_arch"), resourceNameToId));
         body.put("ai_arch_weight", decodeRows(referenceData.rows("ai_arch_weight"), resourceNameToId));
         body.put("levels", decodeRows(referenceData.rows("levels"), resourceNameToId));

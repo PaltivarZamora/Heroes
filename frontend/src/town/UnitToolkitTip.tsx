@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ReferenceCatalog } from './catalog'
-import { unitById } from './catalog'
+import { moveTypeDisplay, unitById } from './catalog'
 import type { CombatBattle, CombatSide, CombatStack } from '../combat/battle'
 import {
   stackCombatSpeed,
@@ -38,6 +38,7 @@ export function sessionUnitToolkitRows(
   }
   const minDmg = unit.min_dmg
   const maxDmg = unit.max_dmg
+  const move = moveTypeDisplay(catalog, unit.move_type_id)
   return [
     { label: 'name', value: unit.name },
     { label: 'qty', value: String(qty) },
@@ -55,6 +56,16 @@ export function sessionUnitToolkitRows(
       label: 'speed',
       value: unit.speed == null ? '—' : String(unit.speed),
     },
+    ...(move
+      ? [
+          {
+            label: 'move',
+            value: move.description
+              ? `${move.name} — ${move.description}`
+              : move.name,
+          },
+        ]
+      : []),
   ]
 }
 
@@ -98,6 +109,19 @@ export function unitToolkitFromCombatStats(
           ? '—'
           : String(stackCombatSpeed(stack, catalog) ?? unit.speed),
     },
+    ...(() => {
+      const move = moveTypeDisplay(catalog, unit.move_type_id)
+      return move
+        ? [
+            {
+              label: 'move',
+              value: move.description
+                ? `${move.name} — ${move.description}`
+                : move.name,
+            },
+          ]
+        : []
+    })(),
   ]
 }
 

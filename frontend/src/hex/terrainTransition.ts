@@ -17,7 +17,7 @@
 
 import type { Hex } from 'honeycomb-grid'
 import type { ReferenceCatalog, TerrainRow } from '../town/catalog'
-import { hexTerrainByName, requiredBufferBetween } from '../town/catalog'
+import { hexTerrainByName, requiredBufferBetween, roadMoveCost } from '../town/catalog'
 import { getTile } from './world'
 
 /**
@@ -78,7 +78,8 @@ export function baseTerrainForHex(
 }
 
 /**
- * Movement cost for a hex: the assigned (chunk / base) terrain's move_cost only.
+ * Movement cost for a hex: road overlay first (flat `road_move_cost`), else
+ * the assigned (chunk / base) terrain's move_cost only.
  * Mixed-hex wedges do not average or override — permanent rule.
  */
 export function hexTransitionMoveCost(
@@ -86,12 +87,16 @@ export function hexTransitionMoveCost(
   q: number,
   r: number,
 ): number | null {
+  const tile = getTile(q, r)
+  if (tile?.hasRoad) {
+    return roadMoveCost(catalog)
+  }
   if (!catalog) {
-    return getTile(q, r)?.movementCostMultiplier ?? null
+    return tile?.movementCostMultiplier ?? null
   }
   const row = assignedTerrainForHex(catalog, q, r)
   if (!row) {
-    return getTile(q, r)?.movementCostMultiplier ?? null
+    return tile?.movementCostMultiplier ?? null
   }
   if (row.is_blocker || row.move_cost == null) {
     return null

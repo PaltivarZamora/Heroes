@@ -195,9 +195,10 @@ export function findPathOnBoard(
 /**
  * Lowest-cost path between two passable hexes. Returns null if none.
  * Path includes start and destination. Cost is paid on entering a hex.
- * `blocked` is other heroes, towns, and resource nodes for this path only —
- * not baked into terrain. Callers omit the destination when that hex is a
- * walk-onto target (town, mine, or pickup). Heroes are never omitted.
+ * `blocked` is other heroes, towns, resource nodes, and fountains for this
+ * path only — not baked into terrain. Callers omit the destination when that
+ * hex is a walk-onto target (town, mine, pickup, or fountain). Heroes are
+ * never omitted.
  * Default stays in explored fog; pass `ignoreFog` only for rare
  * debug/admin tools — player movement never ignores fog.
  */

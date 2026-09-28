@@ -20,6 +20,7 @@ import type { ReferenceCatalog, UnitCombatAbilities, UnitRetaliation } from '../
 import {
   conditionName,
   debugSeeEnemyStats,
+  moveTypeDisplay,
   unitById,
   unitRetaliation,
 } from '../town/catalog'
@@ -644,6 +645,7 @@ export function inspectHoverRows(
     battle,
     heroes,
   )
+  const move = moveTypeDisplay(catalog, unit.move_type_id)
   return [
     { label: 'name', value: unit.name },
     { label: 'qty', value: `${stack.qty} / ${stack.startingQty}` },
@@ -664,6 +666,16 @@ export function inspectHoverRows(
           ? '—'
           : String(stackCombatSpeed(stack, catalog) ?? unit.speed),
     },
+    ...(move
+      ? [
+          {
+            label: 'move',
+            value: move.description
+              ? `${move.name} — ${move.description}`
+              : move.name,
+          },
+        ]
+      : []),
     ...effects,
   ]
 }
@@ -695,6 +707,7 @@ export function inspectRows(
     heroes,
   )
   const maxHp = stackMaxHealth(stack, catalog)
+  const move = moveTypeDisplay(catalog, unit.move_type_id)
   return [
     { label: 'name', value: unit.name },
     { label: 'qty', value: `${stack.qty} / ${stack.startingQty}` },
@@ -711,6 +724,16 @@ export function inspectRows(
       value: formatModified(stackResistance(stack, catalog), mit?.resistance ?? 0),
     },
     { label: 'speed', value: unit.speed == null ? '—' : String(stackCombatSpeed(stack, catalog) ?? unit.speed) },
+    ...(move
+      ? [
+          {
+            label: 'move_type',
+            value: move.description
+              ? `${move.name} — ${move.description}`
+              : move.name,
+          },
+        ]
+      : []),
     { label: 'retaliation', value: formatRetaliation(unitRetaliation(unit, catalog)) },
     { label: 'stationary', value: unit.stationary ? 'true' : 'false' },
     ...(unit.abilities.killOnOverflow

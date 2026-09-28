@@ -41,6 +41,16 @@ function coordKey(q: number, r: number): string {
   return `${q},${r}`
 }
 
+function asZoneIdList(value: unknown): number[] | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+  const ids = value
+    .map((item) => Number(item))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  return ids.length > 0 ? ids : null
+}
+
 function asWorldTile(raw: TileData): TileData {
   const extra = raw as TileData & {
     isBlocked?: unknown
@@ -50,6 +60,20 @@ function asWorldTile(raw: TileData): TileData {
     prop_id?: unknown
     prop_variant?: unknown
     prop_file?: unknown
+    has_road?: unknown
+    road_mask?: unknown
+    zone_id?: unknown
+    wall_gap?: unknown
+    wall_borders?: unknown
+    wallBorders?: unknown
+    pocket_id?: unknown
+    pocket_tier?: unknown
+    pocket_entrance?: unknown
+    pocketId?: unknown
+    pocketTier?: unknown
+    pocketEntrance?: unknown
+    island_guard_tier?: unknown
+    islandGuardTier?: unknown
   }
   const costRaw = extra.movementCostMultiplier ?? extra.movement_cost_multiplier
   const cost =
@@ -76,6 +100,15 @@ function asWorldTile(raw: TileData): TileData {
     typeof propFileRaw === 'string' && propFileRaw.trim() !== ''
       ? propFileRaw.trim().replace(/\.png$/i, '')
       : null
+  const roadFlag: unknown = raw.hasRoad ?? extra.has_road
+  const hasRoad =
+    roadFlag === true ||
+    roadFlag === 1 ||
+    String(roadFlag ?? '')
+      .trim()
+      .toLowerCase() === 'true'
+  const maskRaw = raw.roadMask ?? extra.road_mask
+  const maskN = maskRaw == null || maskRaw === '' ? NaN : Number(maskRaw)
   return {
     q: raw.q,
     r: raw.r,
@@ -94,6 +127,45 @@ function asWorldTile(raw: TileData): TileData {
         ? Math.floor(propVariantN)
         : null,
     propFile,
+    hasRoad: hasRoad || undefined,
+    roadMask: Number.isFinite(maskN) ? Math.floor(maskN) : undefined,
+    zoneId: (() => {
+      const id = raw.zoneId ?? extra.zone_id
+      const n = id == null || id === '' ? NaN : Number(id)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })(),
+    wallGap:
+      raw.wallGap === true ||
+      extra.wall_gap === true ||
+      extra.wall_gap === 1 ||
+      String(extra.wall_gap ?? '')
+        .trim()
+        .toLowerCase() === 'true' ||
+      undefined,
+    wallBorders: asZoneIdList(raw.wallBorders ?? extra.wall_borders),
+    pocketId: (() => {
+      const id = raw.pocketId ?? extra.pocket_id
+      const n = id == null || id === '' ? NaN : Number(id)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    pocketTier: (() => {
+      const id = raw.pocketTier ?? extra.pocket_tier
+      const n = id == null || id === '' ? NaN : Number(id)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    pocketEntrance:
+      raw.pocketEntrance === true ||
+      extra.pocket_entrance === true ||
+      extra.pocket_entrance === 1 ||
+      String(extra.pocket_entrance ?? '')
+        .trim()
+        .toLowerCase() === 'true' ||
+      undefined,
+    islandGuardTier: (() => {
+      const id = raw.islandGuardTier ?? extra.island_guard_tier
+      const n = id == null || id === '' ? NaN : Number(id)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
   }
 }
 
@@ -180,10 +252,29 @@ export function resetExplored(): void {
   explored = new Set()
 }
 
-export async function fetchTestGrid(seed?: number): Promise<TestGridResponse> {
+export async function fetchTestGrid(
+  seed?: number,
+  players?: number,
+  mapSize?: string | number,
+  townTypes?: string,
+): Promise<TestGridResponse> {
   try {
-    const query =
-      seed != null && seed > 0 ? `?seed=${encodeURIComponent(String(seed))}` : ''
+    const params = new URLSearchParams()
+    if (seed != null && seed > 0) {
+      params.set('seed', String(seed))
+    }
+    if (players != null && players > 0) {
+      params.set('players', String(players))
+    }
+    if (typeof mapSize === 'number' && mapSize > 0) {
+      params.set('size', String(mapSize))
+    } else if (typeof mapSize === 'string' && mapSize.trim()) {
+      params.set('mapSize', mapSize.trim())
+    }
+    if (townTypes != null && townTypes.trim()) {
+      params.set('townTypes', townTypes.trim())
+    }
+    const query = params.toString() ? `?${params.toString()}` : ''
     const response = await fetch(`/api/map/test-grid${query}`)
     if (!response.ok) {
       console.log('Failed to fetch test grid:', response.status)
@@ -198,6 +289,9 @@ export async function fetchTestGrid(seed?: number): Promise<TestGridResponse> {
     if (!Array.isArray(payload.objects)) {
       payload.objects = []
     }
+    if (!Array.isArray(payload.roads)) {
+      payload.roads = []
+    }
     console.log(
       'Fetched test grid:',
       payload.tiles.length,
@@ -205,6 +299,8 @@ export async function fetchTestGrid(seed?: number): Promise<TestGridResponse> {
       payload.seed,
       payload.objects.length,
       'objects',
+      payload.roads.length,
+      'road paths',
     )
     resetExplored()
     return payload

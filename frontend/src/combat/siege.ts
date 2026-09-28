@@ -3,7 +3,12 @@ import { neighborHexes } from '../hex/pathfinding'
 import type { GameSession } from '../session/types'
 import { slotStatesForTown } from '../session/accessors'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { retaliationCharges, unitAttackShape, unitById } from '../town/catalog'
+import {
+  moveTypeValue,
+  retaliationCharges,
+  unitAttackShape,
+  unitById,
+} from '../town/catalog'
 import { warRoomSiegeMult } from '../town/townUniques'
 import {
   COMBAT_COLUMNS,
@@ -124,19 +129,13 @@ function unitIsAirborne(
   if (unit?.move_type_id == null) {
     return false
   }
-  const name =
-    catalog.move_type
-      .find((row) => row.id === unit.move_type_id)
-      ?.name.toLowerCase() ?? ''
-  if (name.includes('fly') || name.includes('hover')) {
-    return true
-  }
-  return unit.move_type_id === 2 || unit.move_type_id === 4
+  const value = moveTypeValue(catalog, unit.move_type_id).toLowerCase()
+  return value.includes('fly') || value.includes('hover')
 }
 
 /**
  * Open if destroyed, if any unit stands on the Drawbridge hex, on the
- * lowered moat/bridge span, or if a ground/submerge creature stands in
+ * lowered moat/bridge span, or if a ground creature stands in
  * the single interior hex directly behind the gate.
  */
 export function isDrawbridgeOpen(

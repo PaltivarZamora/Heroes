@@ -3,6 +3,7 @@ import { findPathOnBoard, reachableWithin } from '../hex/pathfinding'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
   DUMP_REMAINING_MOVE_COST,
+  moveTypeValue,
   unitAttackShape,
   unitById,
   unitIsStationary,
@@ -31,7 +32,7 @@ export {
   stackOccupyingHex,
 } from './occupancy'
 
-export type MoveKind = 'ground' | 'flying' | 'hover' | 'submerge'
+export type MoveKind = 'ground' | 'flying' | 'hover'
 
 export function hexKey(q: number, r: number): string {
   return occupancyKey(q, r)
@@ -41,29 +42,17 @@ export function moveKindForUnit(
   unit: UnitRow | null | undefined,
   catalog: ReferenceCatalog,
 ): MoveKind {
+  // Null move_type_id = non-mover (stationary). Not an error; pathing is
+  // gated by unitIsStationary. Treat as ground for any residual cost checks.
   if (unit?.move_type_id == null) {
     return 'ground'
   }
-  const name =
-    catalog.move_type
-      .find((row) => row.id === unit.move_type_id)
-      ?.name.toLowerCase() ?? ''
-  if (name.includes('fly')) {
+  // Prefer move_type.value (stable under id renumber).
+  const value = moveTypeValue(catalog, unit.move_type_id).toLowerCase()
+  if (value.includes('fly')) {
     return 'flying'
   }
-  if (name.includes('hover')) {
-    return 'hover'
-  }
-  if (name.includes('submerge')) {
-    return 'submerge'
-  }
-  if (unit.move_type_id === 2) {
-    return 'flying'
-  }
-  if (unit.move_type_id === 3) {
-    return 'submerge'
-  }
-  if (unit.move_type_id === 4) {
+  if (value.includes('hover')) {
     return 'hover'
   }
   return 'ground'
@@ -75,9 +64,6 @@ export function moveVerb(kind: MoveKind): string {
   }
   if (kind === 'hover') {
     return 'hovered'
-  }
-  if (kind === 'submerge') {
-    return 'submerged'
   }
   return 'moved'
 }
@@ -103,6 +89,13 @@ export function combatEnterCost(
   if (!tile) {
     return null
   }
+  // Naval water (BR S9-12): Walkers cannot enter; Fly/Hover traverse.
+  if (tile.navalKind === 'water') {
+    if (kind === 'flying' || kind === 'hover') {
+      return 1
+    }
+    return null
+  }
   const blocked =
     tile.blocked ||
     (movementBlockKeys?.has(hexKey(tile.q, tile.r)) ?? false)
@@ -118,18 +111,13 @@ export function combatEnterCost(
   if (isAirborne(kind)) {
     return 1
   }
-  if (kind === 'submerge') {
-    if (tile.terrain === 'Shallows') {
-      return 1
-    }
-    return tile.movementCostMultiplier
-  }
   return tile.movementCostMultiplier
 }
 
 /**
  * `is_blocked` / GE movement blockers are never a legal landing, for any
  * move type — Flying/Hover may path over them but cannot stop there.
+ * Naval water: only Hover may land (Flyers pass through only).
  */
 export function combatCanLandOn(
   tile: CombatTile | undefined,
@@ -139,6 +127,9 @@ export function combatCanLandOn(
 ): boolean {
   if (!tile) {
     return false
+  }
+  if (tile.navalKind === 'water') {
+    return kind === 'hover'
   }
   if (
     tile.blocked ||

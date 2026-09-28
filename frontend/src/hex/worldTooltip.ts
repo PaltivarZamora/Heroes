@@ -16,6 +16,15 @@ export function worldHoverTooltipText(
     hero?: Hero
     mob?: Mob
     node?: Node
+    fountain?: boolean
+    chestName?: string | null
+    signText?: string | null
+    libraryText?: string | null
+    hanger?: boolean
+    dock?: boolean
+    emptyBoat?: boolean
+    recruits?: boolean
+    noticeBoardText?: string | null
   },
 ): string | null {
   if (hit.town) {
@@ -35,6 +44,33 @@ export function worldHoverTooltipText(
   }
   if (hit.mob) {
     return mobLabel(session, catalog, hit.mob)
+  }
+  if (hit.chestName) {
+    return hit.chestName
+  }
+  if (hit.libraryText) {
+    return hit.libraryText
+  }
+  if (hit.noticeBoardText) {
+    return hit.noticeBoardText
+  }
+  if (hit.hanger) {
+    return 'Hanger: fly to any of your towns with a Hanger'
+  }
+  if (hit.dock) {
+    return 'Dock: Buy a boat'
+  }
+  if (hit.recruits) {
+    return 'Recruits for Hire'
+  }
+  if (hit.emptyBoat) {
+    return 'Boat'
+  }
+  if (hit.signText) {
+    return hit.signText
+  }
+  if (hit.fountain) {
+    return "Fountain restores Hero's Mana and/or Energy"
   }
   if (hit.node) {
     const resource = resourceById(hit.node.resource_id)

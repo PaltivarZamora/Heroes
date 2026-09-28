@@ -253,10 +253,9 @@ function parseMoveKinds(raw: unknown): MoveKind[] {
       continue
     }
     const n = entry.trim().toLowerCase()
-    if (n === 'ground') {
+    if (n === 'ground' || n === 'submerge' || n === 'walker') {
+      // Legacy "submerge" filter strings map to Walker (ground).
       out.push('ground')
-    } else if (n === 'submerge') {
-      out.push('submerge')
     } else if (n === 'flying' || n === 'fly') {
       out.push('flying')
     } else if (n === 'hover') {
@@ -614,7 +613,7 @@ function fallbackGroundEffectRow(templateId: number): GroundEffectRow | null {
       description: null,
       mechanic: {
         type: 'trigger_zone',
-        trigger_move_types: ['Ground', 'Submerge'],
+        trigger_move_types: ['Ground'],
         effect: 'aoe_dmg_and_stun',
       },
       hidden: true,

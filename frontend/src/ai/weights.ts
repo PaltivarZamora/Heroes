@@ -1,6 +1,9 @@
 import {
+  aiCfgNumber,
   appConfigNumber,
   getCachedCatalog,
+  mapCfgNumber,
+  scaledMapCount,
   type ReferenceCatalog,
 } from '../town/catalog'
 import type { Hero, Player } from '../session/types'
@@ -152,86 +155,96 @@ const FALLBACK_WEIGHTS: Record<number, Record<string, Record<string, number>>> =
 }
 
 export function aiHeroBlendBias(catalog: ReferenceCatalog | null | undefined): number {
-  return Math.max(0, Math.min(1, appConfigNumber(catalog, 'ai_hero_blend_bias', 0.65)))
+  return Math.max(0, Math.min(1, aiCfgNumber(catalog, 'hero_blend_bias', 0.65)))
 }
 
 export function aiDecisionJitterPct(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'ai_decision_jitter_pct', 15))
+  return Math.max(0, aiCfgNumber(catalog, 'decision_jitter_pct', 15))
 }
 
 /** Score multiplier on stack-upgrade candidates. Fallback 1.4. */
 export function aiUpgradeBonusMult(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'ai_upgrade_bonus_mult', 1.4))
+  return Math.max(0, aiCfgNumber(catalog, 'upgrade_bonus_mult', 1.4))
 }
 
 /** Softmax temperature. Lower = sharper toward the best option. Fallback 2. */
 export function aiDecisionTemperature(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0.05, appConfigNumber(catalog, 'ai_decision_temperature', 2))
+  return Math.max(0.05, aiCfgNumber(catalog, 'decision_temperature', 2))
 }
 
 export function aiAttackMinRatio(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'ai_attack_min_ratio', 1.2))
+  return Math.max(0, aiCfgNumber(catalog, 'attack_min_ratio', 1.2))
 }
 
 export function aiAbilityMinValueRatio(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'ai_ability_min_value_ratio', 0.5))
+  return Math.max(0, aiCfgNumber(catalog, 'ability_min_value_ratio', 0.5))
 }
 
 export function aiAbilityRemainingRoundsMax(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  const renamed = appConfigNumber(
-    catalog,
-    'ai_ability_remaining_rounds_max',
-    Number.NaN,
-  )
-  if (Number.isFinite(renamed) && renamed > 0) {
-    return Math.max(1, renamed)
-  }
-  return Math.max(1, appConfigNumber(catalog, 'ai_ability_remaining_rounds_est', 5))
+  return Math.max(1, aiCfgNumber(catalog, 'ability_remaining_rounds_max', 5))
 }
 
+/**
+ * Per-map neutral mob count: round(`mobs` × size_scale).
+ * Pass sizeName from session map dims / settings when known.
+ */
 export function mapRandomMobs(
   catalog: ReferenceCatalog | null | undefined,
+  sizeName?: string | null,
 ): number {
-  return Math.max(0, Math.floor(appConfigNumber(catalog, 'map_random_mobs', 8)))
+  return scaledMapCount(catalog, 'mobs', sizeName, 100)
 }
 
 export function mapRandomMobsTier(
   catalog: ReferenceCatalog | null | undefined,
+  sizeName?: string | null,
 ): number {
-  return Math.max(1, Math.floor(appConfigNumber(catalog, 'map_random_mobs_tier', 3)))
+  return Math.max(
+    1,
+    Math.floor(mapCfgNumber(catalog, 'mob_tier_max', sizeName, 3)),
+  )
 }
 
 export function mapMobAdvancedPct(
   catalog: ReferenceCatalog | null | undefined,
+  sizeName?: string | null,
 ): number {
-  return Math.max(0, Math.min(100, appConfigNumber(catalog, 'map_mob_advanced_pct', 10)))
+  return Math.max(
+    0,
+    Math.min(100, mapCfgNumber(catalog, 'mob_advanced_pct', sizeName, 10)),
+  )
 }
 
 export function mapMobMinTownDist(
   catalog: ReferenceCatalog | null | undefined,
+  sizeName?: string | null,
 ): number {
-  return Math.max(1, Math.floor(appConfigNumber(catalog, 'map_mob_min_town_dist', 2)))
+  return Math.max(
+    1,
+    Math.floor(mapCfgNumber(catalog, 'mob_min_town_dist', sizeName, 10)),
+  )
 }
 
 /** `town.id` for world mob pool. 0 = any town (random across all). */
 export function mapMobsType(
   catalog: ReferenceCatalog | null | undefined,
+  sizeName?: string | null,
 ): number {
   return Math.max(
     0,
-    Math.floor(appConfigNumber(catalog, 'map_random_map_mobs_type', 0)),
+    Math.floor(mapCfgNumber(catalog, 'mob_town_type', sizeName, 0)),
   )
 }
 
@@ -277,7 +290,7 @@ export function aiHireChanceExtraPct(
   const fallback = FALLBACK_HIRE_CHANCE[extraN] ?? 0
   return Math.max(
     0,
-    appConfigNumber(catalog, `ai_hire_chance_extra_${extraN}`, fallback),
+    aiCfgNumber(catalog, `hire_chance_extra_${extraN}`, fallback),
   )
 }
 

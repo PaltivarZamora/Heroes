@@ -1,5 +1,6 @@
 import { calendarDayNumber, advanceDay, isWeekRollover } from '../hex/calendar'
 import { advanceAlongHexLine, nextTownCircleHex, townCircleLapSteps } from '../hex/flight'
+import { facingFromMove } from '../hex/heroTravelSprite'
 import { hexDistance } from '../hex/pathfinding'
 import {
   canAfford,
@@ -62,6 +63,12 @@ export {
 } from '../town/townUniques'
 import { applyWeeklyMobGrowth } from './mobs'
 import { applyWeeklyNeutralTownGrowth } from './neutralTowns'
+import { rollAllWorldRecruits } from './recruits'
+import {
+  creditVisitFeature,
+  recordAbilityLearned,
+  rollAllNoticeBoardQuests,
+} from './quests'
 import {
   abilityById,
   classAbilityIdsAtTier,
@@ -667,10 +674,14 @@ export function assignHeroesFromPool(
       current_level: live.current_level,
       current_xp: live.current_xp,
       arch_id: pick.arch_id ?? null,
-      movement_remaining: heroMovementPoints(getCachedCatalog(), {
-        class_id: pick.class_id,
-        current_level: live.current_level,
-      }),
+      movement_remaining: heroMovementPoints(
+        getCachedCatalog(),
+        {
+          class_id: pick.class_id,
+          current_level: live.current_level,
+        },
+        session.game.settings.move_mode,
+      ),
       ...heroResourcePools(getCachedCatalog(), {
         class_id: pick.class_id,
         current_level: live.current_level,
@@ -738,16 +749,22 @@ export function hireHeroFromPool(
       slots_1_to_6: Array.from({ length: ARMY_STACK_SLOTS }, () => null),
     },
     learned_abilities: [],
+    ability_learn_log: [],
     current_level: live.current_level,
     current_xp: live.current_xp,
     used_abilities_this_battle: [],
     used_abilities_today: [],
     arch_id: pick.arch_id ?? null,
-    movement_remaining: heroMovementPoints(getCachedCatalog(), {
-      class_id: pick.class_id,
-      current_level: live.current_level,
-    }),
+    movement_remaining: heroMovementPoints(
+      getCachedCatalog(),
+      {
+        class_id: pick.class_id,
+        current_level: live.current_level,
+      },
+      session.game.settings.move_mode,
+    ),
     flight: null,
+    travel_facing: 'right',
     ...heroResourcePools(getCachedCatalog(), {
       class_id: pick.class_id,
       current_level: live.current_level,
@@ -1477,22 +1494,65 @@ export function learnLibraryAbility(
   if (!offer || !offer.ability_ids.includes(abilityId)) {
     return { session, error: 'That ability is not on offer.' }
   }
-  const spent = spendResources(session, goldCostForLevel(ability.level_id))
+  return applyLearnedAbility(session, heroId, abilityId, ability.level_id)
+}
+
+/**
+ * Learn an ability from a world-map Library feature (BR S9-5).
+ * Same discipline / known / gold gates as {@link learnLibraryAbility}; offer
+ * list is the feature's fixed {@code ability_ids} (no building tier).
+ */
+export function learnWorldLibraryAbility(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  featureId: string,
+  heroId: string,
+  abilityId: number,
+): { session: GameSession; error: string | null } {
+  const feature = findWorldLibraryById(session, featureId)
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!feature || !hero) {
+    return { session, error: 'This library is not in the game session.' }
+  }
+  const ability = abilityById(catalog, abilityId)
+  if (!ability) {
+    return { session, error: 'Unknown ability.' }
+  }
+  if ((hero.learned_abilities ?? []).includes(abilityId)) {
+    return { session, error: 'Already learned.' }
+  }
+  if (!heroHasDiscipline(catalog, hero.class_id, ability.discipline_id)) {
+    return { session, error: 'This hero cannot learn that ability.' }
+  }
+  if (!feature.ability_ids.includes(abilityId)) {
+    return { session, error: 'That ability is not on offer.' }
+  }
+  return applyLearnedAbility(session, heroId, abilityId, ability.level_id)
+}
+
+function applyLearnedAbility(
+  session: GameSession,
+  heroId: string,
+  abilityId: number,
+  levelId: number,
+): { session: GameSession; error: string | null } {
+  const spent = spendResources(session, goldCostForLevel(levelId))
   if (spent.error) {
     return spent
   }
+  const withAbility: GameSession = {
+    ...spent.session,
+    heroes: spent.session.heroes.map((row) =>
+      row.id === heroId
+        ? {
+            ...row,
+            learned_abilities: [...(row.learned_abilities ?? []), abilityId],
+          }
+        : row,
+    ),
+  }
   return {
-    session: {
-      ...spent.session,
-      heroes: spent.session.heroes.map((row) =>
-        row.id === heroId
-          ? {
-              ...row,
-              learned_abilities: [...(row.learned_abilities ?? []), abilityId],
-            }
-          : row,
-      ),
-    },
+    session: recordAbilityLearned(withAbility, heroId, abilityId),
     error: null,
   }
 }
@@ -1527,6 +1587,8 @@ function applyWeeklyGrowthWithReport(
   }
   const income = applyWeeklyBuildingIncomeWithReport(grown, catalog)
   const uniques = applyWeeklyTownUniquesWithReport(income.session, catalog)
+  const withRecruits = rollAllWorldRecruits(uniques.session, catalog)
+  const withQuests = rollAllNoticeBoardQuests(withRecruits, catalog)
   const uniqueEvents: DayIncomeEvent[] = []
   for (const event of [...beacon.events, ...uniques.events]) {
     if (event.kind === 'construct') {
@@ -1557,7 +1619,7 @@ function applyWeeklyGrowthWithReport(
     }
   }
   return {
-    session: uniques.session,
+    session: withQuests,
     events: [...income.events, ...uniqueEvents],
   }
 }
@@ -3019,10 +3081,12 @@ export function syncHero(
       if (hero.flight) {
         return { ...hero, movement_remaining: 0 }
       }
+      const facing = facingFromMove(hero.position, position)
       return {
         ...hero,
         position: { ...position },
         movement_remaining: movementRemaining,
+        ...(facing ? { travel_facing: facing } : {}),
       }
     }),
   }
@@ -3044,7 +3108,11 @@ export function restorePlayerHeroMovement(
       }
       return {
         ...hero,
-        movement_remaining: heroMovementPoints(getCachedCatalog(), hero),
+        movement_remaining: heroMovementPoints(
+          getCachedCatalog(),
+          hero,
+          session.game.settings.move_mode,
+        ),
       }
     }),
   }
@@ -3117,25 +3185,22 @@ function townOwnHeroSlotOccupied(
   return occupant != null && occupant.player_id === playerId
 }
 
-/** Friendly Hanger towns the visiting hero can fly to (excludes current town). */
-export function flightDestinationsFromTown(
+/** Friendly Hanger towns reachable from an origin hex (world Hanger or town). */
+export function flightDestinationsFromOrigin(
   session: GameSession,
   catalog: ReferenceCatalog | null | undefined,
-  fromTownId: string,
+  origin: { q: number; r: number },
   playerId: string,
   flyingHeroId?: string | null,
+  excludeTownId?: string | null,
 ): FlightDestinationQuote[] {
   if (!catalog) {
-    return []
-  }
-  const from = session.towns.find((town) => town.id === fromTownId)
-  if (!from || !townHasHanger(session, catalog, from.id)) {
     return []
   }
   const perHex = flightCostPerHex(catalog)
   const out: FlightDestinationQuote[] = []
   for (const town of session.towns) {
-    if (town.id === from.id) {
+    if (excludeTownId && town.id === excludeTownId) {
       continue
     }
     if (town.player_id !== playerId) {
@@ -3144,7 +3209,7 @@ export function flightDestinationsFromTown(
     if (!townHasHanger(session, catalog, town.id)) {
       continue
     }
-    const distance = hexDistance(from.position, town.position)
+    const distance = hexDistance(origin, town.position)
     if (distance <= 0) {
       continue
     }
@@ -3166,10 +3231,70 @@ export function flightDestinationsFromTown(
   )
 }
 
+/** Friendly Hanger towns the visiting hero can fly to (excludes current town). */
+export function flightDestinationsFromTown(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+  fromTownId: string,
+  playerId: string,
+  flyingHeroId?: string | null,
+): FlightDestinationQuote[] {
+  if (!catalog) {
+    return []
+  }
+  const from = session.towns.find((town) => town.id === fromTownId)
+  if (!from || !townHasHanger(session, catalog, from.id)) {
+    return []
+  }
+  return flightDestinationsFromOrigin(
+    session,
+    catalog,
+    from.position,
+    playerId,
+    flyingHeroId,
+    from.id,
+  )
+}
+
+export function findWorldHangerAt(
+  session: GameSession,
+  q: number,
+  r: number,
+): Extract<GameSession['features'][number], { kind: 'hanger' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'hanger' }> =>
+      row.kind === 'hanger' &&
+      row.position.q === q &&
+      row.position.r === r,
+  )
+}
+
+export function findWorldHangerById(
+  session: GameSession,
+  featureId: string,
+): Extract<GameSession['features'][number], { kind: 'hanger' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'hanger' }> =>
+      row.kind === 'hanger' && row.id === featureId,
+  )
+}
+
+/** World Hanger within 1 hex of the hero (departure stance). */
+export function findWorldHangerBeside(
+  session: GameSession,
+  at: { q: number; r: number },
+): Extract<GameSession['features'][number], { kind: 'hanger' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'hanger' }> =>
+      row.kind === 'hanger' && hexDistance(at, row.position) <= 1,
+  )
+}
+
 /**
  * Launch Hanger flight: charge gold and enter in-flight state.
- * Does not advance position — caller animates via {@link requestPlayHeroFlight}
- * (or day tick uses {@link advanceAllFlights}).
+ * Origin is either a friendly town with a Hanger (hero standing on it) or a
+ * world Hanger (hero adjacent). Does not advance position — caller animates
+ * via {@link requestPlayHeroFlight} (or day tick uses {@link advanceAllFlights}).
  */
 export function launchHeroFlight(
   session: GameSession,
@@ -3188,23 +3313,47 @@ export function launchHeroFlight(
   if (hero.flight) {
     return { session, error: 'Already in flight.' }
   }
-  const origin =
-    (originTownId
-      ? session.towns.find((town) => town.id === originTownId)
-      : null) ?? findTownAt(session, hero.position.q, hero.position.r)
-  if (!origin || origin.player_id !== hero.player_id) {
-    return { session, error: 'Hero must be in a friendly town.' }
-  }
-  const atOrigin = findTownAt(session, hero.position.q, hero.position.r)
-  if (!atOrigin || atOrigin.id !== origin.id) {
+
+  const explicitTown = originTownId
+    ? session.towns.find((town) => town.id === originTownId)
+    : undefined
+  const standingTown = findTownAt(session, hero.position.q, hero.position.r)
+  const worldHanger = findWorldHangerBeside(session, hero.position)
+
+  let originPos: { q: number; r: number } | null = null
+  let excludeOriginTownId: string | null = null
+
+  if (explicitTown) {
+    if (explicitTown.player_id !== hero.player_id) {
+      return { session, error: 'Hero must be in a friendly town.' }
+    }
+    if (!standingTown || standingTown.id !== explicitTown.id) {
+      return {
+        session,
+        error: 'Hero must be standing in this town to fly.',
+      }
+    }
+    if (!townHasHanger(session, catalog, explicitTown.id)) {
+      return { session, error: 'This town has no Hanger.' }
+    }
+    originPos = explicitTown.position
+    excludeOriginTownId = explicitTown.id
+  } else if (
+    standingTown &&
+    standingTown.player_id === hero.player_id &&
+    townHasHanger(session, catalog, standingTown.id)
+  ) {
+    originPos = standingTown.position
+    excludeOriginTownId = standingTown.id
+  } else if (worldHanger) {
+    originPos = worldHanger.position
+  } else {
     return {
       session,
-      error: 'Hero must be standing in this town to fly.',
+      error: 'Hero must be in a friendly Hanger town or beside a world Hanger.',
     }
   }
-  if (!townHasHanger(session, catalog, origin.id)) {
-    return { session, error: 'This town has no Hanger.' }
-  }
+
   const dest = session.towns.find((town) => town.id === destinationTownId)
   if (!dest) {
     return { session, error: 'Destination town not found.' }
@@ -3215,7 +3364,7 @@ export function launchHeroFlight(
   if (!townHasHanger(session, catalog, dest.id)) {
     return { session, error: 'Destination has no Hanger.' }
   }
-  if (dest.id === origin.id) {
+  if (excludeOriginTownId && dest.id === excludeOriginTownId) {
     return { session, error: 'Pick a different town.' }
   }
   if (townOwnHeroSlotOccupied(session, dest, hero.player_id)) {
@@ -3224,7 +3373,7 @@ export function launchHeroFlight(
   if (flightEnRouteToTown(session, dest.id, hero.player_id, heroId)) {
     return { session, error: 'Another hero is already flying there.' }
   }
-  const distance = hexDistance(origin.position, dest.position)
+  const distance = hexDistance(originPos, dest.position)
   if (!Number.isFinite(distance) || distance <= 0) {
     return { session, error: 'Invalid flight distance.' }
   }
@@ -3258,15 +3407,18 @@ export function syncHeroFlightPosition(
 ): GameSession {
   return {
     ...session,
-    heroes: session.heroes.map((hero) =>
-      hero.id === heroId && hero.flight
-        ? {
-            ...hero,
-            position: { ...position },
-            movement_remaining: 0,
-          }
-        : hero,
-    ),
+    heroes: session.heroes.map((hero) => {
+      if (hero.id !== heroId || !hero.flight) {
+        return hero
+      }
+      const facing = facingFromMove(hero.position, position)
+      return {
+        ...hero,
+        position: { ...position },
+        movement_remaining: 0,
+        ...(facing ? { travel_facing: facing } : {}),
+      }
+    }),
   }
 }
 
@@ -3313,7 +3465,7 @@ export function finalizeHeroFlightSegment(
       const alreadyCircling = hero.flight?.circling === true
       const onRing = alreadyCircling
         ? { ...hero.position }
-        : nextTownCircleHex(dest.position, hero.position)
+        : nextTownCircleHex(dest.position, hero.position, dest.flipped)
       return {
         session: {
           ...session,
@@ -3436,8 +3588,8 @@ function advanceHeroFlightOnce(
 
   // Circling: one full orbit around the town (no flight_speed toward dest).
   if (hero.flight.circling) {
-    const lap = townCircleLapSteps(dest.position, hero.position)
-    const end = lap[lap.length - 1] ?? nextTownCircleHex(dest.position, hero.position)
+    const lap = townCircleLapSteps(dest.position, hero.position, dest.flipped)
+    const end = lap[lap.length - 1] ?? nextTownCircleHex(dest.position, hero.position, dest.flipped)
     const moved: GameSession = {
       ...session,
       heroes: session.heroes.map((row) =>
@@ -3607,11 +3759,13 @@ function regenHeroPoolsEndOfTurn(
 }
 
 export function restoreAllHeroMovement(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  const moveMode = session.game.settings.move_mode
   return {
     ...session,
     heroes: session.heroes.map((hero) => ({
       ...hero,
-      movement_remaining: heroMovementPoints(getCachedCatalog(), hero),
+      movement_remaining: heroMovementPoints(catalog, hero, moveMode),
     })),
   }
 }
@@ -3633,8 +3787,8 @@ export function findTownAt(
     if (town.position.q === q && town.position.r === r) {
       return true
     }
-    // 2×1 footprint: left hex is blocked but still "the town" for lookups.
-    return town.position.q - 1 === q && town.position.r === r
+    const keepQ = town.position.q + (town.flipped ? 1 : -1)
+    return keepQ === q && town.position.r === r
   })
 }
 
@@ -3646,6 +3800,210 @@ export function findNodeAt(
   return session.nodes.find(
     (node) => node.position.q === q && node.position.r === r,
   )
+}
+
+export function findFountainAt(
+  session: GameSession,
+  q: number,
+  r: number,
+): Extract<GameSession['features'][number], { kind: 'fountain' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'fountain' }> =>
+      row.kind === 'fountain' &&
+      row.position.q === q &&
+      row.position.r === r,
+  )
+}
+
+export function findChestAt(
+  session: GameSession,
+  q: number,
+  r: number,
+): Extract<GameSession['features'][number], { kind: 'chest' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'chest' }> =>
+      row.kind === 'chest' &&
+      row.position.q === q &&
+      row.position.r === r,
+  )
+}
+
+export function findChestById(
+  session: GameSession,
+  featureId: string,
+): Extract<GameSession['features'][number], { kind: 'chest' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'chest' }> =>
+      row.kind === 'chest' && row.id === featureId,
+  )
+}
+
+export function findSignAt(
+  session: GameSession,
+  q: number,
+  r: number,
+): Extract<GameSession['features'][number], { kind: 'sign' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'sign' }> =>
+      row.kind === 'sign' &&
+      row.position.q === q &&
+      row.position.r === r,
+  )
+}
+
+export function findSignById(
+  session: GameSession,
+  featureId: string,
+): Extract<GameSession['features'][number], { kind: 'sign' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'sign' }> =>
+      row.kind === 'sign' && row.id === featureId,
+  )
+}
+
+export function findWorldLibraryAt(
+  session: GameSession,
+  q: number,
+  r: number,
+): Extract<GameSession['features'][number], { kind: 'library' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'library' }> =>
+      row.kind === 'library' &&
+      row.position.q === q &&
+      row.position.r === r,
+  )
+}
+
+export function findWorldLibraryById(
+  session: GameSession,
+  featureId: string,
+): Extract<GameSession['features'][number], { kind: 'library' }> | undefined {
+  return (session.features ?? []).find(
+    (row): row is Extract<GameSession['features'][number], { kind: 'library' }> =>
+      row.kind === 'library' && row.id === featureId,
+  )
+}
+
+/** Mark a world Library visited by a player (map tooltip). */
+export function recordWorldLibraryVisit(
+  session: GameSession,
+  featureId: string,
+  playerId: string,
+): GameSession {
+  return {
+    ...session,
+    features: (session.features ?? []).map((row) => {
+      if (row.kind !== 'library' || row.id !== featureId) {
+        return row
+      }
+      if (row.visited_by_player[playerId]) {
+        return row
+      }
+      return {
+        ...row,
+        visited_by_player: {
+          ...row.visited_by_player,
+          [playerId]: true,
+        },
+      }
+    }),
+  }
+}
+
+/** Persist the resolved text for one player's read of a sign. */
+export function recordSignRead(
+  session: GameSession,
+  featureId: string,
+  playerId: string,
+  text: string,
+): GameSession {
+  const withRead: GameSession = {
+    ...session,
+    features: (session.features ?? []).map((row) => {
+      if (row.kind !== 'sign' || row.id !== featureId) {
+        return row
+      }
+      return {
+        ...row,
+        last_text_by_player: {
+          ...row.last_text_by_player,
+          [playerId]: text,
+        },
+      }
+    }),
+  }
+  return creditVisitFeature(withRead, featureId, playerId)
+}
+
+/** Mark a chest open (Leave or before XP/Loot choice). Contents unchanged. */
+export function openChest(session: GameSession, featureId: string): GameSession {
+  return {
+    ...session,
+    features: (session.features ?? []).map((row) =>
+      row.kind === 'chest' && row.id === featureId ? { ...row, open: true } : row,
+    ),
+  }
+}
+
+/** Remove a chest after XP or Loot is taken. */
+export function removeChest(session: GameSession, featureId: string): GameSession {
+  return {
+    ...session,
+    features: (session.features ?? []).filter((row) => row.id !== featureId),
+  }
+}
+
+/**
+ * Full Mana + Energy restore when a hero moves onto a fountain (BR S9-2).
+ * Silent no-op when both pools are already full (or max is 0).
+ */
+export function applyFountainVisit(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  heroId: string,
+  q: number,
+  r: number,
+): { session: GameSession; message: string | null } {
+  if (!findFountainAt(session, q, r)) {
+    return { session, message: null }
+  }
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!hero) {
+    return { session, message: null }
+  }
+  const pools = heroResourcePools(catalog, hero)
+  const manaMax = pools.current_mana
+  const energyMax = pools.current_energy
+  const restoredMana = manaMax > 0 && hero.current_mana < manaMax
+  const restoredEnergy = energyMax > 0 && hero.current_energy < energyMax
+  const fountain = findFountainAt(session, q, r)
+  let nextSession: GameSession = session
+  if (fountain) {
+    // Visit Feature quests complete on stepping onto the Fountain (BR S9-10).
+    nextSession = creditVisitFeature(nextSession, fountain.id, hero.player_id)
+  }
+  if (!restoredMana && !restoredEnergy) {
+    return { session: nextSession, message: null }
+  }
+  const nextHero: Hero = {
+    ...hero,
+    current_mana: restoredMana ? manaMax : hero.current_mana,
+    current_energy: restoredEnergy ? energyMax : hero.current_energy,
+  }
+  const poolLabel =
+    restoredMana && restoredEnergy
+      ? 'Mana and Energy'
+      : restoredMana
+        ? 'Mana'
+        : 'Energy'
+  nextSession = {
+    ...nextSession,
+    heroes: nextSession.heroes.map((row) => (row.id === heroId ? nextHero : row)),
+  }
+  return {
+    session: nextSession,
+    message: `${hero.name} regains all ${poolLabel}`,
+  }
 }
 
 function townByIdOrName(session: GameSession, townIdOrName: string): Town | undefined {

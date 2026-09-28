@@ -46,6 +46,7 @@ type HeroScreenProps = {
   onSelectHero: (heroId: string) => void
   onOpenHero?: (heroId?: string | null) => void
   onCycleTown?: () => void
+  onQuests?: () => void
 }
 
 function Face({
@@ -100,6 +101,7 @@ export function HeroScreen({
   onSelectHero,
   onOpenHero,
   onCycleTown,
+  onQuests,
 }: HeroScreenProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
@@ -297,6 +299,7 @@ export function HeroScreen({
         <ReservedCorner
           onHero={() => onOpenHero?.(heroId)}
           onTown={() => onCycleTown?.()}
+          onQuests={() => onQuests?.()}
           onScrolls={() => setScrollsOpen(true)}
         />
         <ArmyTransfer

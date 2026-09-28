@@ -3,20 +3,29 @@ import { startCalendar } from '../hex/calendar'
 import { RESOURCES } from '../hex/resources'
 import { HERO_MARKER_LABEL } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
-import { forEachPassableHex, forEachTile, isPassable } from '../hex/world'
-import { getCachedCatalog, heroMovementPoints, heroResourcePools, startingStockpileFor, visionRange } from '../town/catalog'
+import { forEachPassableHex, forEachTile, getTile, isPassable } from '../hex/world'
+import { getCachedCatalog, heroMovementPoints, heroResourcePools, sizeDim, startingStockpileFor, visionRange } from '../town/catalog'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
   defaultGameConfig,
   type GameConfig,
 } from '../options/gameConfig'
 import {
+  mapObjectAbilityIds,
+  mapObjectChestLevel,
+  mapObjectChestLoot,
+  mapObjectGuard,
+  mapObjectLaunch,
+  mapObjectLinkedTown,
   mapObjectResourceId,
+  mapObjectSignTextId,
   mapObjectTownTypeId,
   type MapObjectData,
 } from '../hex/types'
 import { assignHeroesFromPool, grantHeroStartingArmy, heroIdsInOwnedTown, progressForHeroName, withNamedProgress } from './accessors'
 import { seedNeutralTownBuildings } from './neutralTowns'
+import { rollRecruitsOffer } from './recruits'
+import { rollAllNoticeBoardQuests } from './quests'
 import {
   ARMY_STACK_SLOTS,
   BUILDING_SLOT_COUNT,
@@ -28,6 +37,7 @@ import {
   type BuildingState,
   type GameSession,
   type Hero,
+  type MapFeature,
   type Node,
   type Player,
   type Town,
@@ -37,28 +47,30 @@ function emptyStackSlots(): Array<string | null> {
   return Array.from({ length: ARMY_STACK_SLOTS }, () => null)
 }
 
-export function startingResources(): Record<number, number> {
+export function startingResources(difficultyId?: number | null): Record<number, number> {
   const catalog = getCachedCatalog()
   const resources: Record<number, number> = {}
   for (const resource of RESOURCES) {
-    resources[resource.id] = startingStockpileFor(catalog, resource)
+    resources[resource.id] = startingStockpileFor(catalog, resource, difficultyId)
   }
   return resources
 }
 
-/** Bootstrap / F5 refresh — same app_config defaults as the New Game screen. */
+/** Bootstrap / F5 refresh — same map_config defaults as the New Game screen. */
 export function createInitialSession(): GameSession {
   return createSessionFromConfig(defaultGameConfig(getCachedCatalog()))
 }
 
 export function createSessionFromConfig(config: GameConfig): GameSession {
+  const catalog = getCachedCatalog()
+  const dim = sizeDim(catalog, config.mapSize)
   const players: Player[] = config.players.map((slot) => ({
     id: playerIdForSlot(slot.slot),
     is_ai: slot.controller !== 'human',
     ai_spectator: slot.controller === 'ai_spectator',
     arch_id: slot.archId ?? DEFAULT_AI_ARCH_ID,
     eliminated: false,
-    resources: startingResources(),
+    resources: startingResources(config.difficultyId),
     hero_ids: [],
     town_ids: [],
     explored: [],
@@ -72,10 +84,14 @@ export function createSessionFromConfig(config: GameConfig): GameSession {
       settings: {
         player_count: config.playerCount,
         map_size: config.mapSize,
+        map_width: dim,
+        map_height: dim,
         victory_condition: 'standard',
         difficulty: String(config.difficultyId),
         game_type: config.playerCount > 1 ? 'hotseat' : 'single',
         hero_type_ids: config.players.map((slot) => slot.heroTypeId),
+        hex_size: config.hexSize,
+        move_mode: config.moveMode,
       },
     },
     players,
@@ -86,6 +102,8 @@ export function createSessionFromConfig(config: GameConfig): GameSession {
     hero_progress: {},
     units: [],
     nodes: [],
+    features: [],
+    boats: [],
     mobs: [],
   }
 }
@@ -132,126 +150,11 @@ function townTypeIdForHeroClass(
   return type != null && type.town_id > 0 ? type.town_id : null
 }
 
-/**
- * Every map town is typed from the players' picked hero classes (Druid → Grove,
- * etc.). Solo Druid ⇒ all Grove; multiplayer ⇒ types drawn from those picks
- * (spawn anchors prefer their player's class). Runs before building seed.
- */
-function assignTownTypesFromPlayerClasses(
-  towns: Town[],
-  heroTypeIds: Array<number | null> | undefined,
-  playerCount: number,
-): Town[] {
-  const catalog = getCachedCatalog()
-  if (!catalog || towns.length === 0 || playerCount <= 0) {
-    return towns
-  }
-  const typePool: number[] = []
-  for (let i = 0; i < playerCount; i += 1) {
-    const townTypeId = townTypeIdForHeroClass(catalog, heroTypeIds?.[i])
-    if (townTypeId != null) {
-      typePool.push(townTypeId)
-    }
-  }
-  if (typePool.length === 0) {
-    return towns
-  }
-
-  const patchByTownId = new Map<string, { townTypeId: number }>()
-
-  const neutrals = towns.filter((town) => town.player_id == null)
-  const anchors = pickSpreadTowns(
-    neutrals,
-    Math.min(playerCount, neutrals.length),
-  )
-  const anchorIds = new Set(anchors.map((town) => town.id))
-
-  for (let i = 0; i < anchors.length; i += 1) {
-    const townTypeId =
-      townTypeIdForHeroClass(catalog, heroTypeIds?.[i]) ??
-      typePool[i % typePool.length]!
-    patchByTownId.set(anchors[i]!.id, {
-      townTypeId,
-    })
-  }
-
-  let next = 0
-  // Owned towns already have a faction + buildings — never rewrite their type
-  // from the round-robin pool (would desync skyline/hire from building art).
-  const rest = towns
-    .filter((town) => !anchorIds.has(town.id) && town.player_id == null)
-    .slice()
-    .sort((a, b) => a.id.localeCompare(b.id))
-  for (const town of rest) {
-    const townTypeId = typePool[next % typePool.length]!
-    next += 1
-    patchByTownId.set(town.id, {
-      townTypeId,
-    })
-  }
-
-  return towns.map((town) => {
-    const patch = patchByTownId.get(town.id)
-    if (!patch) {
-      return town
-    }
-    if (town.town_type_id === patch.townTypeId) {
-      return town
-    }
-    // Keep unique map name from town_name_pool; only retype the faction.
-    return { ...town, town_type_id: patch.townTypeId }
-  })
-}
-
-/**
- * After heroes exist, retype map towns from their real class_ids.
- * Covers Random picks (settings null → map kept Fortress/Necropolis) and any
- * hydrate that ran before the catalog was ready.
- */
-function syncTownTypesToSpawnedHeroes(session: GameSession): GameSession {
-  const catalog = getCachedCatalog()
-  if (!catalog || session.towns.length === 0 || session.heroes.length === 0) {
-    return session
-  }
-  const heroTypeIds = session.players.map((player) => {
-    const hero = session.heroes.find((row) => row.player_id === player.id)
-    return hero?.class_id ?? null
-  })
-  if (heroTypeIds.every((id) => id == null || id <= 0)) {
-    return session
-  }
-  const typed = assignTownTypesFromPlayerClasses(
-    session.towns,
-    heroTypeIds,
-    session.players.length,
-  )
-  const changedIds = new Set<string>()
-  for (const town of typed) {
-    const before = session.towns.find((row) => row.id === town.id)
-    if (before && before.town_type_id !== town.town_type_id) {
-      changedIds.add(town.id)
-    }
-  }
-  if (changedIds.size === 0) {
-    return session
-  }
-  const cleared: GameSession = {
-    ...session,
-    towns: typed,
-    building_states: session.building_states.map((row) =>
-      changedIds.has(row.town_id)
-        ? {
-            ...row,
-            building_id: null,
-            level: 0,
-            recruit_qty: 0,
-            offered_abilities: [],
-          }
-        : row,
-    ),
-  }
-  return seedNeutralTownBuildings(cleared)
-}
+// BR S9-17: do not overwrite map-wide town types from player hero picks.
+// Backend test-grid already assigns townTypeId (own-type anchors + mixed neutrals
+// via townTypes query). Rewriting every town here erased that diversity.
+// applyHeroTownType stays for capture/hire so the player's spawn town matches
+// their actual class (including Random resolution).
 
 /** Match one town to a hero class; clear and re-seed buildings for the new type. */
 function applyHeroTownType(
@@ -298,12 +201,13 @@ export function hydrateMapObjects(
   session: GameSession,
   objects: MapObjectData[],
 ): GameSession {
-  const hadTowns = session.towns.length > 0
   const towns: Town[] = [...session.towns]
   const nodes: Node[] = [...session.nodes]
+  const features: MapFeature[] = [...(session.features ?? [])]
   const building_states: BuildingState[] = [...session.building_states]
   let townIndex = towns.length
   let nodeIndex = nodes.length
+  let featureIndex = features.length
   const ownerIds = session.players.map((player) => player.id)
   let claimedMines = 0
   for (const obj of objects) {
@@ -320,6 +224,7 @@ export function hydrateMapObjects(
         name,
         town_type_id: mapObjectTownTypeId(obj) ?? NECROPOLIS_TOWN_TYPE_ID,
         position: { q: obj.q, r: obj.r },
+        flipped: obj.flipped === true,
         player_id: null,
         last_build_day: null,
         garrison: {
@@ -327,6 +232,131 @@ export function hydrateMapObjects(
         },
       })
       building_states.push(...emptyBuildingStates(id))
+    } else if (obj.kind === 'fountain') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'fountain',
+        position: { q: obj.q, r: obj.r },
+      })
+    } else if (obj.kind === 'chest') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      const level = mapObjectChestLevel(obj)
+      if (level == null || level < 1) {
+        continue
+      }
+      featureIndex += 1
+      const guard = mapObjectGuard(obj)
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'chest',
+        position: { q: obj.q, r: obj.r },
+        level,
+        name: obj.name?.trim() || `Chest`,
+        open: false,
+        loot: mapObjectChestLoot(obj),
+        guard,
+      })
+    } else if (obj.kind === 'sign') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      const signTextId = mapObjectSignTextId(obj)
+      if (signTextId == null || signTextId < 1) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'sign',
+        position: { q: obj.q, r: obj.r },
+        sign_text_id: signTextId,
+        last_text_by_player: {},
+      })
+    } else if (obj.kind === 'library') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      const abilityIds = mapObjectAbilityIds(obj)
+      if (abilityIds.length === 0) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'library',
+        position: { q: obj.q, r: obj.r },
+        ability_ids: abilityIds,
+        visited_by_player: {},
+      })
+    } else if (obj.kind === 'hanger') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'hanger',
+        position: { q: obj.q, r: obj.r },
+      })
+    } else if (obj.kind === 'dock') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      const launch = mapObjectLaunch(obj)
+      if (!launch) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'dock',
+        position: { q: obj.q, r: obj.r },
+        launch,
+      })
+    } else if (obj.kind === 'recruits') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'recruits',
+        position: { q: obj.q, r: obj.r },
+        unit_id: 0,
+        stock: 0,
+        known_by_player: {},
+      })
+    } else if (obj.kind === 'notice_board') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      const linked = mapObjectLinkedTown(obj)
+      if (!linked) {
+        continue
+      }
+      const linkedTown = towns.find((town) =>
+        samePos(town.position, linked.q, linked.r),
+      )
+      if (!linkedTown) {
+        continue
+      }
+      featureIndex += 1
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'notice_board',
+        position: { q: obj.q, r: obj.r },
+        linked_town_id: linkedTown.id,
+        quest: null,
+        target_mob_id: null,
+        by_player: {},
+        known_by_player: {},
+      })
     } else if (obj.kind === 'mine' || obj.kind === 'pickup') {
       if (nodes.some((node) => samePos(node.position, obj.q, obj.r))) {
         continue
@@ -363,27 +393,22 @@ export function hydrateMapObjects(
       building_states.push(...emptyBuildingStates(town.id))
     }
   }
-  // First hydrate only: assign factions from hero picks. Remounts must keep
-  // existing town_type_id (owned towns already have buildings for that type).
-  const typedTowns = hadTowns
-    ? towns
-    : assignTownTypesFromPlayerClasses(
-        towns,
-        session.game.settings.hero_type_ids,
-        session.players.length,
-      )
-  return seedNeutralTownBuildings({
+  // Trust backend townTypeId from test-grid (own-type + mixed neutrals). Do not
+  // overwrite all towns from player hero picks (BR S9-17).
+  const seeded = seedNeutralTownBuildings({
     ...session,
-    towns: typedTowns,
+    towns,
     nodes,
+    features,
     building_states,
     players: session.players.map((player) => ({
       ...player,
-      town_ids: typedTowns
+      town_ids: towns
         .filter((town) => town.player_id === player.id)
         .map((town) => town.id),
     })),
   })
+  return rollFreshNoticeBoardQuests(rollFreshRecruitsOffers(seeded))
 }
 
 export function addHumanHero(
@@ -400,21 +425,27 @@ export function addHumanHero(
     class_id: null,
     image_path: null,
     position: { ...position },
-    movement_remaining: heroMovementPoints(getCachedCatalog(), {
-      class_id: null,
-      current_level: 1,
-    }),
+    movement_remaining: heroMovementPoints(
+      getCachedCatalog(),
+      {
+        class_id: null,
+        current_level: 1,
+      },
+      session.game.settings.move_mode,
+    ),
     army: {
       slot_0: HERO_MARKER_LABEL,
       slots_1_to_6: emptyStackSlots(),
     },
     learned_abilities: [],
+    ability_learn_log: [],
     current_level: 1,
     current_xp: 0,
     used_abilities_this_battle: [],
     used_abilities_today: [],
     arch_id: null,
     flight: null,
+    travel_facing: 'right',
     ...heroResourcePools(getCachedCatalog(), {
       class_id: null,
       current_level: 1,
@@ -488,21 +519,27 @@ function spawnPlayerHero(
     class_id: classId,
     image_path: imagePath,
     position: { ...position },
-    movement_remaining: heroMovementPoints(getCachedCatalog(), {
-      class_id: classId,
-      current_level: live.current_level,
-    }),
+    movement_remaining: heroMovementPoints(
+      getCachedCatalog(),
+      {
+        class_id: classId,
+        current_level: live.current_level,
+      },
+      session.game.settings.move_mode,
+    ),
     army: {
       slot_0: name,
       slots_1_to_6: emptyStackSlots(),
     },
     learned_abilities: [],
+    ability_learn_log: [],
     current_level: live.current_level,
     current_xp: live.current_xp,
     used_abilities_this_battle: [],
     used_abilities_today: [],
     arch_id: heroArchId,
     flight: null,
+    travel_facing: 'right',
     ...heroResourcePools(getCachedCatalog(), {
       class_id: classId,
       current_level: live.current_level,
@@ -576,13 +613,41 @@ function pickSpawnAnchorTowns(session: GameSession, count: number): Town[] {
   return pickSpreadTowns(neutrals, count)
 }
 
+/** True when the hex sits on the map rim (any axial neighbor missing). */
+function isMapEdgeHex(q: number, r: number): boolean {
+  for (const n of neighborHexes({ q, r })) {
+    if (!getTile(n.q, n.r)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Spawn beside the town entry: adjacent walkable hex, never on the map edge.
+ * Searches ring-1 first, then ring-2/3 only if needed (still near the town).
+ */
 function findSpawnNearTown(
   townPos: { q: number; r: number },
   occupied: Set<string>,
 ): { q: number; r: number } | null {
-  const seen = new Set<string>([posKey(townPos)])
-  let frontier = neighborHexes(townPos)
-  for (let dist = 1; dist <= 3; dist += 1) {
+  const tryHex = (hex: { q: number; r: number }): boolean => {
+    const key = posKey(hex)
+    return (
+      isPassable(hex.q, hex.r) &&
+      !occupied.has(key) &&
+      !isMapEdgeHex(hex.q, hex.r)
+    )
+  }
+  const ring1 = neighborHexes(townPos)
+  for (const hex of ring1) {
+    if (tryHex(hex)) {
+      return hex
+    }
+  }
+  const seen = new Set<string>([posKey(townPos), ...ring1.map(posKey)])
+  let frontier = ring1.flatMap((hex) => neighborHexes(hex))
+  for (let dist = 2; dist <= 3; dist += 1) {
     const nextFrontier: { q: number; r: number }[] = []
     for (const hex of frontier) {
       const key = posKey(hex)
@@ -590,7 +655,7 @@ function findSpawnNearTown(
         continue
       }
       seen.add(key)
-      if (isPassable(hex.q, hex.r) && !occupied.has(key)) {
+      if (tryHex(hex)) {
         return hex
       }
       nextFrontier.push(...neighborHexes(hex))
@@ -598,6 +663,29 @@ function findSpawnNearTown(
     frontier = nextFrontier
   }
   return null
+}
+
+/**
+ * Last-resort: nearest passable non-edge hex to the town (never a map corner
+ * scramble). Prefer closer to town.
+ */
+function findNearTownFallback(
+  townPos: { q: number; r: number },
+  occupied: Set<string>,
+): { q: number; r: number } | null {
+  let best: { q: number; r: number } | null = null
+  let bestDist = Infinity
+  forEachPassableHex((q, r) => {
+    if (occupied.has(posKey({ q, r })) || isMapEdgeHex(q, r)) {
+      return
+    }
+    const dist = hexDistance(townPos, { q, r })
+    if (dist < bestDist) {
+      bestDist = dist
+      best = { q, r }
+    }
+  })
+  return best
 }
 
 function findFarPassable(
@@ -609,7 +697,7 @@ function findFarPassable(
   let bestScore = -1
   forEachPassableHex((q, r) => {
     const hex = { q, r }
-    if (occupied.has(posKey(hex))) {
+    if (occupied.has(posKey(hex)) || isMapEdgeHex(q, r)) {
       return
     }
     const score =
@@ -668,7 +756,12 @@ export function ensureStartingHeroes(
     const nearTown = liveTown
       ? findSpawnNearTown(liveTown.position, occupied)
       : null
-    const position = nearTown ?? findFarPassable(others, occupied, fallbackPos)
+    const position =
+      nearTown ??
+      (liveTown
+        ? findNearTownFallback(liveTown.position, occupied)
+        : null) ??
+      findFarPassable(others, occupied, fallbackPos)
     occupied.add(posKey(position))
     next = spawnPlayerHero(next, player.id, position, heroTypeId)
     // Align the spawn-anchor town to the hero that actually appeared (Random
@@ -680,11 +773,8 @@ export function ensureStartingHeroes(
       }
     }
   }
-  // Retype map towns from spawned classes once at game start only — remounts
-  // must not reshuffle owned-town factions (skyline/hire vs buildings).
-  if (!alreadyStarted) {
-    next = syncTownTypesToSpawnedHeroes(next)
-  }
+  // Spawn-anchor applyHeroTownType above already aligns that town to the hero.
+  // Do not retype the rest of the map from player classes (BR S9-17).
   const withVision = seedStartingVision(next)
   // Only seed overnight eligibility on first spawn — remounts must not promote
   // same-day walk-ins into the restore set mid-day.
@@ -722,4 +812,45 @@ export function seedStartingVision(session: GameSession): GameSession {
       return { ...player, explored }
     }),
   }
+}
+
+/** Week-1 offers for newly hydrated Recruits buildings (unit_id still 0). */
+function rollFreshRecruitsOffers(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  let changed = false
+  const features = (session.features ?? []).map((row) => {
+    if (row.kind !== 'recruits' || row.unit_id > 0) {
+      return row
+    }
+    const rolled = rollRecruitsOffer(catalog, session)
+    if (!rolled) {
+      return row
+    }
+    changed = true
+    return {
+      ...row,
+      unit_id: rolled.unit_id,
+      stock: rolled.stock,
+      known_by_player: {},
+    }
+  })
+  return changed ? { ...session, features } : session
+}
+
+/** Week-1 quests for newly hydrated Notice Boards (quest still null). */
+function rollFreshNoticeBoardQuests(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  const needsRoll = (session.features ?? []).some(
+    (row) => row.kind === 'notice_board' && row.quest == null,
+  )
+  if (!needsRoll) {
+    return session
+  }
+  return rollAllNoticeBoardQuests(session, catalog)
 }

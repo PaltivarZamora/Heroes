@@ -282,7 +282,7 @@ export function heroPassiveLiveLines(
       `Shadow step cost ×${formatPct((1 - reduction) * 100)}% (${formatPct(reduction * 100)}% reduction)`,
     )
     lines.push(
-      `On Shadow: +${formatPct(physBonus)}% Physical dmg (Ground/Submerge)`,
+      `On Shadow: +${formatPct(physBonus)}% Physical dmg (Ground)`,
     )
   }
   if (isHeroClass(catalog, hero, 'Knight')) {

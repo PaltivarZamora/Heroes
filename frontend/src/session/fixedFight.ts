@@ -31,6 +31,9 @@ export type FixedFightKind =
   | 'holy_wrath'
   | 'for_the_hoard'
   | 'fight_yourself'
+  | 'boat_vs_boat'
+  | 'boat_vs_land'
+  | 'land_vs_boat'
 
 export type FixedFightOk = {
   session: GameSession
@@ -38,6 +41,8 @@ export type FixedFightOk = {
   mobId: string | null
   defenderHeroId: string | null
   notice: string
+  /** Naval battlefield layout (BR S9-12 Fixed Fights). */
+  navalLayout?: import('../combat/naval').NavalLayoutKind
 }
 
 export type FixedFightResult = FixedFightOk | { error: string }
@@ -665,6 +670,27 @@ function prepareFightYourself(
   }
 }
 
+function prepareNavalMirrorFight(
+  session: GameSession,
+  hero: Hero,
+  layout: import('../combat/naval').NavalLayoutKind,
+  label: string,
+): FixedFightResult {
+  if (hero.class_id == null) {
+    return { error: `${label}: hero has no class` }
+  }
+  const defender = ensureMirrorDefender(session, hero)
+  const next = cloneHeroAsMirror(defender.session, hero.id, defender.heroId)
+  return {
+    session: next,
+    heroId: hero.id,
+    mobId: null,
+    defenderHeroId: defender.heroId,
+    notice: `${hero.name}: ${label}`,
+    navalLayout: layout,
+  }
+}
+
 function prepareForTheHoard(
   session: GameSession,
   hero: Hero,
@@ -713,10 +739,37 @@ export function prepareFixedFight(
   if (
     kind === 'holy_wrath' ||
     kind === 'for_the_hoard' ||
-    kind === 'fight_yourself'
+    kind === 'fight_yourself' ||
+    kind === 'boat_vs_boat' ||
+    kind === 'boat_vs_land' ||
+    kind === 'land_vs_boat'
   ) {
     if (kind === 'fight_yourself') {
       return prepareFightYourself(session, hero)
+    }
+    if (kind === 'boat_vs_boat') {
+      return prepareNavalMirrorFight(
+        session,
+        hero,
+        'boat_vs_boat',
+        'Boat vs Boat',
+      )
+    }
+    if (kind === 'boat_vs_land') {
+      return prepareNavalMirrorFight(
+        session,
+        hero,
+        'boat_vs_land',
+        'Boat vs Land',
+      )
+    }
+    if (kind === 'land_vs_boat') {
+      return prepareNavalMirrorFight(
+        session,
+        hero,
+        'land_vs_boat',
+        'Land vs Boat',
+      )
     }
     const catalog = getCachedCatalog()
     if (!catalog) {

@@ -135,6 +135,7 @@ type TownManagementProps = {
   selectedHeroId?: string | null
   onOpenHero?: (heroId?: string | null) => void
   onCycleTown?: () => void
+  onQuests?: () => void
   onArchiveLearn?: (notice: ArchiveLearnNotice) => void
   /** DEV: AI spectator looking at an AI town — no mutations. */
   readOnly?: boolean
@@ -188,6 +189,7 @@ export function TownManagement({
   selectedHeroId = null,
   onOpenHero,
   onCycleTown,
+  onQuests,
   onArchiveLearn,
   readOnly = false,
   onHeroFlew,
@@ -565,6 +567,7 @@ export function TownManagement({
         <ReservedCorner
           onHero={() => onOpenHero?.(selectedHeroId)}
           onTown={() => onCycleTown?.()}
+          onQuests={() => onQuests?.()}
           onScrolls={() => setScrollsOpen(true)}
         />
         <ArmyRows

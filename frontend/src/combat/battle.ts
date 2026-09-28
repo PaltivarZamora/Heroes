@@ -59,6 +59,8 @@ export type CombatTile = {
   propFile?: string | null
   /** Battle-only footprint shape; only set on the anchor hex. */
   propFootprint?: string | null
+  /** Naval battlefield mask kind (BR S9-12). */
+  navalKind?: 'deck' | 'water' | 'gangplank' | 'land' | null
 }
 
 export type CombatStack = {
@@ -559,7 +561,7 @@ export type CombatGroundEffect = {
   roundsLeft: number | null
   mechanicType: string
   effect: string
-  triggerMoveTypes: Array<'ground' | 'flying' | 'hover' | 'submerge'>
+  triggerMoveTypes: Array<'ground' | 'flying' | 'hover'>
   evasionPct: number
   flatDmg: number
   explodeRadius: number

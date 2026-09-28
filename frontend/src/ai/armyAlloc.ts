@@ -1,5 +1,6 @@
 import {
   getCachedCatalog,
+  moveTypeValue,
   unitById,
   type ReferenceCatalog,
 } from '../town/catalog'
@@ -96,6 +97,47 @@ export function slotsArmyValue(
   let total = 0
   for (const stack of stacksInSlots(session, slots)) {
     total += unitArmyValue(catalog, stack.unit_id, stack.qty)
+  }
+  return total
+}
+
+/**
+ * Cheap naval strength bias (BR S9-13): walkers are weaker at gangplank
+ * chokepoints; ranged / Flyer / Hoverer are stronger. Applied as a multiplier
+ * on the normal army-value sum — not a full battle sim.
+ */
+export function navalSlotsArmyValue(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+  slots: Array<string | null> | undefined,
+): number {
+  if (!catalog || !slots) {
+    return 0
+  }
+  let total = 0
+  for (const stack of stacksInSlots(session, slots)) {
+    const base = unitArmyValue(catalog, stack.unit_id, stack.qty)
+    if (base <= 0) {
+      continue
+    }
+    const unit = unitById(catalog, stack.unit_id)
+    const moveName = moveTypeValue(catalog, unit?.move_type_id).toLowerCase()
+    let mult = 1
+    if (moveName.length === 0) {
+      // Non-mover (null move_type) — no naval bias.
+      mult = 1
+    } else if (moveName.includes('fly')) {
+      mult = 1.2
+    } else if (moveName.includes('hover')) {
+      mult = 1.25
+    } else {
+      // Walker / ground — gangplank chokepoint penalty.
+      mult = 0.85
+    }
+    if ((unit?.max_range ?? 1) > 1) {
+      mult += 0.15
+    }
+    total += base * mult
   }
   return total
 }

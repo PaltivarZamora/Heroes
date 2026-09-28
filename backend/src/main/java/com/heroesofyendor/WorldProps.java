@@ -49,9 +49,17 @@ final class WorldProps {
      * several hit, one is chosen at random. Returns null when none place.
      */
     static Seed roll(HexTerrain terrain, List<PropDef> props, Random rng) {
+        return roll(terrain, props, rng, 1.0);
+    }
+
+    /**
+     * @param densityMult {@code map_config.prop_density_mult}; chance is capped at 1
+     */
+    static Seed roll(HexTerrain terrain, List<PropDef> props, Random rng, double densityMult) {
         if (terrain == null || props.isEmpty()) {
             return null;
         }
+        double mult = densityMult > 0 ? densityMult : 1.0;
         int terrainId = terrain.id();
         List<PropDef> hits = new ArrayList<>();
         for (PropDef prop : props) {
@@ -61,7 +69,7 @@ final class WorldProps {
             }
             // Accept 0..1 fractions or whole-number percents (e.g. 10 → 10%).
             double chance = density > 1.0 ? density / 100.0 : density;
-            chance = Math.min(1.0, Math.max(0.0, chance));
+            chance = Math.min(1.0, Math.max(0.0, chance * mult));
             if (rng.nextDouble() < chance) {
                 hits.add(prop);
             }
@@ -99,35 +107,160 @@ final class WorldProps {
         }
         int variantCount = Math.max(1, asInt(row.get("variant_count"), 1));
         boolean blocker = asBool(row.get("is_blocker"), false);
+        boolean navalOnly = parseFlag(row.get("terrain_rules"), "naval_only");
+        boolean wall = parseFlag(row.get("terrain_rules"), "wall");
         Map<Integer, Double> rules = parseTerrainRules(row.get("terrain_rules"));
+        if (navalOnly || wall) {
+            // Naval-only: combat naval layout. wall:true: Walls layer only.
+            return null;
+        }
         if (rules.isEmpty()) {
             return null;
         }
         return new PropDef(id, fileName, variantCount, blocker, rules);
     }
 
-    private static Map<Integer, Double> parseTerrainRules(Object raw) {
+    /** Wall-type props ({@code terrain_rules.wall = true}), lowest id first. */
+    static List<WallProp> walls(ReferenceData data) {
+        List<WallProp> out = new ArrayList<>();
+        if (data == null) {
+            return out;
+        }
+        for (Map<String, Object> row : data.rows("prop")) {
+            if (!parseFlag(row.get("terrain_rules"), "wall")) {
+                continue;
+            }
+            Integer id = asInt(row.get("id"));
+            String fileName = text(row.get("file_name"));
+            if (fileName.isEmpty()) {
+                fileName = text(row.get("filename"));
+            }
+            if (fileName.isEmpty()) {
+                fileName = text(row.get("image_path"));
+            }
+            if (id == null || fileName.isEmpty()) {
+                continue;
+            }
+            fileName = fileName.replace('\\', '/');
+            int slash = fileName.lastIndexOf('/');
+            if (slash >= 0) {
+                fileName = fileName.substring(slash + 1);
+            }
+            if (fileName.toLowerCase().endsWith(".png")) {
+                fileName = fileName.substring(0, fileName.length() - 4);
+            }
+            String name = text(row.get("name"));
+            fileName = wallArtFile(name, fileName);
+            out.add(
+                    new WallProp(
+                            id,
+                            name,
+                            fileName,
+                            Math.max(1, asInt(row.get("variant_count"), 1)),
+                            asBool(row.get("is_blocker"), true),
+                            parseTerrainList(row.get("terrain_rules"))));
+        }
+        out.sort((a, b) -> Integer.compare(a.id(), b.id()));
+        return out;
+    }
+
+    /**
+     * Catalog rows still store the placeholder {@code Wall.png}. Named uploads
+     * replace that placeholder; a specific {@code image_path} is left alone.
+     * Dead Trees has no named file yet, so it keeps {@code Wall}.
+     */
+    private static String wallArtFile(String name, String fileName) {
+        if (fileName == null || !fileName.equalsIgnoreCase("Wall")) {
+            return fileName;
+        }
+        String n = name == null ? "" : name.trim().toLowerCase();
+        return switch (n) {
+            case "wall oak forest" -> "Wall_Oaks";
+            case "wall pine forest" -> "Wall_Snowcaps";
+            case "wall mountains" -> "Wall_Mountains";
+            case "wall volcanic rock" -> "Wall_Volcanic";
+            case "wall mesa" -> "Wall_Mesa";
+            case "wall cave rock" -> "Wall_Cave";
+            default -> fileName;
+        };
+    }
+
+    record WallProp(
+            int id,
+            String name,
+            String fileName,
+            int variantCount,
+            boolean blocker,
+            List<Integer> terrains) {}
+
+    private static boolean parseFlag(Object raw, String flagName) {
+        Map<?, ?> map = asRulesMap(raw);
+        if (map == null) {
+            return false;
+        }
+        Object flag = map.get(flagName);
+        if (flag instanceof Boolean b) {
+            return b;
+        }
+        if (flag instanceof Number n) {
+            return n.intValue() != 0;
+        }
+        if (flag != null) {
+            String t = flag.toString().trim();
+            return "true".equalsIgnoreCase(t) || "1".equals(t);
+        }
+        return false;
+    }
+
+    private static Map<?, ?> asRulesMap(Object raw) {
         Object value = raw;
         if (value != null && !(value instanceof Map<?, ?>) && !(value instanceof String)) {
-            // JDBC jsonb often arrives as PGobject — use its string form.
             value = value.toString();
         }
         if (value instanceof String s) {
             String trimmed = s.trim();
             if (trimmed.isEmpty()) {
-                return Map.of();
+                return null;
             }
             try {
                 value = JSON.readValue(trimmed, MAP_TYPE);
             } catch (Exception ignored) {
-                return Map.of();
+                return null;
             }
         }
-        if (!(value instanceof Map<?, ?> map) || map.isEmpty()) {
+        return value instanceof Map<?, ?> map ? map : null;
+    }
+
+    private static List<Integer> parseTerrainList(Object raw) {
+        Map<?, ?> map = asRulesMap(raw);
+        if (map == null) {
+            return List.of();
+        }
+        Object terrains = map.get("terrains");
+        if (!(terrains instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Integer> out = new ArrayList<>();
+        for (Object item : list) {
+            Integer id = asInt(item);
+            if (id != null && id > 0) {
+                out.add(id);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static Map<Integer, Double> parseTerrainRules(Object raw) {
+        Map<?, ?> map = asRulesMap(raw);
+        if (map == null || map.isEmpty()) {
             return Map.of();
         }
         Map<Integer, Double> out = new LinkedHashMap<>();
         for (Map.Entry<?, ?> entry : map.entrySet()) {
+            String key = String.valueOf(entry.getKey());
+            if ("naval_only".equals(key) || "wall".equals(key) || "terrains".equals(key)) {
+                continue;
+            }
             Integer terrainId = asInt(entry.getKey());
             Double density = asDouble(entry.getValue());
             if (terrainId == null || terrainId <= 0 || density == null) {

@@ -1,16 +1,18 @@
 import { hexDistance } from '../hex/pathfinding'
-import { forEachPassableHex } from '../hex/world'
+import { forEachPassableHex, forEachTile, getTile, isPassable } from '../hex/world'
 import {
   advancedUnitFor,
   buildingById,
   buildingGrowth,
   getCachedCatalog,
   isAdvancedUnit,
+  sizeNameFromDims,
   unitById,
   unitEffectiveTier,
   type ReferenceCatalog,
   type UnitRow,
 } from '../town/catalog'
+import { chestGuardTiers } from '../hex/townFootprint'
 import {
   mapMobAdvancedPct,
   mapMobMinTownDist,
@@ -63,6 +65,12 @@ function occupiedKeys(session: GameSession): Set<string> {
       continue
     }
     keys.add(posKey(node.position))
+  }
+  for (const feature of session.features ?? []) {
+    keys.add(posKey(feature.position))
+    if (feature.kind === 'chest' && feature.guard) {
+      keys.add(posKey(feature.guard))
+    }
   }
   for (const mob of session.mobs) {
     keys.add(posKey(mob.position))
@@ -212,9 +220,10 @@ function candidatesNearTown(
 }
 
 /**
- * Place `map_random_mobs` neutrals around each town using live config
- * (tier cap, Advanced %, min-distance). Always adds a new batch — existing
- * mobs stay; occupied hexes are skipped. New-game seeding no-ops separately.
+ * Place `mobs × size_scale` neutrals across the map (per-map total, not
+ * per-town) using live config (tier cap, Advanced %, min-distance). Always
+ * adds a new batch — existing mobs stay; occupied hexes are skipped.
+ * New-game seeding no-ops separately.
  */
 export function addWorldMobs(session: GameSession): GameSession {
   if (session.towns.length === 0) {
@@ -224,11 +233,17 @@ export function addWorldMobs(session: GameSession): GameSession {
   if (!catalog) {
     return session
   }
-  const perTown = mapRandomMobs(catalog)
-  const maxTier = mapRandomMobsTier(catalog)
-  const advancedPct = mapMobAdvancedPct(catalog)
-  const minTownDist = mapMobMinTownDist(catalog)
-  const townTypeId = mapMobsType(catalog)
+  const sizeName = sizeNameFromDims(
+    catalog,
+    session.game.settings.map_width,
+    session.game.settings.map_height,
+    session.game.settings.map_size,
+  )
+  const total = mapRandomMobs(catalog, sizeName)
+  const maxTier = mapRandomMobsTier(catalog, sizeName)
+  const advancedPct = mapMobAdvancedPct(catalog, sizeName)
+  const minTownDist = mapMobMinTownDist(catalog, sizeName)
+  const townTypeId = mapMobsType(catalog, sizeName)
   let pool = eligibleBaseUnits(catalog, maxTier, townTypeId)
   // Town filter can empty the pool when that faction's units aren't combat-ready
   // yet (e.g. Grove missing speed/abilities). Fall back to all towns so the map
@@ -236,7 +251,7 @@ export function addWorldMobs(session: GameSession): GameSession {
   if (pool.length === 0 && townTypeId > 0) {
     pool = eligibleBaseUnits(catalog, maxTier, 0)
   }
-  if (perTown <= 0 || pool.length === 0) {
+  if (total <= 0 || pool.length === 0) {
     return session
   }
   const townPositions = session.towns.map((town) => town.position)
@@ -244,21 +259,31 @@ export function addWorldMobs(session: GameSession): GameSession {
   const seed = session.game.seed || 1
   let next = session
   let n = session.mobs.length
+  // Build a unique near-town candidate pool, then place a map-total count.
+  const seen = new Set<string>()
+  const spots: Array<{ q: number; r: number }> = []
   for (const town of session.towns) {
-    const spots = candidatesNearTown(
+    for (const hex of candidatesNearTown(
       town.position,
       townPositions,
       occupied,
       minTownDist,
-    )
-    for (let i = 0; i < perTown && spots.length > 0; i += 1) {
-      const pick = mobRand(seed, n) % spots.length
-      const hex = spots.splice(pick, 1)[0]!
-      const unit = pool[mobRand(seed, n + 17) % pool.length]!
-      occupied.add(posKey(hex))
-      next = spawnOne(next, catalog, hex, unit, advancedPct)
-      n += 1
+    )) {
+      const key = posKey(hex)
+      if (seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      spots.push(hex)
     }
+  }
+  for (let i = 0; i < total && spots.length > 0; i += 1) {
+    const pick = mobRand(seed, n) % spots.length
+    const hex = spots.splice(pick, 1)[0]!
+    const unit = pool[mobRand(seed, n + 17) % pool.length]!
+    occupied.add(posKey(hex))
+    next = spawnOne(next, catalog, hex, unit, advancedPct)
+    n += 1
   }
   return next
 }
@@ -270,7 +295,150 @@ export function seedWorldMobs(session: GameSession): GameSession {
   if (session.mobs.length > 0) {
     return session
   }
-  return addWorldMobs(session)
+  return addWorldMobs(seedIslandGuards(seedPocketGuards(seedChestGuards(session))))
+}
+
+function seedPocketGuards(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  const advancedPct = mapMobAdvancedPct(catalog)
+  const townTypeId = mapMobsType(catalog)
+  const occupied = occupiedKeys(session)
+  const seed = session.game.seed || 1
+  let next = session
+  let n = session.mobs.length
+  const entrances: Array<{ q: number; r: number; tier: number }> = []
+  forEachTile((q, r) => {
+    const tile = getTile(q, r)
+    if (!tile?.pocketEntrance || tile.pocketTier == null) {
+      return
+    }
+    entrances.push({ q, r, tier: tile.pocketTier })
+  })
+  for (const entrance of entrances) {
+    const key = posKey(entrance)
+    if (occupied.has(key) || !isPassable(entrance.q, entrance.r)) {
+      continue
+    }
+    let pool = unitsForTiers(catalog, [entrance.tier], townTypeId)
+    if (pool.length === 0 && townTypeId > 0) {
+      pool = unitsForTiers(catalog, [entrance.tier], 0)
+    }
+    if (pool.length === 0) {
+      continue
+    }
+    const unit = pool[mobRand(seed, n + 47) % pool.length]!
+    occupied.add(key)
+    next = spawnOne(next, catalog, entrance, unit, advancedPct)
+    n += 1
+  }
+  return next
+}
+
+function seedIslandGuards(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  const advancedPct = mapMobAdvancedPct(catalog)
+  const townTypeId = mapMobsType(catalog)
+  const occupied = occupiedKeys(session)
+  const seed = session.game.seed || 1
+  let next = session
+  let n = session.mobs.length
+  const landings: Array<{ q: number; r: number; tier: number }> = []
+  forEachTile((q, r) => {
+    const tile = getTile(q, r)
+    if (tile?.islandGuardTier == null) {
+      return
+    }
+    landings.push({ q, r, tier: tile.islandGuardTier })
+  })
+  for (const landing of landings) {
+    const key = posKey(landing)
+    if (occupied.has(key) || !isPassable(landing.q, landing.r)) {
+      continue
+    }
+    let pool = unitsForTiers(catalog, [landing.tier], townTypeId)
+    if (pool.length === 0 && townTypeId > 0) {
+      pool = unitsForTiers(catalog, [landing.tier], 0)
+    }
+    if (pool.length === 0) {
+      continue
+    }
+    const unit = pool[mobRand(seed, n + 53) % pool.length]!
+    occupied.add(key)
+    next = spawnOne(next, catalog, landing, unit, advancedPct)
+    n += 1
+  }
+  return next
+}
+
+function unitsForTiers(
+  catalog: ReferenceCatalog,
+  tiers: number[],
+  townTypeId: number,
+): UnitRow[] {
+  const allowed = new Set(tiers)
+  if (allowed.size === 0) {
+    return []
+  }
+  return catalog.unit.filter((unit) => {
+    if (!unit.has_abilities || isAdvancedUnit(unit) || (unit.speed ?? 0) <= 0) {
+      return false
+    }
+    if (!allowed.has(unitEffectiveTier(catalog, unit))) {
+      return false
+    }
+    if (townTypeId > 0 && unitTownTypeId(catalog, unit) !== townTypeId) {
+      return false
+    }
+    return buildingGrowth(buildingById(catalog, unit.bldg_id)) > 0
+  })
+}
+
+/**
+ * One guard mob per chest on its reserved adjacent hex (BR S9-3).
+ * Tier constrained to the chest row's {@code guard_tiers}.
+ */
+export function seedChestGuards(session: GameSession): GameSession {
+  const catalog = getCachedCatalog()
+  if (!catalog) {
+    return session
+  }
+  const advancedPct = mapMobAdvancedPct(catalog)
+  const townTypeId = mapMobsType(catalog)
+  const occupied = occupiedKeys(session)
+  const seed = session.game.seed || 1
+  let next = session
+  let n = session.mobs.length
+  for (const feature of session.features ?? []) {
+    if (feature.kind !== 'chest' || !feature.guard) {
+      continue
+    }
+    const key = posKey(feature.guard)
+    if (occupied.has(key)) {
+      continue
+    }
+    if (!isPassable(feature.guard.q, feature.guard.r)) {
+      continue
+    }
+    const tiers = chestGuardTiers(catalog, feature.level)
+    let pool = unitsForTiers(catalog, tiers, townTypeId)
+    if (pool.length === 0 && townTypeId > 0) {
+      pool = unitsForTiers(catalog, tiers, 0)
+    }
+    if (pool.length === 0) {
+      continue
+    }
+    const unit = pool[mobRand(seed, n + 31) % pool.length]!
+    occupied.add(key)
+    next = spawnOne(next, catalog, feature.guard, unit, advancedPct)
+    n += 1
+  }
+  return next
 }
 
 function dwellingGrowthFor(
@@ -436,5 +604,11 @@ export function removeWorldMob(session: GameSession, mob: Mob): GameSession {
       (row) => !drop.has(row.id) && row.mob_id !== mob.id,
     ),
     mobs: session.mobs.filter((row) => row.id !== mob.id),
+    // Clear Notice Board Defeat-Mob pointers so a later Accept can respawn.
+    features: (session.features ?? []).map((row) =>
+      row.kind === 'notice_board' && row.target_mob_id === mob.id
+        ? { ...row, target_mob_id: null }
+        : row,
+    ),
   }
 }

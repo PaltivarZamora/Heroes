@@ -1,7 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
-  MAP_SIZES,
+  HEX_SCALES,
   mapSizeChoiceLabel,
+  mapSizes,
+  type HexScaleName,
   type MapSizeName,
 } from '../hex/hexScale'
 import {
@@ -14,10 +16,12 @@ import {
   assembleGameConfig,
   defaultGameConfig,
   defaultPlayerSlots,
-  PLAYER_COUNT_MAX,
-  PLAYER_COUNT_MIN,
+  HEX_SIZE_OPTIONS,
+  MOVE_MODE_OPTIONS,
   PLAYER_CONTROLLER_OPTIONS,
+  playerCountBounds,
   type GameConfig,
+  type MoveMode,
   type PlayerConfig,
   type PlayerController,
 } from './gameConfig'
@@ -56,17 +60,24 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
   const [mapSize, setMapSize] = useState<MapSizeName>(bootDefaults.mapSize)
   const [playerCount, setPlayerCount] = useState(bootDefaults.playerCount)
   const [difficultyId, setDifficultyId] = useState(bootDefaults.difficultyId)
+  const [hexSize, setHexSize] = useState<HexScaleName>(bootDefaults.hexSize)
+  const [moveMode, setMoveMode] = useState<MoveMode>(bootDefaults.moveMode)
   const [slots, setSlots] = useState<PlayerConfig[]>(() =>
     defaultPlayerSlots(catalog),
   )
   // false until catalog is applied once this mount — never skip when catalog was
-  // already cached (F5) or we would keep stale pre-app_config form state.
+  // already cached (F5) or we would keep stale pre-map_config form state.
   const [defaultsApplied, setDefaultsApplied] = useState(false)
   const [catalogError, setCatalogError] = useState<string | null>(null)
 
   const difficulties = catalog?.difficulty ?? []
   const selectedDifficulty =
     difficulties.find((row) => row.id === difficultyId) ?? null
+  const sizeOptions = mapSizes(catalog)
+  const { min: playersMinBound, max: playersMaxBound } = playerCountBounds(
+    catalog,
+    mapSize,
+  )
 
   useEffect(() => {
     if (catalog) {
@@ -85,7 +96,7 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     }
   }, [catalog])
 
-  // Pre-fill once from app_config when catalog is ready; do not overwrite edits after.
+  // Pre-fill once from map_config when catalog is ready; do not overwrite edits after.
   useEffect(() => {
     if (!catalog || defaultsApplied) {
       return
@@ -94,7 +105,9 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     setMapSize(defaults.mapSize)
     setPlayerCount(defaults.playerCount)
     setDifficultyId(defaults.difficultyId)
-    setSlots(defaultPlayerSlots(catalog))
+    setHexSize(defaults.hexSize)
+    setMoveMode(defaults.moveMode)
+    setSlots(defaultPlayerSlots(catalog, defaults.playerCount))
     setDefaultsApplied(true)
   }, [catalog, defaultsApplied])
 
@@ -110,6 +123,16 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     )
     setDifficultyId(normal?.id ?? difficulties[0]?.id ?? 0)
   }, [difficulties, difficultyId, defaultsApplied])
+
+  // Clamp players when map size (and thus players_min/max) changes.
+  useEffect(() => {
+    if (!defaultsApplied) {
+      return
+    }
+    setPlayerCount((current) =>
+      Math.min(playersMaxBound, Math.max(playersMinBound, current)),
+    )
+  }, [defaultsApplied, playersMinBound, playersMaxBound])
 
   const setSlotHero = (index: number, heroTypeId: number | null) => {
     setSlots((current) =>
@@ -127,12 +150,17 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
   }
 
   const onStart = () => {
-    const config = assembleGameConfig({
-      mapSize,
-      playerCount,
-      slots,
-      difficultyId,
-    })
+    const config = assembleGameConfig(
+      {
+        mapSize,
+        playerCount,
+        slots,
+        difficultyId,
+        hexSize,
+        moveMode,
+      },
+      catalog,
+    )
     onStartGame(config)
   }
 
@@ -144,49 +172,81 @@ export function NewGameScreen({ onClose, onStartGame }: NewGameScreenProps) {
     <div className="options-modal" role="dialog" aria-labelledby="new-game-title">
       <div className="options-dialog new-game-dialog">
         <h2 id="new-game-title">New Game</h2>
-        <label className="options-field">
-          Map Size
-          <select
-            value={mapSize}
-            onChange={(event) => setMapSize(event.target.value as MapSizeName)}
-          >
-            {MAP_SIZES.map((name) => (
-              <option key={name} value={name}>
-                {mapSizeChoiceLabel(name)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="options-field">
-          Players
-          <select
-            value={playerCount}
-            onChange={(event) => setPlayerCount(Number(event.target.value))}
-          >
-            {Array.from(
-              { length: PLAYER_COUNT_MAX - PLAYER_COUNT_MIN + 1 },
-              (_, i) => PLAYER_COUNT_MIN + i,
-            ).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="options-field">
-          Difficulty
-          <select
-            value={difficultyId || ''}
-            onChange={(event) => setDifficultyId(Number(event.target.value))}
-            disabled={difficulties.length === 0}
-          >
-            {difficulties.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="new-game-fields">
+          <label className="options-field options-field-row">
+            <span className="options-field-label">Map Size</span>
+            <select
+              value={mapSize}
+              onChange={(event) => setMapSize(event.target.value as MapSizeName)}
+            >
+              {sizeOptions.map((name) => (
+                <option key={name} value={name}>
+                  {mapSizeChoiceLabel(name, catalog)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="options-field options-field-row">
+            <span className="options-field-label">Difficulty</span>
+            <select
+              value={difficultyId || ''}
+              onChange={(event) => setDifficultyId(Number(event.target.value))}
+              disabled={difficulties.length === 0}
+            >
+              {difficulties.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="options-field options-field-row">
+            <span className="options-field-label">Players</span>
+            <select
+              value={playerCount}
+              onChange={(event) => setPlayerCount(Number(event.target.value))}
+            >
+              {Array.from(
+                { length: playersMaxBound - playersMinBound + 1 },
+                (_, i) => playersMinBound + i,
+              ).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="options-field options-field-row">
+            <span className="options-field-label">Hex Size</span>
+            <select
+              value={hexSize}
+              onChange={(event) =>
+                setHexSize(event.target.value as HexScaleName)
+              }
+            >
+              {HEX_SIZE_OPTIONS.map((name) => (
+                <option key={name} value={name}>
+                  {name} ({HEX_SCALES[name]})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="options-field options-field-row">
+            <span className="options-field-label">Speed</span>
+            <select
+              value={moveMode}
+              onChange={(event) =>
+                setMoveMode(event.target.value as MoveMode)
+              }
+            >
+              {MOVE_MODE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         {selectedDifficulty && difficultyDisplay(selectedDifficulty) ? (
           <p className="new-game-difficulty-note">
             {difficultyDisplay(selectedDifficulty)}

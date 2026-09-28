@@ -6,7 +6,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { Application, Container, Graphics } from 'pixi.js'
+import { Application, Container, Graphics, Sprite } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
 import {
   ATTACKER_COL,
@@ -25,6 +25,18 @@ import {
   hexFloorAnchor,
   siegeMoatColForRow,
 } from './battlefield'
+import {
+  generateNavalCombatTiles,
+  isNavalBoatWaterWedge,
+  navalCellsFromGrid,
+  navalDeploymentColumns,
+  navalFallbackFill,
+  navalLandSides,
+  navalShipSides,
+  navalWaterColumns,
+  type NavalLayoutKind,
+} from './naval'
+import { ensureValidDeployments } from './deploySafety'
 import { seedBattlePropsFromWorld } from './battleProps'
 import {
   addChunkMaskedTerrain,
@@ -90,9 +102,9 @@ import {
   stackMoveSpeed,
 } from './battle'
 import {
-  footprintBottomRow,
+  footprintBottomRowCentered,
   footprintExtent,
-  footprintHexes,
+  footprintHexesCentered,
   parseFootprint,
   type FootprintCode,
 } from './footprint'
@@ -270,6 +282,8 @@ type CombatScreenProps = {
   defenderHeroId: string | null
   siegeTownId?: string | null
   defenderMobId?: string | null
+  /** Naval battlefield variant (world boat fight or Fixed Fight). */
+  navalLayout?: NavalLayoutKind | null
   debugSections: DebugSections
   onExit: (levelUp?: LevelUpNotice | null) => void
 }
@@ -567,6 +581,7 @@ export function CombatScreen({
   defenderHeroId,
   siegeTownId,
   defenderMobId,
+  navalLayout = null,
   debugSections,
   onExit,
 }: CombatScreenProps) {
@@ -592,6 +607,10 @@ export function CombatScreen({
   const bridgeArtApiRef = useRef<{ setOpen: (open: boolean) => void } | null>(
     null,
   )
+  const navalMaskApiRef = useRef<{ setVisible: (on: boolean) => void } | null>(
+    null,
+  )
+  const [navalMaskDebug, setNavalMaskDebug] = useState(false)
   const activeApiRef = useRef<{ setKey: (key: string | null) => void } | null>(
     null,
   )
@@ -1935,6 +1954,14 @@ export function CombatScreen({
         moatMult,
       )
     }
+    const deployFix = ensureValidDeployments(
+      created,
+      catalog,
+      field.tiles,
+      (heroId) =>
+        session.heroes.find((hero) => hero.id === heroId)?.name ?? null,
+    )
+    created = deployFix.battle
     const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
     const defender = defenderHeroId
       ? session.heroes.find((hero) => hero.id === defenderHeroId)
@@ -1959,8 +1986,9 @@ export function CombatScreen({
     setBattle(created)
     setOpening(snap)
     openingRef.current = snap
-    if (totems.lines.length > 0) {
-      queueBattleLog({ lines: totems.lines })
+    const startLines = [...deployFix.lines, ...totems.lines]
+    if (startLines.length > 0) {
+      queueBattleLog({ lines: startLines })
     } else {
       setLog(null)
     }
@@ -3000,8 +3028,11 @@ export function CombatScreen({
     )
     const hexPx = Math.max(16, Math.round(grid.hexPrototype.width))
     const byOffset = hexByOffset(grid)
-    const attackerCol = ATTACKER_COL
-    const defenderCol = DEFENDER_COL
+    const deploy = navalLayout
+      ? navalDeploymentColumns(navalLayout)
+      : { attackerCol: ATTACKER_COL, defenderCol: DEFENDER_COL }
+    const attackerCol = deploy.attackerCol
+    const defenderCol = deploy.defenderCol
     const markers = [
       ...markersForColumn(byOffset, attackerCol, layout.offsetX, layout.offsetY, 'atk'),
       ...markersForColumn(byOffset, defenderCol, layout.offsetX, layout.offsetY, 'def'),
@@ -3067,6 +3098,11 @@ export function CombatScreen({
       const reach = new Graphics()
       const auraMark = new Graphics()
       const activeMark = new Graphics()
+      const deckArtLayer = new Container()
+      const landFillLayer = new Container()
+      const waterStripLayer = new Container()
+      const navalMaskLayer = new Container()
+      navalMaskLayer.visible = false
       const terrainLayer = new Container()
       const propLayer = new Container()
       const moatClosedLayer = new Container()
@@ -3089,13 +3125,175 @@ export function CombatScreen({
         seed,
         catalog,
       )
-      const tiles = seedBattlePropsFromWorld(
-        combatTilesFromHexField(field, catalog, Boolean(siegeLayout)),
-        catalog,
-        attackerPos,
-        defenderPos,
-        { seed, siege: Boolean(siegeLayout) },
+      // Mask uses the same grid's offset col/row (not axial q) — see naval.ts.
+      const tiles = navalLayout
+        ? await generateNavalCombatTiles(
+            navalCellsFromGrid(grid),
+            catalog,
+            navalLayout,
+            seed,
+            attackerPos,
+          )
+        : seedBattlePropsFromWorld(
+            combatTilesFromHexField(field, catalog, Boolean(siegeLayout)),
+            catalog,
+            attackerPos,
+            defenderPos,
+            { seed, siege: Boolean(siegeLayout) },
+          )
+
+      // Naval deck art (Boat.png): stretch to fill each side's deck columns only
+      // (outer edge → water column start, full battlefield height). No aspect lock.
+      let boatDeckTexture =
+        hexTerrainTextures.get('Boat') ??
+        hexTerrainTextures.get('boat') ??
+        null
+      if (!boatDeckTexture && navalLayout) {
+        const boatRow = hexTerrainByName(catalog, 'Boat')
+        const file = boatRow?.image_path?.replace(/^\/+/, '') || 'Boat.png'
+        boatDeckTexture =
+          (await loadTextureUrl(`/assets/terrain/${file}`, true)) ??
+          (await loadTextureUrl('/assets/terrain/Boat.png', true))
+      }
+      const waterTerrainTex =
+        hexTerrainTextures.get('Water') ??
+        hexTerrainTextures.get('water') ??
+        null
+      const shipSides = navalLayout ? navalShipSides(navalLayout) : null
+      const landSides = navalLayout ? navalLandSides(navalLayout) : null
+      let waterLeft = Infinity
+      let waterRight = -Infinity
+      let fieldMinY = Infinity
+      let fieldMaxY = -Infinity
+      let fieldMinX = Infinity
+      let fieldMaxX = -Infinity
+      if (navalLayout) {
+        const waterCols = navalWaterColumns(COMBAT_COLUMNS)
+        for (const tile of tiles) {
+          const hex = hexByKey.get(hexKey(tile.q, tile.r))
+          if (!hex || tile.col == null) {
+            continue
+          }
+          for (const corner of hex.corners) {
+            const x = corner.x + offsetX
+            const y = corner.y + offsetY
+            fieldMinX = Math.min(fieldMinX, x)
+            fieldMaxX = Math.max(fieldMaxX, x)
+            fieldMinY = Math.min(fieldMinY, y)
+            fieldMaxY = Math.max(fieldMaxY, y)
+            if (waterCols.includes(tile.col)) {
+              waterLeft = Math.min(waterLeft, x)
+              waterRight = Math.max(waterRight, x)
+            }
+          }
+        }
+        // Full-height water strip behind decks — fills zigzag notches; no black.
+        if (
+          waterTerrainTex &&
+          Number.isFinite(waterLeft) &&
+          waterRight > waterLeft
+        ) {
+          const stripW = Math.max(1, waterRight - waterLeft)
+          const stripH = Math.max(1, fieldMaxY - fieldMinY)
+          const tw = Math.max(1, waterTerrainTex.width)
+          const th = Math.max(1, waterTerrainTex.height)
+          const strip = new Sprite({
+            texture: waterTerrainTex,
+            anchor: 0.5,
+            x: (waterLeft + waterRight) / 2,
+            y: (fieldMinY + fieldMaxY) / 2,
+          })
+          strip.scale.set(stripW / tw, stripH / th)
+          waterStripLayer.addChild(strip)
+        }
+        // Land half rectangle fill (same idea as deck / water strip).
+        if (
+          landSides &&
+          (landSides.left || landSides.right) &&
+          Number.isFinite(waterLeft) &&
+          Number.isFinite(fieldMinX)
+        ) {
+          const landTile = tiles.find((tile) => tile.navalKind === 'land')
+          const landName = landTile?.terrain?.trim() ?? ''
+          const landRow = landName
+            ? hexTerrainByName(catalog, landName)
+            : null
+          const landTex =
+            (landName
+              ? hexTerrainTextures.get(landName) ??
+                hexTerrainTextures.get(landName.replaceAll(' ', '_'))
+              : null) ?? null
+          const landColor = landRow
+            ? parseCssHexColor(landRow.color)
+            : navalFallbackFill('land') ?? 0x5a7a3a
+          const landH = Math.max(1, fieldMaxY - fieldMinY)
+          const placeLandFill = (left: number, right: number) => {
+            const landW = Math.max(1, right - left)
+            const cx = (left + right) / 2
+            const cy = (fieldMinY + fieldMaxY) / 2
+            if (landTex) {
+              const tw = Math.max(1, landTex.width)
+              const th = Math.max(1, landTex.height)
+              const sprite = new Sprite({
+                texture: landTex,
+                anchor: 0.5,
+                x: cx,
+                y: cy,
+              })
+              sprite.scale.set(landW / tw, landH / th)
+              landFillLayer.addChild(sprite)
+              return
+            }
+            const g = new Graphics()
+            g.rect(left, fieldMinY, landW, landH)
+            g.fill({ color: landColor })
+            landFillLayer.addChild(g)
+          }
+          if (landSides.left) {
+            placeLandFill(fieldMinX, waterLeft)
+          }
+          if (landSides.right) {
+            placeLandFill(waterRight, fieldMaxX)
+          }
+        }
+      }
+      if (boatDeckTexture && shipSides && navalLayout) {
+        const deckH = Math.max(1, fieldMaxY - fieldMinY)
+        const placeDeck = (
+          left: number,
+          right: number,
+          flipBoth: boolean,
+        ) => {
+          const deckW = Math.max(1, right - left)
+          const tw = Math.max(1, boatDeckTexture!.width)
+          const th = Math.max(1, boatDeckTexture!.height)
+          const scaleX = deckW / tw
+          const scaleY = deckH / th
+          const sprite = new Sprite({
+            texture: boatDeckTexture!,
+            anchor: 0.5,
+            x: (left + right) / 2,
+            y: (fieldMinY + fieldMaxY) / 2,
+          })
+          if (flipBoth) {
+            sprite.scale.set(-scaleX, -scaleY)
+          } else {
+            sprite.scale.set(scaleX, scaleY)
+          }
+          deckArtLayer.addChild(sprite)
+        }
+        if (shipSides.left) {
+          placeDeck(fieldMinX, waterLeft, false)
+        }
+        if (shipSides.right) {
+          placeDeck(waterRight, fieldMaxX, true)
+        }
+      }
+      const hideNavalTerrainPaint = Boolean(
+        boatDeckTexture && shipSides && (shipSides.left || shipSides.right),
       )
+      const shoreWedges =
+        navalLayout === 'boat_vs_land' || navalLayout === 'land_vs_boat'
 
       const terrainByCoord = new Map(
         tiles.map((tile) => [`${tile.q},${tile.r}`, tile] as const),
@@ -3159,7 +3357,30 @@ export function CombatScreen({
             tile.r === gateMoat.r
           const decor = chunkDecors.get(`${tile.q},${tile.r}`)
 
-          if (isMoat && isGateMoat) {
+          const navalFill = navalFallbackFill(tile.navalKind ?? undefined)
+          const fillColor = hexRow
+            ? parseCssHexColor(hexRow.color)
+            : navalFill != null
+              ? navalFill
+              : terrainFillColor(tile.terrain)
+          const waterMinCol = Math.min(...navalWaterColumns(COMBAT_COLUMNS))
+          const waterMaxCol = Math.max(...navalWaterColumns(COMBAT_COLUMNS))
+          const skipDeckUnderBoat =
+            hideNavalTerrainPaint &&
+            shipSides != null &&
+            tile.navalKind === 'deck' &&
+            tile.col != null &&
+            ((shipSides.left && tile.col < waterMinCol) ||
+              (shipSides.right && tile.col > waterMaxCol))
+          // Centre column: continuous water strip only — no per-hex Water tiles.
+          const skipWaterHexTile =
+            Boolean(navalLayout) &&
+            (tile.navalKind === 'water' || tile.navalKind === 'gangplank')
+          const skipShipTerrain = skipDeckUnderBoat || skipWaterHexTile
+
+          if (skipShipTerrain) {
+            // Deck → Boat.png; water/gangplank → full-height water strip (+ prop).
+          } else if (isMoat && isGateMoat) {
             const moatTex =
               hexTerrainTextures.get('Moat') ??
               hexTerrainTextures.get('moat')
@@ -3175,9 +3396,7 @@ export function CombatScreen({
             } else {
               fills.poly(poly)
               fills.fill({
-                color: hexRow
-                  ? parseCssHexColor(hexRow.color)
-                  : terrainFillColor(tile.terrain),
+                color: fillColor,
               })
             }
           } else if (useTerrainImages && decor && hexRow) {
@@ -3192,16 +3411,36 @@ export function CombatScreen({
               }
             })
             addChunkMaskedTerrain(cell, expanded, decor)
+          } else if (useTerrainImages && decor && !hexRow && navalFill == null) {
+            const center = hexCenter(hex)
+            const expanded = poly.map((corner) => {
+              const dx = corner.x - center.x
+              const dy = corner.y - center.y
+              const len = Math.hypot(dx, dy) || 1
+              return {
+                x: corner.x + (dx / len) * 2,
+                y: corner.y + (dy / len) * 2,
+              }
+            })
+            addChunkMaskedTerrain(cell, expanded, decor)
           } else {
+            // Missing Boat terrain art → naval mask colours (or catalog colour).
             fills.poly(poly)
             fills.fill({
-              color: hexRow
-                ? parseCssHexColor(hexRow.color)
-                : terrainFillColor(tile.terrain),
+              color: fillColor,
             })
           }
 
-          if (hexRow) {
+          // Shore blend: land↔Water wedges on boat/land layouts; Boat↔Water stay off.
+          const runWedges = hexRow
+            ? navalLayout
+              ? shoreWedges &&
+                (tile.navalKind === 'land' ||
+                  tile.navalKind === 'water' ||
+                  tile.navalKind === 'gangplank')
+              : !skipShipTerrain
+            : false
+          if (runWedges && hexRow) {
             const wedges = wedgesForHex(
               catalog,
               hex,
@@ -3216,6 +3455,12 @@ export function CombatScreen({
               terrainLookup,
             )
             for (const wedge of wedges) {
+              if (
+                navalLayout &&
+                isNavalBoatWaterWedge(tile.terrain, wedge.terrain.name)
+              ) {
+                continue
+              }
               if (useTerrainImages) {
                 if (wedge.fromBuffer) {
                   const bufTex =
@@ -3256,6 +3501,15 @@ export function CombatScreen({
             strokes.poly(poly)
             strokes.stroke({ width: 2, color: 0x111111 })
           }
+          if (tile.navalKind) {
+            const tint = new Graphics()
+            tint.poly(poly)
+            tint.fill({
+              color: navalFallbackFill(tile.navalKind) ?? 0xffffff,
+              alpha: 0.45,
+            })
+            navalMaskLayer.addChild(tint)
+          }
         }
       }
 
@@ -3273,8 +3527,33 @@ export function CombatScreen({
             return
           }
           const code = parseFootprint(tile.propFootprint ?? '1x1')
-          const cover = footprintHexes({ q: tile.q, r: tile.r }, code, 1)
-          const bottoms = footprintBottomRow({ q: tile.q, r: tile.r }, code, 1)
+          const ext = footprintExtent(code)
+          // Horizontal prop footprints (e.g. gangplank 3x1): resolve by offset
+          // col/row so the span matches the deck–water–deck row on the grid.
+          let cover: Array<{ q: number; r: number }>
+          let bottoms: Array<{ q: number; r: number }>
+          if (
+            tile.col != null &&
+            tile.row != null &&
+            ext.rows === 1 &&
+            ext.cols > 1
+          ) {
+            const half = Math.floor(ext.cols / 2)
+            cover = []
+            for (let dc = -half; dc <= half; dc += 1) {
+              const cell = byOffset.get(`${tile.col + dc},${tile.row}`)
+              if (cell) {
+                cover.push({ q: cell.q, r: cell.r })
+              }
+            }
+            bottoms = cover
+          } else {
+            cover = footprintHexesCentered({ q: tile.q, r: tile.r }, code)
+            bottoms = footprintBottomRowCentered(
+              { q: tile.q, r: tile.r },
+              code,
+            )
+          }
           const centers: Array<{ x: number; y: number }> = []
           const bottomCenters: Array<{ x: number; y: number }> = []
           for (const h of cover) {
@@ -3361,17 +3640,33 @@ export function CombatScreen({
       }
       const world = new Container()
       world.addChild(
+        waterStripLayer,
+        landFillLayer,
+        deckArtLayer,
         fills,
         terrainLayer,
         moatClosedLayer,
         moatOpenLayer,
         propLayer,
         strokes,
+        navalMaskLayer,
         auraMark,
         reach,
         activeMark,
       )
       instance.stage.addChild(world)
+      navalMaskApiRef.current = {
+        setVisible(on: boolean) {
+          navalMaskLayer.visible = on
+        },
+      }
+      navalMaskLayer.visible = false
+      // Sync after mount — toggle must not remount the battlefield.
+      queueMicrotask(() => {
+        if (!cancelled) {
+          navalMaskLayer.visible = navalMaskDebug
+        }
+      })
 
       const drawReach = (goldKeys: string[], redKeys: string[] = []) => {
         reach.clear()
@@ -3835,11 +4130,16 @@ export function CombatScreen({
       reachApiRef.current = null
       auraApiRef.current = null
       bridgeArtApiRef.current = null
+      navalMaskApiRef.current = null
       activeApiRef.current = null
       fieldRef.current = null
       app?.destroy()
     }
-  }, [attackerHeroId, defenderHeroId, siegeTownId, defenderMobId, catalog])
+  }, [attackerHeroId, defenderHeroId, siegeTownId, defenderMobId, navalLayout, catalog])
+
+  useEffect(() => {
+    navalMaskApiRef.current?.setVisible(navalMaskDebug)
+  }, [navalMaskDebug])
 
   return (
     <div
@@ -3852,7 +4152,17 @@ export function CombatScreen({
       <header className="town-management-bar">
         <h1 id="combat-screen-title">Combat</h1>
         <div className="combat-debug-end">
-          <DebugCopyPanel sections={debugSections} />
+          <DebugCopyPanel
+            sections={debugSections}
+            navalMaskDebug={
+              navalLayout
+                ? {
+                    enabled: navalMaskDebug,
+                    onToggle: () => setNavalMaskDebug((on) => !on),
+                  }
+                : undefined
+            }
+          />
           <button
             type="button"
             onClick={() => {

@@ -2336,7 +2336,7 @@ function applyOneEffect(
 
   // Smoke Bomb / Explosive Trap: place a ground-effect zone (template + cast stats).
   // Cast must ONLY place — damage / stun / evasion numbers live on the zone and
-  // apply later (passive while inside, or on Ground/Submerge entry). Do not run
+  // apply later (passive while inside, or on Ground entry). Do not run
   // the rest of applyOneEffect or radius_stat_div / inflicts_condition will fire
   // as an instant board-wide ability (the S6-26 Trap regression).
   // Fireball / Meteor / Wildfire are hybrids — skip this early exit.
@@ -3039,6 +3039,12 @@ const hitOne = (target: CombatStack, raw: number) => {
         }
         if (struck.crits > 0) {
           notes.push(struck.crits === 1 ? 'crit' : `${struck.crits} crits`)
+        }
+        if (struck.rangePenalty) {
+          notes.push('range penalty')
+        }
+        if (struck.hoverPenalty) {
+          notes.push('−50% (Hover)')
         }
         const block =
           struck.blockBy && struck.blocked > 0

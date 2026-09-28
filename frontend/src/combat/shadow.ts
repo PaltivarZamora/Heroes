@@ -497,18 +497,16 @@ function necromancerMoveTypeAllowed(
   filters: string[],
 ): boolean {
   if (filters.length === 0) {
-    // Legacy equivalent: Ground + Submerge (not flying/hover).
+    // Ground walkers only (not flying/hover).
     return kind !== 'flying' && kind !== 'hover'
   }
   const allowed = new Set(filters.map((row) => row.trim().toLowerCase()))
+  // Legacy "submerge" filter strings (retired move type) still match Walkers.
   if (kind === 'ground') {
-    return allowed.has('ground')
-  }
-  if (kind === 'submerge') {
-    return allowed.has('submerge')
+    return allowed.has('ground') || allowed.has('submerge') || allowed.has('walker')
   }
   if (kind === 'flying') {
-    return allowed.has('flying')
+    return allowed.has('flying') || allowed.has('fly')
   }
   if (kind === 'hover') {
     return allowed.has('hover')

@@ -19,6 +19,7 @@ import {
   heroHasDiscipline,
   mergeLibraryOffers,
 } from './libraryRules'
+import { recordAbilityLearned } from '../session/quests'
 
 const TOWN_UNIQUE_SLOT = 9
 
@@ -773,7 +774,7 @@ function applyInfernalArchive(
     heroName: hero.name,
     abilityNames,
   }
-  return {
+  let granted: GameSession = {
     ...next,
     heroes: next.heroes.map((row) =>
       row.id === heroId
@@ -781,6 +782,10 @@ function applyInfernalArchive(
         : row,
     ),
   }
+  for (const abilityId of added) {
+    granted = recordAbilityLearned(granted, heroId, abilityId)
+  }
+  return granted
 }
 
 function isAdvancedTierBuilding(building: BuildingRow): boolean {

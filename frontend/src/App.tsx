@@ -7,6 +7,7 @@ import {
   type HeroHudState,
 } from './hex/debug'
 import { DebugCopyPanel } from './hex/DebugCopyPanel'
+import { getWorldRenderStats, type WorldRenderStats } from './hex/worldRenderChunks'
 import { formatMovementPoints, HERO_MARKER_LABEL } from './hex/hero'
 import {
   DEFAULT_HEX_SCALE,
@@ -14,6 +15,7 @@ import {
   mapSizeLabel,
   type HexScaleName,
 } from './hex/hexScale'
+import { parseHexSize } from './options/gameConfig'
 import {
   formatResourceLines,
   type ResourceWallet,
@@ -23,7 +25,15 @@ import { calendarRolloverTitle, calendarDayNumber, formatCalendar } from './hex/
 import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
 import { FriendlyTrade } from './town/FriendlyTrade'
+import { WorldLibrary } from './town/WorldLibrary'
+import { WorldHangerFlight } from './town/WorldHangerFlight'
+import { DockBuy } from './town/DockBuy'
+import { WorldRecruits } from './town/WorldRecruits'
+import { WorldNoticeBoard } from './town/WorldNoticeBoard'
+import { QuestLog } from './town/QuestLog'
 import { CombatScreen } from './combat/CombatScreen'
+import type { NavalLayoutKind } from './combat/naval'
+import { boatOccupiedByHero } from './hex/boat'
 import { getCachedCatalog, heroMovementPoints, refreshCatalogFromDb } from './town/catalog'
 import { OptionsMenu } from './options/OptionsMenu'
 import {
@@ -35,7 +45,9 @@ import { getSession, setSession, subscribe, updateSession } from './session/stor
 import {
   type LevelUpNotice,
 } from './session/xp'
+import { claimChest } from './session/chest'
 import { createSessionFromConfig } from './session/create'
+import { creditVisitFeature, recordNoticeBoardKnowledge } from './session/quests'
 import {
   acceptMobSurrender,
   declineMobSurrender,
@@ -158,6 +170,7 @@ function App() {
     defenderHeroId: string | null
     siegeTownId?: string
     defenderMobId?: string
+    navalLayout?: NavalLayoutKind
   } | null>(null)
   const [dateNotice, setDateNotice] = useState<{
     title: string
@@ -186,6 +199,18 @@ function App() {
   const [mapEpoch, setMapEpoch] = useState(0)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
   const [aiPhase, setAiPhase] = useState<'idle' | 'running' | 'review'>('idle')
+  const [terrainWedgesEnabled, setTerrainWedgesEnabled] = useState(true)
+  const [zonesDebug, setZonesDebug] = useState(false)
+  const [wallGapsDebug, setWallGapsDebug] = useState(false)
+  const [roadPlanDebug, setRoadPlanDebug] = useState(false)
+  const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setWorldPerf(getWorldRenderStats())
+    }, 400)
+    return () => window.clearInterval(id)
+  }, [])
   const aiRanKeyRef = useRef('')
   const aiTraces = useSyncExternalStore(subscribeAiTraces, getAiTraceBlocks)
   const calendar = session.game.calendar
@@ -196,6 +221,206 @@ function App() {
     lastTownRef.current = next
     setWelcomeTown(next)
   }, [])
+  const onFountainRestore = useCallback((message: string) => {
+    setDateNotice({ title: message, date: '' })
+  }, [])
+  const onSignRead = useCallback((text: string) => {
+    setDateNotice({ title: '', date: '', lines: [text] })
+  }, [])
+  const [questLogOpen, setQuestLogOpen] = useState(false)
+  const [worldNoticeBoard, setWorldNoticeBoard] = useState<{
+    featureId: string
+    heroId: string
+  } | null>(null)
+  const creditFeatureVisit = useCallback(
+    (featureId: string, heroId: string) => {
+      updateSession((current) => {
+        const hero = current.heroes.find((row) => row.id === heroId)
+        if (!hero) {
+          return current
+        }
+        return creditVisitFeature(current, featureId, hero.player_id)
+      })
+    },
+    [],
+  )
+  const [dockBuy, setDockBuy] = useState<{
+    featureId: string
+    heroId: string
+  } | null>(null)
+  const [worldLibrary, setWorldLibrary] = useState<{
+    featureId: string
+    heroId: string
+  } | null>(null)
+  const onWorldLibrary = useCallback(
+    (offer: { featureId: string; heroId: string }) => {
+      setCombat(null)
+      setTrade(null)
+      setWelcomeTown(null)
+      setChestOffer(null)
+      setWorldHanger(null)
+      setDockBuy(null)
+      setWorldRecruits(null)
+      setWorldNoticeBoard(null)
+      setWorldLibrary(offer)
+      creditFeatureVisit(offer.featureId, offer.heroId)
+    },
+    [creditFeatureVisit],
+  )
+  const closeWorldLibrary = useCallback(() => {
+    setWorldLibrary(null)
+    setMapInputLocked(false)
+  }, [])
+  const [worldHanger, setWorldHanger] = useState<{
+    featureId: string
+    heroId: string
+  } | null>(null)
+  const onWorldHanger = useCallback(
+    (offer: { featureId: string; heroId: string }) => {
+      setCombat(null)
+      setTrade(null)
+      setWelcomeTown(null)
+      setChestOffer(null)
+      setWorldLibrary(null)
+      setDockBuy(null)
+      setWorldRecruits(null)
+      setWorldNoticeBoard(null)
+      setWorldHanger(offer)
+      creditFeatureVisit(offer.featureId, offer.heroId)
+    },
+    [creditFeatureVisit],
+  )
+  const closeWorldHanger = useCallback(() => {
+    setWorldHanger(null)
+    setMapInputLocked(false)
+  }, [])
+  const onWorldDock = useCallback(
+    (offer: { featureId: string; heroId: string }) => {
+      setCombat(null)
+      setTrade(null)
+      setWelcomeTown(null)
+      setChestOffer(null)
+      setWorldLibrary(null)
+      setWorldHanger(null)
+      setWorldRecruits(null)
+      setWorldNoticeBoard(null)
+      setDockBuy(offer)
+      creditFeatureVisit(offer.featureId, offer.heroId)
+    },
+    [creditFeatureVisit],
+  )
+  const closeDockBuy = useCallback(() => {
+    setDockBuy(null)
+    setMapInputLocked(false)
+  }, [])
+  const [worldRecruits, setWorldRecruits] = useState<{
+    featureId: string
+    heroId: string
+  } | null>(null)
+  const onWorldRecruits = useCallback(
+    (offer: { featureId: string; heroId: string }) => {
+      setCombat(null)
+      setTrade(null)
+      setWelcomeTown(null)
+      setChestOffer(null)
+      setWorldLibrary(null)
+      setWorldHanger(null)
+      setDockBuy(null)
+      setWorldNoticeBoard(null)
+      setWorldRecruits(offer)
+      creditFeatureVisit(offer.featureId, offer.heroId)
+    },
+    [creditFeatureVisit],
+  )
+  const closeWorldRecruits = useCallback(() => {
+    setWorldRecruits(null)
+    setMapInputLocked(false)
+  }, [])
+  const onWorldNoticeBoard = useCallback(
+    (offer: { featureId: string; heroId: string }) => {
+      setCombat(null)
+      setTrade(null)
+      setWelcomeTown(null)
+      setChestOffer(null)
+      setWorldLibrary(null)
+      setWorldHanger(null)
+      setDockBuy(null)
+      setWorldRecruits(null)
+      setWorldNoticeBoard(offer)
+      creditFeatureVisit(offer.featureId, offer.heroId)
+      updateSession((current) => {
+        const hero = current.heroes.find((row) => row.id === offer.heroId)
+        if (!hero) {
+          return current
+        }
+        return recordNoticeBoardKnowledge(current, offer.featureId, hero.player_id)
+      })
+    },
+    [creditFeatureVisit],
+  )
+  const closeWorldNoticeBoard = useCallback(() => {
+    setWorldNoticeBoard(null)
+    setMapInputLocked(false)
+  }, [])
+  const [chestOffer, setChestOffer] = useState<{
+    featureId: string
+    title: string
+    heroId: string
+  } | null>(null)
+  const onChestOffer = useCallback(
+    (offer: { featureId: string; title: string; heroId: string }) => {
+      setCombat(null)
+      setTrade(null)
+      setWelcomeTown(null)
+      setChestOffer(offer)
+    },
+    [],
+  )
+  const resolveChestChoice = useCallback(
+    (choice: 'xp' | 'loot' | 'leave') => {
+      const offer = chestOffer
+      setChestOffer(null)
+      setMapInputLocked(false)
+      if (!offer) {
+        return
+      }
+      const catalog = getCachedCatalog()
+      if (!catalog) {
+        return
+      }
+      let claimResult: ReturnType<typeof claimChest> | null = null
+      updateSession((current) => {
+        const result = claimChest(
+          current,
+          catalog,
+          offer.featureId,
+          offer.heroId,
+          choice,
+        )
+        claimResult = result
+        return result.session
+      })
+      const claimed = claimResult as ReturnType<typeof claimChest> | null
+      const message = claimed?.message ?? null
+      const messageLines = claimed?.messageLines ?? null
+      const levelUp = claimed?.levelUpNotice ?? null
+      if (message || (messageLines && messageLines.length > 0)) {
+        setDateNotice({
+          title: message ?? '',
+          date: '',
+          lines: messageLines ?? undefined,
+        })
+      }
+      if (levelUp) {
+        pendingLevelUpRef.current = levelUp
+        if (!message && !(messageLines && messageLines.length > 0)) {
+          setLevelUpNotice(levelUp)
+          pendingLevelUpRef.current = null
+        }
+      }
+    },
+    [chestOffer],
+  )
   const showDateThenLevelUp = useCallback(
     (
       notice: { title: string; date: string; lines?: string[] },
@@ -247,10 +472,15 @@ function App() {
       occupied?.player_id && occupied.player_id !== self.player_id
         ? occupied.id
         : undefined
+    const selfBoat = boatOccupiedByHero(current, self.id)
+    const otherBoat = boatOccupiedByHero(current, other.id)
+    const navalLayout =
+      selfBoat && otherBoat && !siegeTownId ? 'boat_vs_boat' : undefined
     setCombat({
       attackerHeroId: self.id,
       defenderHeroId: other.id,
       siegeTownId,
+      navalLayout,
     })
   }, [])
   const onSiegeTown = useCallback((townId: string) => {
@@ -595,6 +825,7 @@ function App() {
       setMapInputLocked(false)
       setMapCameraFollowMoves(true)
       clearCachedGrid()
+      setHexScale(config.hexSize)
       setSession(createSessionFromConfig(config))
       const catalog = getCachedCatalog()
       if (catalog) {
@@ -618,6 +849,38 @@ function App() {
       remaining: row.movement_remaining,
     })
   }, [])
+
+  const playHeroFlight = useCallback(
+    (heroId: string) => {
+      adoptHero(heroId)
+      setWorldHanger(null)
+      setDockBuy(null)
+      setWorldRecruits(null)
+      setWorldNoticeBoard(null)
+      setWelcomeTown(null)
+      setMapInputLocked(true)
+      setMapCameraFollowMoves(true)
+      void (async () => {
+        await Promise.resolve()
+        const result = await requestPlayHeroFlight(heroId)
+        setMapInputLocked(false)
+        adoptHero(heroId)
+        if (result.siegeTownId) {
+          onSiegeTown(result.siegeTownId)
+          return
+        }
+        if (result.arrivedTownId) {
+          const town = findTownById(getSession(), result.arrivedTownId)
+          if (town) {
+            const next = { id: town.id, name: town.name }
+            lastTownRef.current = next
+            setWelcomeTown(next)
+          }
+        }
+      })()
+    },
+    [adoptHero, onSiegeTown],
+  )
 
   const cycleTown = useCallback((reverse = false) => {
     const current = getSession()
@@ -735,6 +998,36 @@ function App() {
           onFleeLetThem()
           return
         }
+        if (worldLibrary) {
+          event.preventDefault()
+          closeWorldLibrary()
+          return
+        }
+        if (worldHanger) {
+          event.preventDefault()
+          closeWorldHanger()
+          return
+        }
+        if (dockBuy) {
+          event.preventDefault()
+          closeDockBuy()
+          return
+        }
+        if (worldRecruits) {
+          event.preventDefault()
+          closeWorldRecruits()
+          return
+        }
+        if (worldNoticeBoard) {
+          event.preventDefault()
+          closeWorldNoticeBoard()
+          return
+        }
+        if (questLogOpen) {
+          event.preventDefault()
+          setQuestLogOpen(false)
+          return
+        }
         if (combat) {
           if (
             document.querySelector('.combat-screen[data-hero-cast]') ||
@@ -793,6 +1086,13 @@ function App() {
           combat ||
           dateNotice ||
           levelUpNotice ||
+          chestOffer ||
+          worldLibrary ||
+          worldHanger ||
+          dockBuy ||
+          worldRecruits ||
+          worldNoticeBoard ||
+          questLogOpen ||
           surrenderPrompt ||
           fleePrompt
         ) {
@@ -815,6 +1115,11 @@ function App() {
         return
       }
       const key = event.key.toLowerCase()
+      if (key === 'q') {
+        event.preventDefault()
+        setQuestLogOpen((open) => !open)
+        return
+      }
       if (key === 't') {
         event.preventDefault()
         if (heroScreen) {
@@ -835,6 +1140,18 @@ function App() {
     combat,
     cycleHero,
     cycleTown,
+    chestOffer,
+    worldLibrary,
+    closeWorldLibrary,
+    worldHanger,
+    closeWorldHanger,
+    dockBuy,
+    closeDockBuy,
+    worldRecruits,
+    closeWorldRecruits,
+    worldNoticeBoard,
+    closeWorldNoticeBoard,
+    questLogOpen,
     dateNotice,
     dismissDateNotice,
     fleePrompt,
@@ -858,10 +1175,10 @@ function App() {
     }
     const ms = (dateNotice.lines?.length ?? 0) > 0 ? 4500 : 1500
     const timer = window.setTimeout(() => {
-      setDateNotice(null)
+      dismissDateNotice()
     }, ms)
     return () => window.clearTimeout(timer)
-  }, [dateNotice])
+  }, [dateNotice, dismissDateNotice])
 
   useEffect(() => {
     if (dateNotice || combat) {
@@ -992,7 +1309,9 @@ function App() {
               current.heroes.length === 0 &&
               current.towns.length === 0
             ) {
-              return createSessionFromConfig(defaultGameConfig(catalog))
+              const defaults = defaultGameConfig(catalog)
+              setHexScale(defaults.hexSize)
+              return createSessionFromConfig(defaults)
             }
             return assignHeroesFromPool(current, catalog.hero_pool)
           })
@@ -1010,7 +1329,11 @@ function App() {
   const selectedHero = hero?.id
     ? session.heroes.find((row) => row.id === hero.id)
     : session.heroes[0]
-  const heroSpeed = heroMovementPoints(getCachedCatalog(), selectedHero)
+  const heroSpeed = heroMovementPoints(
+    getCachedCatalog(),
+    selectedHero,
+    session.game.settings.move_mode,
+  )
   const stepsRemaining = hero?.remaining ?? heroSpeed
   const stepsLabel = formatMovementPoints(
     stepsRemaining,
@@ -1104,6 +1427,23 @@ function App() {
         <div className="hud-end">
           <DebugCopyPanel
             sections={debugSections}
+            worldPerf={worldPerf}
+            terrainWedgesDebug={{
+              enabled: terrainWedgesEnabled,
+              onToggle: () => setTerrainWedgesEnabled((on) => !on),
+            }}
+            zonesDebug={{
+              enabled: zonesDebug,
+              onToggle: () => setZonesDebug((on) => !on),
+            }}
+            wallGapsDebug={{
+              enabled: wallGapsDebug,
+              onToggle: () => setWallGapsDebug((on) => !on),
+            }}
+            roadPlanDebug={{
+              enabled: roadPlanDebug,
+              onToggle: () => setRoadPlanDebug((on) => !on),
+            }}
             onAddStartingUnits={() => {
               const session = getSession()
               const selectedId = getSelectedMapHeroId()
@@ -1125,7 +1465,19 @@ function App() {
           />
           <OptionsMenu
             hexScale={hexScale}
-            onHexScale={setHexScale}
+            onHexScale={(name) => {
+              setHexScale(name)
+              updateSession((current) => ({
+                ...current,
+                game: {
+                  ...current.game,
+                  settings: {
+                    ...current.game.settings,
+                    hex_size: name,
+                  },
+                },
+              }))
+            }}
             onLevelUpNotice={setLevelUpNotice}
             onHudNotice={setOptionsHudNotice}
             onStartFixedFight={(kind: FixedFightKind) => {
@@ -1144,6 +1496,7 @@ function App() {
                 attackerHeroId: result.heroId,
                 defenderHeroId: result.defenderHeroId,
                 defenderMobId: result.mobId ?? undefined,
+                navalLayout: result.navalLayout,
               })
               setOptionsHudNotice(result.notice)
             }}
@@ -1163,6 +1516,7 @@ function App() {
               setAiPhase('idle')
               setMapInputLocked(false)
               setMapCameraFollowMoves(true)
+              setHexScale(parseHexSize(getSession().game.settings.hex_size))
               const catalog = getCachedCatalog()
               if (catalog) {
                 updateSession((current) =>
@@ -1183,15 +1537,102 @@ function App() {
         hexSize={hexSize}
         wallet={wallet}
         heroName={heroName}
+        terrainWedgesEnabled={terrainWedgesEnabled}
+        zonesDebug={zonesDebug}
+        wallGapsDebug={wallGapsDebug}
+        roadPlanDebug={roadPlanDebug}
         onMapInfo={onMapInfo}
         onHeroState={onHeroState}
         onResources={onResources}
         onTownWelcome={onTownWelcome}
+        onFountainRestore={onFountainRestore}
+        onChestOffer={onChestOffer}
+        onSignRead={onSignRead}
+        onWorldLibrary={onWorldLibrary}
+        onWorldHanger={onWorldHanger}
+        onWorldDock={onWorldDock}
+        onWorldRecruits={onWorldRecruits}
+        onWorldNoticeBoard={onWorldNoticeBoard}
         onArchiveLearn={setArchiveLearn}
         onHeroMeet={onHeroMeet}
         onSiegeTown={onSiegeTown}
         onMobMeet={onMobMeet}
       />
+      {chestOffer ? (
+        <div
+          className="date-notice"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="chest-offer-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div
+            className="date-notice-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h1 id="chest-offer-title">{chestOffer.title}</h1>
+            <p>XP or Loot?</p>
+            <p className="surrender-prompt-actions">
+              <button type="button" onClick={() => resolveChestChoice('xp')}>
+                XP
+              </button>
+              <button type="button" onClick={() => resolveChestChoice('loot')}>
+                Loot
+              </button>
+              <button type="button" onClick={() => resolveChestChoice('leave')}>
+                Leave
+              </button>
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {worldLibrary ? (
+        <WorldLibrary
+          featureId={worldLibrary.featureId}
+          heroId={worldLibrary.heroId}
+          onClose={closeWorldLibrary}
+        />
+      ) : null}
+      {worldHanger ? (
+        <WorldHangerFlight
+          featureId={worldHanger.featureId}
+          heroId={worldHanger.heroId}
+          onClose={closeWorldHanger}
+          onFlyLaunched={playHeroFlight}
+        />
+      ) : null}
+      {dockBuy ? (
+        <DockBuy
+          featureId={dockBuy.featureId}
+          heroId={dockBuy.heroId}
+          onClose={closeDockBuy}
+        />
+      ) : null}
+      {worldRecruits ? (
+        <WorldRecruits
+          featureId={worldRecruits.featureId}
+          heroId={worldRecruits.heroId}
+          onClose={closeWorldRecruits}
+        />
+      ) : null}
+      {worldNoticeBoard ? (
+        <WorldNoticeBoard
+          featureId={worldNoticeBoard.featureId}
+          heroId={worldNoticeBoard.heroId}
+          onClose={closeWorldNoticeBoard}
+          onDeclineMessage={(message) =>
+            setDateNotice({ title: '', date: '', lines: [message] })
+          }
+          onLevelUpNotice={(notice) => {
+            pendingLevelUpRef.current = notice
+            setLevelUpNotice(notice)
+            pendingLevelUpRef.current = null
+          }}
+        />
+      ) : null}
+      {questLogOpen ? (
+        <QuestLog onClose={() => setQuestLogOpen(false)} />
+      ) : null}
       {surrenderPrompt ? (
         <div
           className="date-notice"
@@ -1247,12 +1688,14 @@ function App() {
           className="date-notice"
           role="status"
           aria-live="polite"
-          aria-labelledby="date-notice-title"
+          aria-labelledby={dateNotice.title ? 'date-notice-title' : undefined}
           onClick={dismissDateNotice}
         >
           <div className="date-notice-card">
-            <h1 id="date-notice-title">{dateNotice.title}</h1>
-            <p>{dateNotice.date}</p>
+            {dateNotice.title ? (
+              <h1 id="date-notice-title">{dateNotice.title}</h1>
+            ) : null}
+            {dateNotice.date ? <p>{dateNotice.date}</p> : null}
             {dateNotice.lines?.map((line, index) => (
               <p key={`notice-${index}`}>{line}</p>
             ))}
@@ -1293,6 +1736,7 @@ function App() {
           defenderHeroId={combat.defenderHeroId}
           siegeTownId={combat.siegeTownId}
           defenderMobId={combat.defenderMobId}
+          navalLayout={combat.navalLayout}
           debugSections={debugSections}
           onExit={closeCombat}
         />
@@ -1319,32 +1763,10 @@ function App() {
           selectedHeroId={selectedHero?.id ?? null}
           onOpenHero={openHeroScreen}
           onCycleTown={cycleTown}
+          onQuests={() => setQuestLogOpen(true)}
           onArchiveLearn={setArchiveLearn}
           readOnly={Boolean(actor?.is_ai)}
-          onHeroFlew={(heroId) => {
-            adoptHero(heroId)
-            setMapInputLocked(true)
-            setMapCameraFollowMoves(true)
-            void (async () => {
-              // Let town UI unmount so the world is visible before animating.
-              await Promise.resolve()
-              const result = await requestPlayHeroFlight(heroId)
-              setMapInputLocked(false)
-              adoptHero(heroId)
-              if (result.siegeTownId) {
-                onSiegeTown(result.siegeTownId)
-                return
-              }
-              if (result.arrivedTownId) {
-                const town = findTownById(getSession(), result.arrivedTownId)
-                if (town) {
-                  const next = { id: town.id, name: town.name }
-                  lastTownRef.current = next
-                  setWelcomeTown(next)
-                }
-              }
-            })()
-          }}
+          onHeroFlew={playHeroFlight}
         />
       ) : null}
       {archiveLearn ? (
@@ -1381,6 +1803,7 @@ function App() {
           onSelectHero={adoptHero}
           onOpenHero={openHeroScreen}
           onCycleTown={cycleTown}
+          onQuests={() => setQuestLogOpen(true)}
         />
       ) : null}
     </main>

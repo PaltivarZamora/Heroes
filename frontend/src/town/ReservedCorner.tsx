@@ -1,12 +1,14 @@
 type ReservedCornerProps = {
   onHero: () => void
   onTown: () => void
+  onQuests: () => void
   onScrolls: () => void
 }
 
 export function ReservedCorner({
   onHero,
   onTown,
+  onQuests,
   onScrolls,
 }: ReservedCornerProps) {
   return (
@@ -16,6 +18,9 @@ export function ReservedCorner({
       </button>
       <button type="button" onClick={onTown}>
         T
+      </button>
+      <button type="button" onClick={onQuests}>
+        Q
       </button>
       <button type="button" onClick={onScrolls}>
         S

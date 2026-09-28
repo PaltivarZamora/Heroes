@@ -22,9 +22,11 @@ function propUrls(fileName: string, variant: number): string[] {
 
 async function tryLoad(url: string): Promise<Texture | null> {
   try {
-    const response = await fetch(url, { method: 'HEAD' })
+    // Avoid HEAD-only checks: Vite SPA fallback returns 200 text/html for
+    // missing files (e.g. Rope.png), which would otherwise look "ok".
+    const response = await fetch(url)
     const contentType = response.headers.get('content-type') ?? ''
-    if (!response.ok || !contentType.startsWith('image/')) {
+    if (!response.ok || !contentType.toLowerCase().startsWith('image/')) {
       return null
     }
     const texture = await Assets.load<Texture>(url)
@@ -133,7 +135,9 @@ export function addFootprintPropSprite(
 /**
  * Fit a sprite into a hex footprint the same way world props do:
  * box = max(0.9×hexW, footprintW) × max(0.95×hexH, footprintH),
- * uniform scale, bottom-center anchor grounded slightly below the hex.
+ * bottom-center anchor grounded slightly below the hex.
+ * Multi-hex footprints stretch to fill the box (gangplank 3x1, etc.);
+ * 1×1 keeps uniform contain so single-hex props are unchanged.
  */
 export function layoutHexFootprintSprite(
   sprite: Sprite,
@@ -166,12 +170,17 @@ export function layoutHexFootprintSprite(
   bx /= bottoms.length
   const tw = Math.max(1, texture.width)
   const th = Math.max(1, texture.height)
-  const scale = Math.min(boxW / tw, boxH / th)
   const groundY = by + hexHeight * 0.22
   sprite.texture = texture
   sprite.anchor.set(0.5, 0.92)
   sprite.position.set(bx, groundY)
-  sprite.scale.set(scale)
+  if (pts.length > 1) {
+    // Span the full footprint (e.g. 3x1 gangplank across deck–water–deck).
+    sprite.scale.set(boxW / tw, boxH / th)
+  } else {
+    const scale = Math.min(boxW / tw, boxH / th)
+    sprite.scale.set(scale)
+  }
 }
 
 /** 1×1 hex fit — same constants as {@link addPropSprite}. */

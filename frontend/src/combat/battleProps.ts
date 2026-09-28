@@ -39,6 +39,9 @@ export function propEligibleOnTerrain(
   terrainName: string,
   catalog: ReferenceCatalog,
 ): boolean {
+  if (prop.naval_only || prop.wall) {
+    return false
+  }
   const terrain = hexTerrainByName(catalog, terrainName)
   if (!terrain) {
     return false
@@ -78,6 +81,9 @@ function sampleWorldPropsNear(
     }
     seen.add(key)
     const def = catalog.prop.find((row) => row.id === tile.propId)
+    if (def?.naval_only || def?.wall) {
+      return
+    }
     found.push({
       propId: tile.propId,
       propFile: tile.propFile,
@@ -160,7 +166,7 @@ function isGroundMobileStack(
     return false
   }
   const kind = moveKindForUnit(unit, catalog)
-  return kind === 'ground' || kind === 'submerge'
+  return kind === 'ground'
 }
 
 /**
@@ -319,6 +325,9 @@ export function seedBattlePropsFromWorld(
       if (name === 'moat' || name === 'siege_floor') {
         return false
       }
+    }
+    if (tile.navalKind === 'water' || tile.navalKind === 'gangplank') {
+      return false
     }
     return true
   })

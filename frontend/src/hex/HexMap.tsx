@@ -8,12 +8,24 @@ import {
   findPassableStart,
   formatMp,
   movementSteps,
+  sailMovementSteps,
+  boardBoatMovementSteps,
   resolveWorldWaypointLeg,
   spendHeroInteract,
   spendMovement,
   type Axial,
 } from './hero'
-import { approachHex, hexDistance } from './pathfinding'
+import { approachHex, hexDistance, neighborHexes } from './pathfinding'
+import {
+  boatEnterCost,
+  boatOccupiedByHero,
+  canSailOnto,
+  enemyBoatOccupantAt,
+  findBoatAt,
+  isDisembarkLandHex,
+} from './boat'
+import { heroTravelSprite, loadTravelTexture, preloadHeroTravelSprites, HERO_TRAVEL_FILES } from './heroTravelSprite'
+import { strokeDashedPolyline, strokeRoadSegments } from './roadRender'
 import { flightSegmentSteps, townCircleLapSteps } from './flight'
 import {
   createWaypointPlan,
@@ -28,15 +40,26 @@ import {
   type ResourceWallet,
 } from './resources'
 import {
-  addChunkMaskedTerrain,
-  addMaskedTerrainWedge,
-  buildTerrainChunkDecors,
   loadHexTerrainTextures,
   loadTextureUrl,
 } from './terrainTextures'
 import { addPropSprite, layoutHexFootprintSprite, layoutHexSprite, loadPropTexture } from './propTextures'
+import {
+  WorldChunkRenderer,
+  setWorldRenderStats,
+} from './worldRenderChunks'
 import { loadFeatureTexture } from './featureTextures'
 import {
+  chestClosedImage,
+  chestOpenImage,
+  featureForChest,
+  featureForFountain,
+  featureForSign,
+  featureForWorldLibrary,
+  featureForWorldHanger,
+  featureForWorldDock,
+  featureForWorldRecruits,
+  featureForNoticeBoard,
   featureForTownType,
   townBlockedHex,
   townEntryHex,
@@ -44,10 +67,7 @@ import {
   townFootprintOrigin,
 } from './townFootprint'
 import {
-  assignedTerrainForHex,
-  assignedTerrainName,
-  parseCssHexColor,
-  wedgesForHex,
+  hexTransitionMoveCost,
 } from './terrainTransition'
 import { buildWorld, fetchTestGrid, forEachTile, getTile, getExploredHexes, isExplored, markExplored, restoreExplored } from './world'
 import { worldHoverTooltipText } from './worldTooltip'
@@ -73,19 +93,42 @@ import {
   claimMine,
   claimTown,
   collectPickup,
+  findChestAt,
+  findFountainAt,
   findNodeAt,
+  findSignAt,
+  findWorldLibraryAt,
+  findWorldHangerAt,
   findTownAt,
+  openChest,
   persistActiveExplored,
   syncHero,
   syncHeroFlightPosition,
   finalizeHeroFlightSegment,
   townIsUndefended,
   walletFromSession,
+  applyFountainVisit,
   applyHeroTownVisitUniques,
   takeArchiveLearnNotice,
   findTownById,
   type ArchiveLearnNotice,
 } from '../session/accessors'
+import {
+  boardBoat,
+  disembarkBoat,
+  findWorldDockAt,
+  syncHeroBoatPosition,
+} from '../session/boat'
+import { findWorldRecruitsAt } from '../session/recruits'
+import {
+  findNoticeBoardAt,
+  noticeBoardTooltip,
+} from '../session/quests'
+import { readSign, signTooltipText } from '../session/sign'
+import {
+  openWorldLibraryVisit,
+  worldLibraryTooltipText,
+} from '../town/WorldLibrary'
 
 type HexMapProps = {
   hexSize: number
@@ -95,10 +138,38 @@ type HexMapProps = {
   onHeroState: (state: HeroHudState) => void
   onResources: (wallet: ResourceWallet) => void
   onTownWelcome: (townName: string, townId: string) => void
+  /** Fountain restore popup (human only). */
+  onFountainRestore?: (message: string) => void
+  /** Chest XP/Loot/Leave choice (human only). */
+  onChestOffer?: (offer: {
+    featureId: string
+    title: string
+    heroId: string
+  }) => void
+  /** Sign read popup (human only). */
+  onSignRead?: (text: string) => void
+  /** World Library panel (human only). */
+  onWorldLibrary?: (offer: { featureId: string; heroId: string }) => void
+  /** World Hanger flight picker (human only). */
+  onWorldHanger?: (offer: { featureId: string; heroId: string }) => void
+  /** World Dock buy-boat popup (human only). */
+  onWorldDock?: (offer: { featureId: string; heroId: string }) => void
+  /** World Recruits for Hire panel (human only). */
+  onWorldRecruits?: (offer: { featureId: string; heroId: string }) => void
+  /** World Notice Board quest panel (human only). */
+  onWorldNoticeBoard?: (offer: { featureId: string; heroId: string }) => void
   onArchiveLearn?: (notice: ArchiveLearnNotice) => void
   onHeroMeet: (targetHeroId: string) => void
   onSiegeTown: (townId: string) => void
   onMobMeet: (mobId: string) => void
+  /** Debug: when false, skip terrain transition wedges (base fill only). */
+  terrainWedgesEnabled?: boolean
+  /** Debug: tint hexes by zone id and outline zone borders. */
+  zonesDebug?: boolean
+  /** Debug: highlight wall-gap hexes. */
+  wallGapsDebug?: boolean
+  /** Debug: planned road links before washout and orphan trim. */
+  roadPlanDebug?: boolean
 }
 
 type HeroState = HeroHudState
@@ -197,14 +268,11 @@ function gridHasResourceIds(grid: TestGridResponse): boolean {
   )
 }
 
-/** Unexplored overlay — very dark grey, not pure black. */
-const UNEXPLORED_COLOR = 0x3a3a3a
-
 /**
  * Explored map objects to path around. Heroes are always blocked.
  * Defended enemy towns stay blocked (approach adjacent; never walk on).
- * Undefended enemy towns, own/unowned towns, and resource nodes are blocked
- * unless they are `walkOnto` (the clicked destination).
+ * Undefended enemy towns, own/unowned towns, resource nodes, and fountains
+ * are blocked unless they are `walkOnto` (the clicked destination).
  */
 function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
   const blocked = new Set<string>()
@@ -235,10 +303,10 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
   }
   for (const town of session.towns) {
     const entry = townEntryHex(town.position)
-    const left = townBlockedHex(town.position)
-    // Left hex is never walkable (asymmetric 2×1 footprint).
-    if (isExplored(left.q, left.r) && !(left.q === mover.q && left.r === mover.r)) {
-      blocked.add(`${left.q},${left.r}`)
+    const keep = townBlockedHex(town.position, town.flipped)
+    // Keep hex is never walkable (asymmetric 2×1 footprint).
+    if (isExplored(keep.q, keep.r) && !(keep.q === mover.q && keep.r === mover.r)) {
+      blocked.add(`${keep.q},${keep.r}`)
     }
     const enemyOwned =
       town.player_id != null &&
@@ -258,10 +326,111 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     }
     add(node.position.q, node.position.r)
   }
+  for (const feature of session.features ?? []) {
+    // Chests are approach-only (never walkOnto); fountains allow walkOnto.
+    add(feature.position.q, feature.position.r)
+  }
   for (const mob of session.mobs) {
     add(mob.position.q, mob.position.r)
   }
+  for (const boat of session.boats ?? []) {
+    add(boat.position.q, boat.position.r)
+  }
   return blocked
+}
+
+function sailDestForLandGoal(
+  from: Axial,
+  land: Axial,
+  boatId: string,
+  moverPlayerId: string,
+): Axial | null {
+  const session = getSession()
+  let best: Axial | null = null
+  let bestDist = Infinity
+  for (const neighbor of neighborHexes(land)) {
+    if (boatEnterCost(neighbor.q, neighbor.r) == null) {
+      continue
+    }
+    if (!canSailOnto(session, neighbor.q, neighbor.r, boatId, moverPlayerId)) {
+      continue
+    }
+    const dist = hexDistance(from, neighbor)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = neighbor
+    }
+  }
+  return best
+}
+
+function zonePaintColor(index: number): number {
+  const hue = (index * 137.508) % 360
+  const s = 0.62
+  const l = 0.52
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const hp = hue / 60
+  const x = c * (1 - Math.abs((hp % 2) - 1))
+  let r = 0
+  let g = 0
+  let b = 0
+  if (hp < 1) {
+    r = c
+    g = x
+  } else if (hp < 2) {
+    r = x
+    g = c
+  } else if (hp < 3) {
+    g = c
+    b = x
+  } else if (hp < 4) {
+    g = x
+    b = c
+  } else if (hp < 5) {
+    r = x
+    b = c
+  } else {
+    r = c
+    b = x
+  }
+  const m = l - c / 2
+  const R = Math.round((r + m) * 255)
+  const G = Math.round((g + m) * 255)
+  const B = Math.round((b + m) * 255)
+  return (R << 16) | (G << 8) | B
+}
+
+/** Smallest color index not used by an adjacent zone, so neighbours never match. */
+function zoneColorIndex(
+  zoneId: number,
+  neighbors: ReadonlyMap<number, ReadonlySet<number>>,
+  assigned: ReadonlyMap<number, number>,
+): number {
+  const used = new Set<number>()
+  for (const other of neighbors.get(zoneId) ?? []) {
+    const color = assigned.get(other)
+    if (color != null) {
+      used.add(color)
+    }
+  }
+  let index = 0
+  while (used.has(index)) {
+    index++
+  }
+  return index
+}
+
+function edgeIsWalled(
+  tile: { zoneId?: number | null; wallBorders?: number[] | null },
+  other: { zoneId?: number | null; wallBorders?: number[] | null },
+): boolean {
+  if (tile.zoneId != null && other.wallBorders?.includes(tile.zoneId)) {
+    return true
+  }
+  if (other.zoneId != null && tile.wallBorders?.includes(other.zoneId)) {
+    return true
+  }
+  return false
 }
 
 function heroVisibleOnMap(hero: { player_id: string; position: { q: number; r: number } }): boolean {
@@ -311,6 +480,46 @@ function liveNodeAt(q: number, r: number) {
   return node
 }
 
+function liveFountainAt(q: number, r: number) {
+  return findFountainAt(getSession(), q, r)
+}
+
+function liveChestAt(q: number, r: number) {
+  return findChestAt(getSession(), q, r)
+}
+
+function liveSignAt(q: number, r: number) {
+  return findSignAt(getSession(), q, r)
+}
+
+function liveWorldLibraryAt(q: number, r: number) {
+  return findWorldLibraryAt(getSession(), q, r)
+}
+
+function liveWorldHangerAt(q: number, r: number) {
+  return findWorldHangerAt(getSession(), q, r)
+}
+
+function liveWorldDockAt(q: number, r: number) {
+  return findWorldDockAt(getSession(), q, r)
+}
+
+function liveWorldRecruitsAt(q: number, r: number) {
+  return findWorldRecruitsAt(getSession(), q, r)
+}
+
+function liveNoticeBoardAt(q: number, r: number) {
+  return findNoticeBoardAt(getSession(), q, r)
+}
+
+function emptyBoatAt(q: number, r: number) {
+  const boat = findBoatAt(getSession(), q, r)
+  if (!boat || boat.occupant_hero_id != null) {
+    return undefined
+  }
+  return boat
+}
+
 function hexCenter(hex: Hex, offsetX: number, offsetY: number) {
   const corners = hex.corners
   let x = 0
@@ -349,10 +558,22 @@ export function HexMap({
   onHeroState,
   onResources,
   onTownWelcome,
+  onFountainRestore,
+  onChestOffer,
+  onSignRead,
+  onWorldLibrary,
+  onWorldHanger,
+  onWorldDock,
+  onWorldRecruits,
+  onWorldNoticeBoard,
   onArchiveLearn,
   onHeroMeet,
   onSiegeTown,
   onMobMeet,
+  terrainWedgesEnabled = true,
+  zonesDebug = false,
+  wallGapsDebug = false,
+  roadPlanDebug = false,
 }: HexMapProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const tilesRef = useRef<TestGridResponse | null>(null)
@@ -361,7 +582,22 @@ export function HexMap({
   const onHeroMeetRef = useRef(onHeroMeet)
   const onSiegeTownRef = useRef(onSiegeTown)
   const onMobMeetRef = useRef(onMobMeet)
+  const terrainWedgesEnabledRef = useRef(terrainWedgesEnabled)
+  const zonesDebugRef = useRef(zonesDebug)
+  const wallGapsDebugRef = useRef(wallGapsDebug)
+  const roadPlanDebugRef = useRef(roadPlanDebug)
+  const paintZoneDebugRef = useRef<(() => void) | null>(null)
+  const paintRoadPlanRef = useRef<(() => void) | null>(null)
+  const rebakeTerrainRef = useRef<(() => void) | null>(null)
   const onArchiveLearnRef = useRef(onArchiveLearn)
+  const onFountainRestoreRef = useRef(onFountainRestore)
+  const onChestOfferRef = useRef(onChestOffer)
+  const onSignReadRef = useRef(onSignRead)
+  const onWorldLibraryRef = useRef(onWorldLibrary)
+  const onWorldHangerRef = useRef(onWorldHanger)
+  const onWorldDockRef = useRef(onWorldDock)
+  const onWorldRecruitsRef = useRef(onWorldRecruits)
+  const onWorldNoticeBoardRef = useRef(onWorldNoticeBoard)
 
   useEffect(() => {
     walletRef.current = snapshotWallet(wallet)
@@ -369,6 +605,31 @@ export function HexMap({
   useEffect(() => {
     onArchiveLearnRef.current = onArchiveLearn
   }, [onArchiveLearn])
+  useEffect(() => {
+    onFountainRestoreRef.current = onFountainRestore
+  }, [onFountainRestore])
+  useEffect(() => {
+    onChestOfferRef.current = onChestOffer
+  }, [onChestOffer])
+  useEffect(() => {
+    onSignReadRef.current = onSignRead
+  }, [onSignRead])
+  useEffect(() => {
+    onWorldLibraryRef.current = onWorldLibrary
+  }, [onWorldLibrary])
+  useEffect(() => {
+    onWorldHangerRef.current = onWorldHanger
+  }, [onWorldHanger])
+  useEffect(() => {
+    onWorldDockRef.current = onWorldDock
+  }, [onWorldDock])
+  useEffect(() => {
+    onWorldRecruitsRef.current = onWorldRecruits
+  }, [onWorldRecruits])
+
+  useEffect(() => {
+    onWorldNoticeBoardRef.current = onWorldNoticeBoard
+  }, [onWorldNoticeBoard])
 
   useEffect(() => {
     onHeroMeetRef.current = onHeroMeet
@@ -381,6 +642,22 @@ export function HexMap({
   useEffect(() => {
     onMobMeetRef.current = onMobMeet
   }, [onMobMeet])
+
+  useEffect(() => {
+    terrainWedgesEnabledRef.current = terrainWedgesEnabled
+    rebakeTerrainRef.current?.()
+  }, [terrainWedgesEnabled])
+
+  useEffect(() => {
+    zonesDebugRef.current = zonesDebug
+    wallGapsDebugRef.current = wallGapsDebug
+    paintZoneDebugRef.current?.()
+  }, [zonesDebug, wallGapsDebug])
+
+  useEffect(() => {
+    roadPlanDebugRef.current = roadPlanDebug
+    paintRoadPlanRef.current?.()
+  }, [roadPlanDebug])
 
   useEffect(() => {
     applyHeroMarkerLabel?.(heroName)
@@ -409,7 +686,36 @@ export function HexMap({
       const needsGrid = !cachedGrid || !gridHasResourceIds(cachedGrid)
       if (needsGrid) {
         const savedSeed = getSession().game.seed
-        cachedGrid = await fetchTestGrid(savedSeed > 0 ? savedSeed : undefined)
+        const playerCount = getSession().game.settings.player_count
+        const settings = getSession().game.settings
+        // Prefer stored dims (new saves + legacy-compatible). Fall back to
+        // map_size name so older saves still regenerate via backend fromLabel.
+        const mapSizeParam =
+          settings.map_width != null &&
+          settings.map_height != null &&
+          settings.map_width > 0 &&
+          settings.map_height > 0
+            ? `${settings.map_width}x${settings.map_height}`
+            : settings.map_size || undefined
+        const catalog = getCachedCatalog()
+        const heroTypeIds = settings.hero_type_ids ?? []
+        const townTypeIds = heroTypeIds.map((heroTypeId) => {
+          if (heroTypeId == null || heroTypeId <= 0) {
+            return 0
+          }
+          const type = catalog?.hero_type.find((row) => row.id === heroTypeId)
+          return type != null && type.town_id > 0 ? type.town_id : 0
+        })
+        const townTypesParam =
+          townTypeIds.length > 0 && townTypeIds.some((id) => id > 0)
+            ? townTypeIds.join(',')
+            : undefined
+        cachedGrid = await fetchTestGrid(
+          savedSeed > 0 ? savedSeed : undefined,
+          playerCount > 0 ? playerCount : undefined,
+          mapSizeParam,
+          townTypesParam,
+        )
       }
       tilesRef.current = cachedGrid
       if (!tilesRef.current) {
@@ -452,7 +758,11 @@ export function HexMap({
             id: HERO_ID,
             q: start.q,
             r: start.r,
-            remaining: heroMovementPoints(getCachedCatalog(), null),
+            remaining: heroMovementPoints(
+              getCachedCatalog(),
+              null,
+              getSession().game.settings.move_mode,
+            ),
           }
         }
       }
@@ -543,11 +853,15 @@ export function HexMap({
       }
 
       const terrainLayer = new Container()
+      const roadLayer = new Graphics()
       const propLayer = new Container()
+      const fogLayer = new Container()
       const { offsetX, offsetY } = layout
 
       const world = new Container()
       world.addChild(terrainLayer)
+      // Placeholder roads on the ground, under props/objects/fog/heroes.
+      world.addChild(roadLayer)
       world.addChild(propLayer)
 
       // Path preview under map objects so yellow hexes don't paint over town art
@@ -560,15 +874,345 @@ export function HexMap({
       objectLayer.sortableChildren = false
       world.addChild(objectLayer)
 
-      const fog = new Graphics()
-      world.addChild(fog)
+      world.addChild(fogLayer)
+
+      const zoneDebug = new Graphics()
+      const zoneLabels = new Container()
+      world.addChild(zoneDebug)
+      world.addChild(zoneLabels)
+      const paintZoneDebug = () => {
+        zoneDebug.clear()
+        for (const child of zoneLabels.removeChildren()) {
+          child.destroy()
+        }
+        const showZones = zonesDebugRef.current
+        const showGaps = wallGapsDebugRef.current
+        if (!showZones && !showGaps) {
+          return
+        }
+        const neighbors = new Map<number, Set<number>>()
+        const size = new Map<number, number>()
+        const centroid = new Map<number, { x: number; y: number }>()
+        if (showZones) {
+          forEachTile((q, r) => {
+            const tile = getTile(q, r)
+            const id = tile?.zoneId
+            if (id == null || id <= 0) {
+              return
+            }
+            size.set(id, (size.get(id) ?? 0) + 1)
+            if (!neighbors.has(id)) {
+              neighbors.set(id, new Set())
+            }
+            for (const n of neighborHexes({ q, r })) {
+              const other = getTile(n.q, n.r)?.zoneId
+              if (other != null && other > 0 && other !== id) {
+                neighbors.get(id)!.add(other)
+              }
+            }
+          })
+        }
+        const colorIndex = new Map<number, number>()
+        const byDegree = [...size.keys()].sort((a, b) => {
+          const deg = (neighbors.get(b)?.size ?? 0) - (neighbors.get(a)?.size ?? 0)
+          return deg !== 0 ? deg : a - b
+        })
+        for (const id of byDegree) {
+          colorIndex.set(id, zoneColorIndex(id, neighbors, colorIndex))
+        }
+        const pocketSize = new Map<number, number>()
+        const pocketSum = new Map<number, { x: number; y: number }>()
+        const pocketTier = new Map<number, number>()
+        forEachTile((q, r) => {
+          const tile = getTile(q, r)
+          if (!tile) {
+            return
+          }
+          const hex = grid.getHex({ q, r }) ?? grid.createHex({ q, r })
+          const poly = hex.corners.map((corner) => ({
+            x: corner.x + offsetX,
+            y: corner.y + offsetY,
+          }))
+          if (showZones && tile.zoneId != null && tile.zoneId > 0) {
+            const center = hexCenter(hex, offsetX, offsetY)
+            const sum = centroid.get(tile.zoneId) ?? { x: 0, y: 0 }
+            sum.x += center.x
+            sum.y += center.y
+            centroid.set(tile.zoneId, sum)
+            zoneDebug
+              .poly(poly)
+              .fill({ color: zonePaintColor(colorIndex.get(tile.zoneId) ?? 0), alpha: 0.42 })
+            for (const n of neighborHexes({ q, r })) {
+                const other = getTile(n.q, n.r)
+                if (
+                  other?.zoneId == null ||
+                  other.zoneId <= 0 ||
+                  other.zoneId === tile.zoneId ||
+                  tile.zoneId > other.zoneId
+                ) {
+                  continue
+                }
+                const otherHex = grid.getHex(n) ?? grid.createHex(n)
+                const corners = poly
+                const here = center
+                const there = hexCenter(otherHex, offsetX, offsetY)
+                const target = Math.atan2(there.y - here.y, there.x - here.x)
+                let bestI = 0
+                let best = Number.POSITIVE_INFINITY
+                for (let i = 0; i < corners.length; i++) {
+                  const a = corners[i]!
+                  const b = corners[(i + 1) % corners.length]!
+                  const ang = Math.atan2((a.y + b.y) / 2 - here.y, (a.x + b.x) / 2 - here.x)
+                  let diff = Math.abs(ang - target)
+                  if (diff > Math.PI) {
+                    diff = 2 * Math.PI - diff
+                  }
+                  if (diff < best) {
+                    best = diff
+                    bestI = i
+                  }
+                }
+                const a = corners[bestI]!
+                const b = corners[(bestI + 1) % corners.length]!
+                const walled = edgeIsWalled(tile, other)
+                zoneDebug
+                  .moveTo(a.x, a.y)
+                  .lineTo(b.x, b.y)
+                  .stroke({ width: 4, color: walled ? 0xe53935 : 0x111111, alpha: 1 })
+            }
+          }
+          if ((showZones || showGaps) && tile.wallGap) {
+            zoneDebug.poly(poly).fill({ color: 0xffee58, alpha: 0.92 })
+          }
+          if (showZones && tile.pocketId != null && tile.pocketId > 0) {
+            const center = hexCenter(hex, offsetX, offsetY)
+            const sum = pocketSum.get(tile.pocketId) ?? { x: 0, y: 0 }
+            sum.x += center.x
+            sum.y += center.y
+            pocketSum.set(tile.pocketId, sum)
+            pocketSize.set(tile.pocketId, (pocketSize.get(tile.pocketId) ?? 0) + 1)
+            if (tile.pocketTier != null) {
+              pocketTier.set(tile.pocketId, tile.pocketTier)
+            }
+            if (tile.pocketEntrance) {
+              zoneDebug.poly(poly).fill({ color: 0xff6d00, alpha: 0.9 })
+            }
+            for (const n of neighborHexes({ q, r })) {
+              const otherId = getTile(n.q, n.r)?.pocketId
+              if (otherId === tile.pocketId) {
+                continue
+              }
+              const otherHex = grid.getHex(n) ?? grid.createHex(n)
+              const here = center
+              const there = hexCenter(otherHex, offsetX, offsetY)
+              const target = Math.atan2(there.y - here.y, there.x - here.x)
+              let bestI = 0
+              let best = Number.POSITIVE_INFINITY
+              for (let i = 0; i < poly.length; i++) {
+                const a = poly[i]!
+                const b = poly[(i + 1) % poly.length]!
+                const ang = Math.atan2((a.y + b.y) / 2 - here.y, (a.x + b.x) / 2 - here.x)
+                let diff = Math.abs(ang - target)
+                if (diff > Math.PI) {
+                  diff = 2 * Math.PI - diff
+                }
+                if (diff < best) {
+                  best = diff
+                  bestI = i
+                }
+              }
+              const a = poly[bestI]!
+              const b = poly[(bestI + 1) % poly.length]!
+              zoneDebug
+                .moveTo(a.x, a.y)
+                .lineTo(b.x, b.y)
+                .stroke({ width: 3, color: 0x6a1b9a, alpha: 1 })
+            }
+          }
+        })
+        if (showZones) {
+          for (const [id, sum] of centroid) {
+            const n = size.get(id) ?? 1
+            const label = new Text({
+              text: `${id} · ${n}`,
+              style: {
+                fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+                fontSize: Math.max(11, Math.round(hexSize * 0.42)),
+                fontWeight: '700',
+                fill: 0x111111,
+                align: 'center',
+                stroke: { color: 0xffffff, width: 3 },
+              },
+              anchor: 0.5,
+            })
+            label.position.set(sum.x / n, sum.y / n)
+            zoneLabels.addChild(label)
+          }
+          for (const [id, sum] of pocketSum) {
+            const n = pocketSize.get(id) ?? 1
+            const tier = pocketTier.get(id)
+            const label = new Text({
+              text: tier != null ? `P·T${tier}` : `P${id}`,
+              style: {
+                fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+                fontSize: Math.max(11, Math.round(hexSize * 0.42)),
+                fontWeight: '700',
+                fill: 0x4a148c,
+                align: 'center',
+                stroke: { color: 0xffffff, width: 3 },
+              },
+              anchor: 0.5,
+            })
+            label.position.set(sum.x / n, sum.y / n)
+            zoneLabels.addChild(label)
+          }
+        }
+        if (zoneDebug.parent) {
+          zoneDebug.parent.addChild(zoneDebug)
+          zoneDebug.parent.addChild(zoneLabels)
+        }
+      }
+      paintZoneDebugRef.current = paintZoneDebug
+
+      const roadPlanGfx = new Graphics()
+      const roadPlanLabels = new Container()
+      world.addChild(roadPlanGfx)
+      world.addChild(roadPlanLabels)
+      const paintRoadPlan = () => {
+        roadPlanGfx.clear()
+        for (const child of roadPlanLabels.removeChildren()) {
+          child.destroy()
+        }
+        if (!roadPlanDebugRef.current) {
+          return
+        }
+        const plan = tilesRef.current?.roadPlan
+        if (!plan || !Array.isArray(plan.links) || plan.links.length === 0) {
+          return
+        }
+        const washed = new Set(
+          (plan.washed ?? []).map((hex) => `${hex.q},${hex.r}`),
+        )
+        const centerOf = (q: number, r: number) => {
+          const hex = grid.getHex({ q, r }) ?? grid.createHex({ q, r })
+          return hexCenter(hex, offsetX, offsetY)
+        }
+        const width = Math.max(1.25, hexSize * 0.055)
+        const dash = Math.max(5, hexSize * 0.22)
+        const gap = Math.max(3, hexSize * 0.14)
+        for (const link of plan.links) {
+          const hexes = link.hexes ?? []
+          let run: Array<{ q: number; r: number }> = []
+          let runWashed = false
+          const flush = () => {
+            if (run.length < 2) {
+              run = []
+              return
+            }
+            const points = run.map((hex) => centerOf(hex.q, hex.r))
+            strokeDashedPolyline(
+              roadPlanGfx,
+              points,
+              {
+                width,
+                color: runWashed ? 0xff6d00 : link.branch ? 0xb388ff : 0xffffff,
+                alpha: 0.95,
+              },
+              dash,
+              gap,
+            )
+            run = []
+          }
+          for (let i = 0; i < hexes.length - 1; i++) {
+            const a = hexes[i]!
+            const b = hexes[i + 1]!
+            const segWashed =
+              washed.has(`${a.q},${a.r}`) || washed.has(`${b.q},${b.r}`)
+            if (run.length === 0) {
+              runWashed = segWashed
+              run.push(a, b)
+            } else if (segWashed === runWashed) {
+              run.push(b)
+            } else {
+              flush()
+              runWashed = segWashed
+              run.push(a, b)
+            }
+          }
+          flush()
+          const labelAt = (index: number, above: boolean) => {
+            const hex = hexes[index]
+            if (!hex) {
+              return
+            }
+            const c = centerOf(hex.q, hex.r)
+            const label = new Text({
+              text: link.branch ? `→ ${link.to}` : `${link.from} → ${link.to}`,
+              style: {
+                fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+                fontSize: Math.max(10, Math.round(hexSize * 0.34)),
+                fontWeight: '700',
+                fill: 0x111111,
+                align: 'center',
+                stroke: { color: 0xffffff, width: 3 },
+              },
+              anchor: 0.5,
+            })
+            label.position.set(c.x, c.y + (above ? -hexSize * 0.42 : hexSize * 0.42))
+            roadPlanLabels.addChild(label)
+          }
+          if (link.branch) {
+            labelAt(0, true)
+          } else {
+            labelAt(0, true)
+            labelAt(hexes.length - 1, false)
+          }
+        }
+        const arm = Math.max(4, hexSize * 0.16)
+        for (const hex of plan.orphans ?? []) {
+          const c = centerOf(hex.q, hex.r)
+          roadPlanGfx
+            .moveTo(c.x - arm, c.y - arm)
+            .lineTo(c.x + arm, c.y + arm)
+            .moveTo(c.x - arm, c.y + arm)
+            .lineTo(c.x + arm, c.y - arm)
+            .stroke({ width: Math.max(2, hexSize * 0.07), color: 0x111111, alpha: 1 })
+          roadPlanGfx
+            .moveTo(c.x - arm, c.y - arm)
+            .lineTo(c.x + arm, c.y + arm)
+            .moveTo(c.x - arm, c.y + arm)
+            .lineTo(c.x + arm, c.y - arm)
+            .stroke({ width: Math.max(1.25, hexSize * 0.045), color: 0xffea00, alpha: 1 })
+        }
+        if (roadPlanGfx.parent) {
+          roadPlanGfx.parent.addChild(roadPlanGfx)
+          roadPlanGfx.parent.addChild(roadPlanLabels)
+        }
+      }
+      paintRoadPlanRef.current = paintRoadPlan
+      paintRoadPlan()
+      signal.addEventListener(
+        'abort',
+        () => {
+          paintZoneDebugRef.current = null
+          paintRoadPlanRef.current = null
+        },
+        { once: true },
+      )
 
       const heroLayer = new Container()
       heroLayer.sortableChildren = true
       const heroMarkers = new Map<
         string,
-        { view: Container; label: Text; badge: Graphics }
+        { view: Container; label: Text; badge: Graphics; sprite: Sprite }
       >()
+      const boatMarkers = new Map<
+        string,
+        { view: Container; badge: Graphics; sprite: Sprite }
+      >()
+      const travelArtByFile = new Map<string, Texture | null>()
+      const travelArtLoading = new Set<string>()
+      preloadHeroTravelSprites()
       const mobMarkers = new Map<
         string,
         {
@@ -583,6 +1227,31 @@ export function HexMap({
       const unitArtLoading = new Set<string>()
       world.addChild(heroLayer)
       instance.stage.addChild(world)
+
+      const chunkRenderer = new WorldChunkRenderer({
+        app: instance,
+        grid,
+        terrainLayer,
+        fogLayer,
+        propLayer,
+        offsetX,
+        offsetY,
+        hexSize,
+        seed,
+        useTerrainImages,
+        showHexOutlines,
+        wedgesEnabled: () => terrainWedgesEnabledRef.current,
+        hexTerrainTextures,
+        getCatalog: () => getCachedCatalog(),
+      })
+      signal.addEventListener(
+        'abort',
+        () => {
+          chunkRenderer.destroy()
+          setWorldRenderStats(null)
+        },
+        { once: true },
+      )
 
       const objectByKey = new Map<
         string,
@@ -664,7 +1333,7 @@ export function HexMap({
         },
         ownerId: string | null | undefined,
       ) => {
-        const origin = townFootprintOrigin(entry.data)
+        townFootprintOrigin(entry.data)
         const bottom = townFootprintBottomRow(entry.data)
         const centers = bottom.map((axial) => {
           const hex = grid.getHex(axial) ?? grid.createHex(axial)
@@ -689,8 +1358,8 @@ export function HexMap({
           // Geometric center of the sprite (anchor is bottom-ish at 0.92).
           midX =
             sprite.position.x + (0.5 - sprite.anchor.x) * w * Math.sign(sprite.scale.x || 1)
-          // Keep mass is left of the drawbridge — nudge ring toward the keep.
-          midX -= w * 0.06
+          // Keep sits opposite the drawbridge — nudge the ring toward it.
+          midX += entry.data.flipped ? w * 0.06 : -w * 0.06
           midY = sprite.position.y + (0.5 - sprite.anchor.y) * h
         }
         entry.ring.position.set(midX, midY)
@@ -708,6 +1377,7 @@ export function HexMap({
       const applyFeatureArt = (
         entry: {
           data: MapObjectData
+          view: Container
           badge: Graphics
           label: Text
           sprite: Sprite
@@ -756,6 +1426,9 @@ export function HexMap({
             const boost = Math.max(1, coverW / contain)
             entry.sprite.scale.x *= boost
             entry.sprite.scale.y *= boost
+            if (entry.data.flipped) {
+              entry.sprite.scale.x = -Math.abs(entry.sprite.scale.x)
+            }
             placeTownOwnershipRing(entry, ownerId)
             syncTownActorDepth()
             return
@@ -824,6 +1497,121 @@ export function HexMap({
               live.data.r,
             )?.player_id
             applyFeatureArt(live, texture, owner)
+          })
+          return
+        }
+        if (entry.data.kind === 'fountain') {
+          const feature = featureForFountain(getCachedCatalog())
+          void loadFeatureTexture(feature?.image_path ?? 'Fountain.png').then(
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
+          return
+        }
+        if (entry.data.kind === 'chest') {
+          const sessionChest = findChestAt(
+            getSession(),
+            entry.data.q,
+            entry.data.r,
+          )
+          const level =
+            sessionChest?.level ??
+            (typeof entry.data.level === 'number' ? entry.data.level : 0)
+          const catalog = getCachedCatalog()
+          const imagePath = sessionChest?.open
+            ? chestOpenImage(catalog, level) ??
+              featureForChest(catalog, level)?.image_path
+            : chestClosedImage(catalog, level) ??
+              featureForChest(catalog, level)?.image_path
+          void loadFeatureTexture(imagePath).then((texture) => {
+            const live = objectByKey.get(key)
+            if (!live || live !== entry) {
+              return
+            }
+            applyFeatureArt(live, texture, null)
+          })
+          return
+        }
+        if (entry.data.kind === 'sign') {
+          const feature = featureForSign(getCachedCatalog())
+          void loadFeatureTexture(feature?.image_path ?? 'Sign.png').then(
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
+          return
+        }
+        if (entry.data.kind === 'library') {
+          const feature = featureForWorldLibrary(getCachedCatalog())
+          void loadFeatureTexture(feature?.image_path ?? 'Library.png').then(
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
+          return
+        }
+        if (entry.data.kind === 'hanger') {
+          const feature = featureForWorldHanger(getCachedCatalog())
+          void loadFeatureTexture(feature?.image_path ?? 'Hanger.png').then(
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
+          return
+        }
+        if (entry.data.kind === 'dock') {
+          const feature = featureForWorldDock(getCachedCatalog())
+          void loadFeatureTexture(feature?.image_path ?? 'Dock.png').then(
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
+          return
+        }
+        if (entry.data.kind === 'recruits') {
+          const feature = featureForWorldRecruits(getCachedCatalog())
+          void loadFeatureTexture(feature?.image_path ?? 'Recruits.png').then(
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
+          return
+        }
+        if (entry.data.kind === 'notice_board') {
+          const feature = featureForNoticeBoard(getCachedCatalog())
+          void loadFeatureTexture(
+            feature?.image_path ?? 'Notice_Board.png',
+          ).then((texture) => {
+            const live = objectByKey.get(key)
+            if (!live || live !== entry) {
+              return
+            }
+            applyFeatureArt(live, texture, null)
           })
           return
         }
@@ -903,7 +1691,19 @@ export function HexMap({
           ring: objectRing,
         }
         objectByKey.set(`${obj.q},${obj.r}`, entry)
-        if (obj.kind === 'mine' || obj.kind === 'pickup' || obj.kind === 'town') {
+        if (
+          obj.kind === 'mine' ||
+          obj.kind === 'pickup' ||
+          obj.kind === 'town' ||
+          obj.kind === 'fountain' ||
+          obj.kind === 'chest' ||
+          obj.kind === 'sign' ||
+          obj.kind === 'library' ||
+          obj.kind === 'hanger' ||
+          obj.kind === 'dock' ||
+          obj.kind === 'recruits' ||
+          obj.kind === 'notice_board'
+        ) {
           loadObjectFeatureArt(entry)
         }
       }
@@ -916,10 +1716,34 @@ export function HexMap({
         onResources(snapshotWallet(walletRef.current))
       }
 
-      const resolveHex = (q: number, r: number) => {
+      const tryFountainRestore = (q: number, r: number) => {
+        const heroId = selectedMapHeroId ?? heroRef.current?.id
+        if (!heroId) {
+          return
+        }
+        const catalog = getCachedCatalog()
+        if (!catalog) {
+          return
+        }
+        let message: string | null = null
+        updateSession((current) => {
+          const result = applyFountainVisit(current, catalog, heroId, q, r)
+          message = result.message
+          return result.session
+        })
+        if (message && !activePlayer(getSession())?.is_ai) {
+          onFountainRestoreRef.current?.(message)
+        }
+      }
+
+      const resolveHex = (q: number, r: number, opts?: { fountain?: boolean }) => {
         const key = `${q},${r}`
         const entry = objectByKey.get(key)
         if (!entry) {
+          // Session fountain without a painted entry (rare) — still restore.
+          if (opts?.fountain) {
+            tryFountainRestore(q, r)
+          }
           return
         }
         const obj = entry.data
@@ -928,6 +1752,12 @@ export function HexMap({
           ? getSession().heroes.find((row) => row.id === heroId)
           : undefined
         const moverId = hero?.player_id
+        if (obj.kind === 'fountain') {
+          if (opts?.fountain) {
+            tryFountainRestore(q, r)
+          }
+          return
+        }
         if (obj.kind === 'town') {
           const existing = findTownAt(getSession(), q, r)
           if (
@@ -1054,6 +1884,86 @@ export function HexMap({
       let downX = 0
       let downY = 0
 
+      /**
+       * World XY for cull. Heroes/mobs parented under a town for occlusion use
+       * local coords — comparing those to the camera wrongly culls them off
+       * (missing token at spawn / near keeps until the unit moves away).
+       */
+      const markerWorldXY = (view: Container): { x: number; y: number } => {
+        let x = 0
+        let y = 0
+        let node: Container | null = view
+        while (node && node !== world) {
+          x += node.position.x
+          y += node.position.y
+          node = node.parent as Container | null
+        }
+        return { x, y }
+      }
+
+      const applyActorCull = () => {
+        const viewW = instance.screen.width
+        const viewH = instance.screen.height
+        for (const entry of objectByKey.values()) {
+          const onScreen = (x: number, y: number) =>
+            chunkRenderer.cullWorldPoint(x, y, camera.x, camera.y, viewW, viewH)
+          let render = onScreen(entry.view.position.x, entry.view.position.y)
+          // Units parented under a town for occlusion must keep the town
+          // rendering when the unit is in view and the keep origin is not.
+          if (!render) {
+            for (const child of entry.view.children) {
+              if (
+                child === entry.sprite ||
+                child === entry.badge ||
+                child === entry.label ||
+                child === entry.ring
+              ) {
+                continue
+              }
+              const { x, y } = markerWorldXY(child as Container)
+              if (onScreen(x, y)) {
+                render = true
+                break
+              }
+            }
+          }
+          entry.view.renderable = render
+        }
+        for (const entry of heroMarkers.values()) {
+          const { x, y } = markerWorldXY(entry.view)
+          entry.view.renderable = chunkRenderer.cullWorldPoint(
+            x,
+            y,
+            camera.x,
+            camera.y,
+            viewW,
+            viewH,
+          )
+        }
+        for (const entry of boatMarkers.values()) {
+          const { x, y } = markerWorldXY(entry.view)
+          entry.view.renderable = chunkRenderer.cullWorldPoint(
+            x,
+            y,
+            camera.x,
+            camera.y,
+            viewW,
+            viewH,
+          )
+        }
+        for (const entry of mobMarkers.values()) {
+          const { x, y } = markerWorldXY(entry.view)
+          entry.view.renderable = chunkRenderer.cullWorldPoint(
+            x,
+            y,
+            camera.x,
+            camera.y,
+            viewW,
+            viewH,
+          )
+        }
+      }
+
       const applyCamera = () => {
         const viewW = instance.screen.width
         const viewH = instance.screen.height
@@ -1068,228 +1978,88 @@ export function HexMap({
         camera.x = next.x
         camera.y = next.y
         world.position.set(-camera.x, -camera.y)
+        chunkRenderer.updateCull(camera.x, camera.y, viewW, viewH)
+        applyActorCull()
       }
 
-      const paintFog = () => {
-        fog.clear()
-        grid.forEach((hex) => {
-          if (isExplored(hex.q, hex.r)) {
-            return
-          }
-          fog.poly(
-            hex.corners.map((corner) => ({
-              x: corner.x + offsetX,
-              y: corner.y + offsetY,
-            })),
-          )
-          fog.fill({ color: UNEXPLORED_COLOR })
-          fog.stroke({ width: 1.5, color: 0x2a2a2a })
-        })
-      }
-
-      const paintTexturedHexes = () => {
-        for (const child of terrainLayer.removeChildren()) {
-          child.destroy({ children: true })
+      const paintRoads = () => {
+        roadLayer.clear()
+        // Obviously-placeholder stroke (cyan) — stand-in until Graphics art.
+        // Static after generation: stroke once; fog covers unexplored segments.
+        const strokeColor = 0x00e5ff
+        const strokeWidth = Math.max(3, hexSize * 0.14)
+        const strokeStyle = {
+          width: strokeWidth,
+          color: strokeColor,
+          alpha: 0.9,
+          join: 'round' as const,
+          cap: 'round' as const,
         }
-        const catalog = getCachedCatalog()
-        if (!catalog || catalog.terrain.length === 0) {
-          return
-        }
-        // Collect every map hex so chunk UVs stay stable as fog reveals.
-        const members: Array<{ q: number; r: number; hex: Hex }> = []
-        grid.forEach((hex) => {
-          members.push({ q: hex.q, r: hex.r, hex })
-        })
-        const chunkDecors = useTerrainImages
-          ? buildTerrainChunkDecors(
-              members,
-              (q, r) => assignedTerrainName(q, r),
-              (q, r) => getTile(q, r)?.chunkId ?? null,
-              (name) =>
-                hexTerrainTextures.get(name) ??
-                hexTerrainTextures.get(name.replaceAll(' ', '_')),
-              offsetX,
-              offsetY,
-              seed,
-            )
-          : new Map()
-
-        grid.forEach((hex) => {
-          if (!isExplored(hex.q, hex.r)) {
-            return
-          }
-          const base = assignedTerrainForHex(catalog, hex.q, hex.r)
-          if (!base) {
-            return
-          }
-          const poly = hex.corners.map((corner) => ({
-            x: corner.x + offsetX,
-            y: corner.y + offsetY,
-          }))
-
-          // Clip ALL of this cell's paint (base + wedges) to the hex outline
-          // so wedge triangles can never bleed across neighbors.
-          const cell = new Container()
-          const cellMask = new Graphics()
-          cellMask.poly(poly)
-          cellMask.fill({ color: 0xffffff })
-          cell.addChild(cellMask)
-          cell.mask = cellMask
-
-          if (useTerrainImages) {
-            const decor = chunkDecors.get(`${hex.q},${hex.r}`)
-            if (decor) {
-              let cx = 0
-              let cy = 0
-              for (const p of poly) {
-                cx += p.x
-                cy += p.y
-              }
-              cx /= poly.length
-              cy /= poly.length
-              const expanded = poly.map((corner) => {
-                const dx = corner.x - cx
-                const dy = corner.y - cy
-                const len = Math.hypot(dx, dy) || 1
-                return {
-                  x: corner.x + (dx / len) * 2,
-                  y: corner.y + (dy / len) * 2,
-                }
-              })
-              addChunkMaskedTerrain(cell, expanded, decor)
-            } else {
-              const g = new Graphics()
-              g.poly(poly)
-              g.fill({ color: parseCssHexColor(base.color) })
-              cell.addChild(g)
-            }
-          } else {
-            const g = new Graphics()
-            g.poly(poly)
-            g.fill({ color: parseCssHexColor(base.color) })
-            cell.addChild(g)
-          }
-
-          const wedges = wedgesForHex(
-            catalog,
-            hex,
-            offsetX,
-            offsetY,
-            hex.q,
-            hex.r,
-            (nq, nr) => {
-              const nHex = grid.getHex({ q: nq, r: nr })
-              if (!nHex) {
-                return null
-              }
-              return hexCenter(nHex, offsetX, offsetY)
-            },
-          )
-          for (const wedge of wedges) {
-            if (useTerrainImages) {
-              if (wedge.fromBuffer) {
-                const bufTex =
-                  hexTerrainTextures.get(wedge.terrain.name) ??
-                  hexTerrainTextures.get(wedge.terrain.name.replaceAll(' ', '_'))
-                if (bufTex) {
-                  addMaskedTerrainWedge(cell, wedge.points, {
-                    kind: 'texture',
-                    texture: bufTex,
-                    hex,
-                    offsetX,
-                    offsetY,
-                  })
-                  continue
-                }
-              } else {
-                const decor = chunkDecors.get(`${wedge.nq},${wedge.nr}`)
-                if (decor) {
-                  addMaskedTerrainWedge(cell, wedge.points, {
-                    kind: 'chunk',
-                    decor,
-                  })
-                  continue
-                }
-              }
-            }
-            addMaskedTerrainWedge(cell, wedge.points, {
-              kind: 'color',
-              color: parseCssHexColor(wedge.terrain.color),
-            })
-          }
-
-          terrainLayer.addChild(cell)
-
-          if (showHexOutlines) {
-            const stroke = new Graphics()
-            stroke.poly(poly)
-            stroke.stroke({ width: 1.5, color: 0x111111 })
-            terrainLayer.addChild(stroke)
-          }
-        })
-      }
-
-      const paintProps = async () => {
-        for (const child of propLayer.removeChildren()) {
-          child.destroy({ children: true })
-        }
-        const jobs: Array<{
-          q: number
-          r: number
-          file: string
-          variant: number
-        }> = []
+        const roadHexes: Axial[] = []
         forEachTile((q, r) => {
-          if (!isExplored(q, r)) {
-            return
+          if (getTile(q, r)?.hasRoad) {
+            roadHexes.push({ q, r })
           }
-          const tile = getTile(q, r)
-          if (!tile?.propFile) {
-            return
-          }
-          jobs.push({
-            q,
-            r,
-            file: tile.propFile,
-            variant: tile.propVariant ?? 1,
-          })
         })
-        await Promise.all(
-          jobs.map(async (job) => {
-            const texture = await loadPropTexture(job.file, job.variant)
-            if (!texture || cancelled) {
-              return
-            }
-            const hex = grid.getHex({ q: job.q, r: job.r })
+        strokeRoadSegments(
+          roadLayer,
+          roadHexes,
+          (q, r) => {
+            const hex = grid.getHex({ q, r })
             if (!hex) {
-              return
+              return null
             }
-            const center = hexCenter(hex, offsetX, offsetY)
-            addPropSprite(
-              propLayer,
-              texture,
-              center.x,
-              center.y,
-              hex.width,
-              hex.height,
-            )
-          }),
+            return hexCenter(hex, offsetX, offsetY)
+          },
+          strokeStyle,
+          (q, r) => getTile(q, r)?.roadMask,
         )
       }
 
-      const exploreAround = (origin: Axial) => {
-        grid.forEach((hex) => {
-          if (hexDistance(origin, hex) <= visionRange(getCachedCatalog())) {
-            markExplored(hex.q, hex.r)
-          }
+      const rebakeTerrain = () => {
+        const catalog = getCachedCatalog()
+        chunkRenderer.setAppearanceFlags({
+          useTerrainImages: mapUseTerrainImages(catalog),
+          showHexOutlines: mapShowHexesWorld(catalog),
         })
-        paintFog()
-        paintTexturedHexes()
-        void paintProps()
+        chunkRenderer.rebakeAll()
+        applyCamera()
+        setWorldRenderStats(chunkRenderer.stats(world))
+      }
+
+      const exploreAround = (origin: Axial) => {
+        const newly: Axial[] = []
+        const range = visionRange(getCachedCatalog())
+        grid.forEach((hex) => {
+          if (hexDistance(origin, hex) > range) {
+            return
+          }
+          if (!isExplored(hex.q, hex.r)) {
+            newly.push({ q: hex.q, r: hex.r })
+          }
+          markExplored(hex.q, hex.r)
+        })
+        if (newly.length > 0) {
+          chunkRenderer.revealHexes(newly)
+          void chunkRenderer.addPropsForHexes(
+            newly,
+            loadPropTexture,
+            addPropSprite,
+          )
+          applyCamera()
+          setWorldRenderStats(chunkRenderer.stats(world))
+        }
         updateSession((current) =>
           persistActiveExplored(current, getExploredHexes()),
         )
       }
+
+      rebakeTerrainRef.current = rebakeTerrain
+
+      // Roads once at mount; fog covers unexplored. Terrain/fog/props via chunks.
+      paintRoads()
+      rebakeTerrain()
+      void chunkRenderer.rebuildAllProps(loadPropTexture, addPropSprite)
 
       const syncTownActorDepth = () => {
         // Guarantee occlusion by parenting units under the town view (before the
@@ -1347,22 +2117,27 @@ export function HexMap({
                 Math.abs(sp.width) *
                 Math.sign(sp.scale.x || 1)
             const halfW = Math.max(Math.abs(sp.width) * 0.65, hexSize * 2)
+            const flipped = entry.data.flipped === true
 
-            // Entry/drawbridge: keep the unit in front of the town.
+            // Entry/drawbridge stays in front. Flipped towns put that gate on
+            // the left of the art; unflipped, it is on the right.
             if (entry.data.q === pos.q && entry.data.r === pos.r) {
-              // Only treat as "in front" if the marker sits on the lower-right
-              // drawbridge side of the art; otherwise the keep still occludes
-              // (entry hex center falls under the gatehouse walls).
+              const onGateSide = flipped
+                ? worldX <= midX + hexSize * 0.15
+                : worldX >= midX - hexSize * 0.15
               const onDrawbridge =
-                worldX >= midX - hexSize * 0.15 &&
-                worldY >= Math.min(kc.y, ec.y) - hexSize * 0.1
+                onGateSide && worldY >= Math.min(kc.y, ec.y) - hexSize * 0.1
               if (onDrawbridge) {
                 return null
               }
             }
 
+            // Keep side only, a short way behind the building. The gate and
+            // the road leaving it are not "behind the keep".
+            const keepSide = flipped ? 1 : -1
+            const behind = (pos.q - keep.q) * keepSide
             const nearKeep =
-              pos.r <= keep.r + 0 && Math.abs(pos.q - keep.q) <= 2
+              behind > 0 && behind <= 2 && pos.r <= keep.r && pos.r >= keep.r - 2
             const onFootprint =
               (pos.q === keep.q && pos.r === keep.r) ||
               (pos.q === entry.data.q && pos.r === entry.data.r)
@@ -1454,8 +2229,79 @@ export function HexMap({
         }
       }
 
+      const placeEmptyBoatMarkers = () => {
+        const session = getSession()
+        const token = hexSize * 0.5 * 2
+        const seen = new Set<string>()
+        for (const boat of session.boats ?? []) {
+          if (boat.occupant_hero_id != null) {
+            continue
+          }
+          seen.add(boat.id)
+          const visible = isExplored(boat.position.q, boat.position.r)
+          const file = HERO_TRAVEL_FILES.boat
+          let texture: Texture | null = null
+          if (travelArtByFile.has(file)) {
+            texture = travelArtByFile.get(file) ?? null
+          } else if (!travelArtLoading.has(file)) {
+            travelArtLoading.add(file)
+            void loadTravelTexture(file).then((loaded) => {
+              travelArtByFile.set(file, loaded)
+              travelArtLoading.delete(file)
+              if (!cancelled) {
+                placeEmptyBoatMarkers()
+              }
+            })
+          }
+          let entry = boatMarkers.get(boat.id)
+          if (!entry) {
+            const view = new Container()
+            const badge = new Graphics()
+            const sprite = new Sprite()
+            sprite.anchor.set(0.5)
+            view.addChild(badge, sprite)
+            heroLayer.addChild(view)
+            entry = { view, badge, sprite }
+            boatMarkers.set(boat.id, entry)
+          }
+          entry.view.visible = visible
+          if (!visible) {
+            continue
+          }
+          const hasArt =
+            texture != null && texture.width >= 1 && texture.height >= 1
+          entry.sprite.visible = hasArt
+          entry.badge.visible = !hasArt
+          if (hasArt && texture) {
+            const scale = Math.min(token / texture.width, token / texture.height)
+            entry.sprite.texture = texture
+            entry.sprite.scale.set(scale)
+          } else {
+            entry.badge.clear()
+            entry.badge.circle(0, 0, hexSize * 0.35)
+            entry.badge.fill({ color: NEUTRAL_OBJECT_COLOR })
+            entry.badge.stroke({ width: 1, color: 0x111111 })
+          }
+          const hex =
+            grid.getHex(boat.position) ?? grid.createHex(boat.position)
+          const center = hexCenter(hex, offsetX, offsetY)
+          entry.view.position.set(center.x, center.y)
+        }
+        for (const [id, entry] of boatMarkers) {
+          if (seen.has(id)) {
+            continue
+          }
+          entry.view.parent?.removeChild(entry.view)
+          entry.view.destroy({ children: true })
+          boatMarkers.delete(id)
+        }
+        syncTownActorDepth()
+        applyActorCull()
+      }
+
       const placeHeroMarkers = () => {
-        const sessionHeroes = getSession().heroes
+        const session = getSession()
+        const sessionHeroes = session.heroes
         const counts = new Map<string, number>()
         const indexOnHex = new Map<string, number>()
         for (const hero of sessionHeroes) {
@@ -1470,10 +2316,29 @@ export function HexMap({
         const seen = new Set<string>()
         for (const hero of sessionHeroes) {
           seen.add(hero.id)
+          const travel = heroTravelSprite(hero, session)
+          let texture: Texture | null = null
+          if (travel) {
+            const file = travel.file
+            if (travelArtByFile.has(file)) {
+              texture = travelArtByFile.get(file) ?? null
+            } else if (!travelArtLoading.has(file)) {
+              travelArtLoading.add(file)
+              void loadTravelTexture(file).then((loaded) => {
+                travelArtByFile.set(file, loaded)
+                travelArtLoading.delete(file)
+                if (!cancelled) {
+                  placeHeroMarkers()
+                }
+              })
+            }
+          }
           let entry = heroMarkers.get(hero.id)
           if (!entry) {
             const view = new Container()
             const badge = new Graphics()
+            const sprite = new Sprite()
+            sprite.anchor.set(0.5)
             const label = new Text({
               text: hero.name,
               style: {
@@ -1484,9 +2349,9 @@ export function HexMap({
               },
               anchor: 0.5,
             })
-            view.addChild(badge, label)
+            view.addChild(badge, sprite, label)
             heroLayer.addChild(view)
-            entry = { view, label, badge }
+            entry = { view, label, badge, sprite }
             heroMarkers.set(hero.id, entry)
           } else {
             entry.label.text = hero.name
@@ -1497,15 +2362,44 @@ export function HexMap({
             continue
           }
           const selected = heroRef.current?.id === hero.id
-          entry.badge.clear()
-          entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
-          entry.badge.fill({
-            color: ownerTint(hero.player_id) ?? NEUTRAL_OBJECT_COLOR,
-          })
-          entry.badge.stroke({
-            width: selected ? 3 : 2,
-            color: selected ? 0xffffff : 0x111111,
-          })
+          // Fit travel art to roughly one hex (same budget as feature tokens).
+          const token = hexSize * 0.9 * 2
+          const hasArt =
+            texture != null && texture.width >= 1 && texture.height >= 1
+          entry.sprite.visible = hasArt
+          entry.badge.visible = true
+          entry.label.visible = true
+          const ownerColor =
+            ownerTint(hero.player_id) ?? NEUTRAL_OBJECT_COLOR
+          if (hasArt && texture) {
+            const scale = Math.min(token / texture.width, token / texture.height)
+            entry.sprite.texture = texture
+            entry.sprite.scale.set(
+              travel.flipX ? -Math.abs(scale) : Math.abs(scale),
+              Math.abs(scale),
+            )
+            // Owner-coloured base under the sprite + ring for selection.
+            entry.badge.clear()
+            entry.badge.circle(0, hexSize * 0.12, hexSize * 0.38)
+            entry.badge.fill({ color: ownerColor, alpha: 0.85 })
+            entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
+            entry.badge.stroke({
+              width: selected ? 3 : 2,
+              color: selected ? 0xffffff : ownerColor,
+            })
+            entry.label.position.set(0, hexSize * 0.78)
+            entry.label.style.fill = 0xffffff
+          } else {
+            // Missing-art fallback: original circle + name token.
+            entry.badge.clear()
+            entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
+            entry.badge.fill({ color: ownerColor })
+            entry.badge.stroke({
+              width: selected ? 3 : 2,
+              color: selected ? 0xffffff : 0x111111,
+            })
+            entry.label.position.set(0, 0)
+          }
           const hex = grid.getHex(hero.position) ?? grid.createHex(hero.position)
           const center = hexCenter(hex, offsetX, offsetY)
           const hexKey = `${hero.position.q},${hero.position.r}`
@@ -1523,7 +2417,9 @@ export function HexMap({
           entry.view.destroy({ children: true })
           heroMarkers.delete(id)
         }
+        placeEmptyBoatMarkers()
         syncTownActorDepth()
+        applyActorCull()
       }
       const placeMobMarkers = () => {
         const session = getSession()
@@ -1622,10 +2518,12 @@ export function HexMap({
           mobMarkers.delete(id)
         }
         syncTownActorDepth()
+        applyActorCull()
       }
       applyHeroMarkerLabel = () => {
         placeHeroMarkers()
         placeMobMarkers()
+        placeEmptyBoatMarkers()
       }
 
       const panToHex = (q: number, r: number) => {
@@ -1748,9 +2646,8 @@ export function HexMap({
         const session = getSession()
         const player = activePlayer(session)
         restoreExplored(player?.explored)
-        paintFog()
-        paintTexturedHexes()
-        void paintProps()
+        rebakeTerrain()
+        void chunkRenderer.rebuildAllProps(loadPropTexture, addPropSprite)
         walletRef.current = walletFromSession(session)
         emitResources()
         const ownHeroes = player
@@ -1807,6 +2704,7 @@ export function HexMap({
       placeHeroMarkers()
       placeMobMarkers()
       paintOwnedMarkers()
+      paintZoneDebug()
       const unsubHeroes = subscribe(() => {
         placeHeroMarkers()
         placeMobMarkers()
@@ -1819,15 +2717,48 @@ export function HexMap({
           if (
             entry.data.kind === 'mine' ||
             entry.data.kind === 'pickup' ||
-            entry.data.kind === 'town'
+            entry.data.kind === 'town' ||
+            entry.data.kind === 'fountain' ||
+            entry.data.kind === 'chest' ||
+            entry.data.kind === 'sign' ||
+            entry.data.kind === 'library' ||
+            entry.data.kind === 'hanger' ||
+            entry.data.kind === 'dock' ||
+            entry.data.kind === 'recruits' ||
+            entry.data.kind === 'notice_board'
           ) {
             loadObjectFeatureArt(entry)
           }
         }
         paintOwnedMarkers()
+        // app_config flags that affect terrain appearance
+        rebakeTerrain()
       })
       signal.addEventListener('abort', unsubHeroes, { once: true })
       signal.addEventListener('abort', unsubCatalog, { once: true })
+
+      const syncChestSprites = () => {
+        const chestKeys = new Set(
+          (getSession().features ?? [])
+            .filter((row) => row.kind === 'chest')
+            .map((row) => `${row.position.q},${row.position.r}`),
+        )
+        for (const [key, entry] of [...objectByKey.entries()]) {
+          if (entry.data.kind !== 'chest') {
+            continue
+          }
+          if (!chestKeys.has(key)) {
+            objectLayer.removeChild(entry.view)
+            entry.view.destroy({ children: true })
+            objectByKey.delete(key)
+            continue
+          }
+          loadObjectFeatureArt(entry)
+        }
+      }
+      const unsubFeatures = subscribe(syncChestSprites)
+      signal.addEventListener('abort', unsubFeatures, { once: true })
+
       if (heroRef.current) {
         exploreAround(heroRef.current)
         resolveHex(heroRef.current.q, heroRef.current.r)
@@ -1896,11 +2827,44 @@ export function HexMap({
         const enemyTown = enemyOwnedTownAt(hex.q, hex.r, hero.id)
         const mob = visibleMobAt(hex.q, hex.r)
         const node = liveNodeAt(hex.q, hex.r)
-        const tipText = worldHoverTooltipText(getSession(), getCachedCatalog(), {
+        const fountain = liveFountainAt(hex.q, hex.r)
+        const chest = liveChestAt(hex.q, hex.r)
+        const sign = liveSignAt(hex.q, hex.r)
+        const library = liveWorldLibraryAt(hex.q, hex.r)
+        const hanger = liveWorldHangerAt(hex.q, hex.r)
+        const dock = liveWorldDockAt(hex.q, hex.r)
+        const recruits = liveWorldRecruitsAt(hex.q, hex.r)
+        const noticeBoard = liveNoticeBoardAt(hex.q, hex.r)
+        const emptyBoat = emptyBoatAt(hex.q, hex.r)
+        const selfOnHex =
+          hero.q === hex.q && hero.r === hex.r
+            ? getSession().heroes.find((row) => row.id === hero.id)
+            : undefined
+        const actor = activePlayer(getSession())
+        const catalog = getCachedCatalog()
+        const tipText = worldHoverTooltipText(getSession(), catalog, {
           town: town ?? enemyTown,
-          hero: occupant,
+          hero: occupant ?? selfOnHex,
           mob,
           node,
+          fountain: fountain != null,
+          chestName: chest?.name ?? null,
+          signText: sign
+            ? signTooltipText(sign, actor?.id)
+            : null,
+          libraryText:
+            library && catalog
+              ? worldLibraryTooltipText(library, catalog, actor?.id)
+              : library
+                ? 'Library'
+                : null,
+          hanger: hanger != null,
+          dock: dock != null,
+          recruits: recruits != null,
+          noticeBoardText: noticeBoard
+            ? noticeBoardTooltip(getSession(), noticeBoard)
+            : null,
+          emptyBoat: emptyBoat != null,
         })
         const wpTip =
           waypointPlan && waypointPlan.waypoints.length > 0
@@ -1918,28 +2882,101 @@ export function HexMap({
         const undefendedEnemy =
           enemyTown != null &&
           townIsUndefended(getSession(), enemyTown, hero.id)
+        const liveHero = getSession().heroes.find((row) => row.id === hero.id)
+        const aboard = liveHero
+          ? boatOccupiedByHero(getSession(), liveHero.id)
+          : undefined
+        // Click-on features are never walkOnto — approach adjacent only.
         const walkOnto =
+          !aboard &&
           !occupant &&
           !mob &&
-          (undefendedEnemy || (!enemyTown && (town || node)))
-            ? hex
+          !chest &&
+          !sign &&
+          !library &&
+          !hanger &&
+          !dock &&
+          !recruits &&
+          !noticeBoard
+            ? emptyBoat
+              ? hex
+              : undefendedEnemy || (!enemyTown && (town || node || fountain))
+                ? hex
+                : null
             : null
         const hoverBlocked = obstacleHexes(hero, walkOnto)
         const from = waypointPlan?.end ?? hero
         const budget = waypointPlan?.remaining ?? hero.remaining
-        const hoverKey = `${from.q},${from.r},${budget}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|wp:${waypointPlan?.waypoints.length ?? 0}|${[...hoverBlocked].sort().join(';')}`
+        const hoverKey = `${from.q},${from.r},${budget}->${hex.q},${hex.r}|${walkOnto ? 'on' : 'off'}|wp:${waypointPlan?.waypoints.length ?? 0}|ab:${aboard?.id ?? 'none'}|${[...hoverBlocked].sort().join(';')}`
         if (hoverKey === lastHoverKey) {
           return
         }
         lastHoverKey = hoverKey
+        if (aboard) {
+          const moverPlayerId = liveHero?.player_id ?? ''
+          let sailDest: Axial | null = null
+          if (
+            isDisembarkLandHex(hex.q, hex.r) &&
+            hexDistance(from, hex) <= 1
+          ) {
+            sailDest = hex
+          } else if (boatEnterCost(hex.q, hex.r) != null) {
+            sailDest = hex
+          } else {
+            sailDest = sailDestForLandGoal(from, hex, aboard.id, moverPlayerId)
+          }
+          if (!sailDest || (sailDest.q === from.q && sailDest.r === from.r)) {
+            preview.clear()
+            return
+          }
+          const sailSteps =
+            isDisembarkLandHex(sailDest.q, sailDest.r) &&
+            hexDistance(from, sailDest) <= 1
+              ? [sailDest]
+              : sailMovementSteps(
+                  grid,
+                  from,
+                  sailDest,
+                  budget,
+                  getSession(),
+                  aboard.id,
+                  moverPlayerId,
+                )
+          if (sailSteps.length === 0) {
+            preview.clear()
+            return
+          }
+          drawPreview(sailSteps)
+          return
+        }
         const dest =
-          occupant || (enemyTown && !undefendedEnemy) || mob
+          occupant ||
+          (enemyTown && !undefendedEnemy) ||
+          mob ||
+          chest ||
+          sign ||
+          library ||
+          hanger ||
+          dock ||
+          recruits ||
+          noticeBoard
             ? approachHex(
                 from,
-                occupant?.position ?? enemyTown?.position ?? mob!.position,
+                occupant?.position ??
+                  enemyTown?.position ??
+                  mob?.position ??
+                  chest?.position ??
+                  sign?.position ??
+                  library?.position ??
+                  hanger?.position ??
+                  dock?.position ??
+                  recruits?.position ??
+                  noticeBoard!.position,
                 hoverBlocked,
               )
-            : hex
+            : emptyBoat
+              ? emptyBoat.position
+              : hex
         if (!dest || (dest.q === from.q && dest.r === from.r)) {
           if (waypointPlan && waypointPlan.steps.length > 0) {
             drawPreview(waypointPlan.steps)
@@ -1948,7 +2985,16 @@ export function HexMap({
           }
           return
         }
-        const steps = movementSteps(grid, from, dest, budget, hoverBlocked)
+        const steps =
+          emptyBoat && !occupant && !mob && !chest && !sign && !library && !hanger && !dock && !recruits && !noticeBoard
+            ? boardBoatMovementSteps(
+                grid,
+                from,
+                emptyBoat.position,
+                budget,
+                hoverBlocked,
+              )
+            : movementSteps(grid, from, dest, budget, hoverBlocked)
         if (steps.length === 0 && !(waypointPlan && waypointPlan.steps.length > 0)) {
           preview.clear()
           return
@@ -1970,6 +3016,132 @@ export function HexMap({
         if (liveHero?.flight) {
           return Promise.resolve(false)
         }
+        const aboard = liveHero
+          ? boatOccupiedByHero(getSession(), liveHero.id)
+          : undefined
+        if (aboard) {
+          if (
+            isDisembarkLandHex(to.q, to.r) &&
+            hexDistance(hero, to) <= 1
+          ) {
+            updateSession((current) =>
+              disembarkBoat(current, hero.id, to).session,
+            )
+            hero.remaining = 0
+            onHeroState({
+              id: hero.id,
+              q: to.q,
+              r: to.r,
+              remaining: 0,
+            })
+            placeHeroMarkers()
+            placeMobMarkers()
+            exploreAround(hero)
+            followHero()
+            after?.()
+            return Promise.resolve(true)
+          }
+          let sailTo = to
+          const moverPlayerId = liveHero!.player_id
+          if (boatEnterCost(to.q, to.r) == null) {
+            const alt = sailDestForLandGoal(hero, to, aboard.id, moverPlayerId)
+            if (!alt) {
+              return Promise.resolve(false)
+            }
+            sailTo = alt
+          } else if (
+            !canSailOnto(getSession(), to.q, to.r, aboard.id, moverPlayerId)
+          ) {
+            return Promise.resolve(false)
+          }
+          if (
+            sailTo.q === hero.q &&
+            sailTo.r === hero.r &&
+            to.q === hero.q &&
+            to.r === hero.r
+          ) {
+            after?.()
+            return Promise.resolve(true)
+          }
+          if (hero.remaining <= 1e-9) {
+            return Promise.resolve(false)
+          }
+          const sailSteps =
+            precomputed && precomputed.length > 0
+              ? precomputed
+              : sailMovementSteps(
+                  grid,
+                  hero,
+                  sailTo,
+                  hero.remaining,
+                  getSession(),
+                  aboard.id,
+                  moverPlayerId,
+                ).map((hex) => ({ q: hex.q, r: hex.r }))
+          if (sailSteps.length === 0) {
+            return Promise.resolve(false)
+          }
+          const gen = ++moveGen
+          moving = true
+          clearWaypoints()
+          clearPreview()
+          return new Promise((resolve) => {
+            void (async () => {
+              let finished = false
+              for (const hex of sailSteps) {
+                if (signal.aborted || gen !== moveGen || !heroRef.current) {
+                  break
+                }
+                const naval = enemyBoatOccupantAt(
+                  getSession(),
+                  hex.q,
+                  hex.r,
+                  moverPlayerId,
+                )
+                if (naval) {
+                  // Stop adjacent; combat is started by the caller (click / AI attack).
+                  break
+                }
+                heroRef.current.q = hex.q
+                heroRef.current.r = hex.r
+                const cost = boatEnterCost(hex.q, hex.r)
+                if (cost == null) {
+                  break
+                }
+                heroRef.current.remaining = spendMovement(
+                  heroRef.current.remaining,
+                  cost,
+                )
+                onHeroState({
+                  id: heroRef.current.id,
+                  q: heroRef.current.q,
+                  r: heroRef.current.r,
+                  remaining: heroRef.current.remaining,
+                })
+                const moved = heroRef.current
+                updateSession((current) =>
+                  syncHeroBoatPosition(
+                    current,
+                    moved.id,
+                    { q: moved.q, r: moved.r },
+                    moved.remaining,
+                  ),
+                )
+                placeHeroMarkers()
+                placeMobMarkers()
+                exploreAround(heroRef.current)
+                followHero()
+                await sleep(MOVE_STEP_MS, signal)
+              }
+              if (gen === moveGen) {
+                moving = false
+                after?.()
+                finished = true
+              }
+              resolve(finished)
+            })()
+          })
+        }
         if (to.q === hero.q && to.r === hero.r) {
           resolveHex(to.q, to.r)
           after?.()
@@ -1978,16 +3150,28 @@ export function HexMap({
         if (hero.remaining <= 1e-9) {
           return Promise.resolve(false)
         }
+        const boardingBoat =
+          walkOnto != null &&
+          findBoatAt(getSession(), walkOnto.q, walkOnto.r)?.occupant_hero_id ==
+            null
         const steps =
           precomputed && precomputed.length > 0
             ? precomputed
-            : movementSteps(
-                grid,
-                hero,
-                to,
-                hero.remaining,
-                obstacleHexes(hero, walkOnto),
-              ).map((hex) => ({ q: hex.q, r: hex.r }))
+            : boardingBoat && walkOnto
+              ? boardBoatMovementSteps(
+                  grid,
+                  hero,
+                  walkOnto,
+                  hero.remaining,
+                  obstacleHexes(hero, walkOnto),
+                ).map((hex) => ({ q: hex.q, r: hex.r }))
+              : movementSteps(
+                  grid,
+                  hero,
+                  to,
+                  hero.remaining,
+                  obstacleHexes(hero, walkOnto),
+                ).map((hex) => ({ q: hex.q, r: hex.r }))
         if (steps.length === 0) {
           return Promise.resolve(false)
         }
@@ -2004,7 +3188,13 @@ export function HexMap({
               }
               heroRef.current.q = hex.q
               heroRef.current.r = hex.r
-              const cost = getTile(hex.q, hex.r)?.movementCostMultiplier
+              const cost =
+                boardingBoat &&
+                walkOnto &&
+                hex.q === walkOnto.q &&
+                hex.r === walkOnto.r
+                  ? 1
+                  : hexTransitionMoveCost(getCachedCatalog(), hex.q, hex.r)
               if (cost == null) {
                 break
               }
@@ -2033,7 +3223,7 @@ export function HexMap({
               placeHeroMarkers()
               placeMobMarkers()
               exploreAround(heroRef.current)
-              resolveHex(heroRef.current.q, heroRef.current.r)
+              resolveHex(heroRef.current.q, heroRef.current.r, { fountain: true })
               followHero()
               await sleep(MOVE_STEP_MS, signal)
             }
@@ -2063,7 +3253,7 @@ export function HexMap({
         const speed = flightSpeed(getCachedCatalog())
         // Circling: one full orbit around the town. En route: straight segment.
         const path = live.flight.circling
-          ? townCircleLapSteps(dest.position, live.position)
+          ? townCircleLapSteps(dest.position, live.position, dest.flipped)
           : flightSegmentSteps(live.position, dest.position, speed)
         const gen = ++moveGen
         moving = true
@@ -2116,12 +3306,13 @@ export function HexMap({
               const after = getSession().heroes.find((h) => h.id === heroId)
               if (
                 after?.flight?.circling &&
-                !live.flight.circling &&
+                !live.flight?.circling &&
                 gen === moveGen
               ) {
                 const lap = townCircleLapSteps(
                   dest.position,
                   after.position,
+                  dest.flipped,
                 )
                 await walkPath(lap)
                 if (gen === moveGen) {
@@ -2262,6 +3453,68 @@ export function HexMap({
             ...leg.steps,
           ])
         }
+        const liveRow = getSession().heroes.find((row) => row.id === hero.id)
+        const aboardNow = liveRow
+          ? boatOccupiedByHero(getSession(), liveRow.id)
+          : undefined
+        if (aboardNow) {
+          if (
+            isDisembarkLandHex(hex.q, hex.r) &&
+            hexDistance(hero, hex) <= 1
+          ) {
+            void tryMoveTo(hex, undefined, null)
+            return
+          }
+          let sailTarget: Axial | null = null
+          if (boatEnterCost(hex.q, hex.r) != null) {
+            sailTarget = hex
+          } else {
+            sailTarget = sailDestForLandGoal(
+              hero,
+              hex,
+              aboardNow.id,
+              liveRow!.player_id,
+            )
+          }
+          if (sailTarget) {
+            void tryMoveTo(sailTarget, () => {
+              const mover = heroRef.current
+              if (!mover || !liveRow) {
+                return
+              }
+              const naval = enemyBoatOccupantAt(
+                getSession(),
+                sailTarget.q,
+                sailTarget.r,
+                liveRow.player_id,
+              )
+              if (
+                !naval ||
+                hexDistance(mover, naval.hero.position) > 1
+              ) {
+                return
+              }
+              mover.remaining = spendHeroInteract(mover.remaining)
+              onHeroState({
+                id: mover.id,
+                q: mover.q,
+                r: mover.r,
+                remaining: mover.remaining,
+              })
+              updateSession((current) =>
+                syncHero(
+                  current,
+                  { q: mover.q, r: mover.r },
+                  mover.remaining,
+                  mover.id,
+                ),
+              )
+              placeHeroMarkers()
+              onHeroMeetRef.current(naval.hero.id)
+            }, null)
+          }
+          return
+        }
         // Shift-click: stage a waypoint on empty / walk-onto hexes only.
         if (event.shiftKey) {
           const occupantBlock = otherHeroAt(hex.q, hex.r, hero.id)
@@ -2277,7 +3530,25 @@ export function HexMap({
           }
           const townHere = findTownAt(getSession(), hex.q, hex.r)
           const nodeHere = liveNodeAt(hex.q, hex.r)
-          const walkOnto = townHere || nodeHere ? hex : null
+          const fountainHere = liveFountainAt(hex.q, hex.r)
+          const chestHere = liveChestAt(hex.q, hex.r)
+          const signHere = liveSignAt(hex.q, hex.r)
+          const libraryHere = liveWorldLibraryAt(hex.q, hex.r)
+          const hangerHere = liveWorldHangerAt(hex.q, hex.r)
+          const dockHere = liveWorldDockAt(hex.q, hex.r)
+          const recruitsHere = liveWorldRecruitsAt(hex.q, hex.r)
+          const noticeBoardHere = liveNoticeBoardAt(hex.q, hex.r)
+          const walkOnto =
+            !chestHere &&
+            !signHere &&
+            !libraryHere &&
+            !hangerHere &&
+            !dockHere &&
+            !recruitsHere &&
+            !noticeBoardHere &&
+            (townHere || nodeHere || fountainHere)
+              ? hex
+              : null
           const blocked = obstacleHexes(hero, walkOnto)
           const base =
             waypointPlan &&
@@ -2459,6 +3730,304 @@ export function HexMap({
           commitViaWaypoints(hex, undefined, hex)
           return
         }
+        const fountain = liveFountainAt(hex.q, hex.r)
+        if (fountain) {
+          commitViaWaypoints(hex, undefined, hex)
+          return
+        }
+        const chest = liveChestAt(hex.q, hex.r)
+        if (chest) {
+          const offer = () => {
+            const live = findChestAt(getSession(), chest.position.q, chest.position.r)
+            if (!live) {
+              return
+            }
+            updateSession((current) => openChest(current, live.id))
+            const entry = objectByKey.get(`${live.position.q},${live.position.r}`)
+            if (entry) {
+              loadObjectFeatureArt(entry)
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            if (activePlayer(getSession())?.is_ai) {
+              return
+            }
+            setMapInputLocked(true)
+            onChestOfferRef.current?.({
+              featureId: live.id,
+              title: live.name,
+              heroId,
+            })
+          }
+          if (hexDistance(hero, chest.position) <= 1) {
+            offer()
+            return
+          }
+          const dest = approachHex(hero, chest.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, offer)
+          return
+        }
+        const sign = liveSignAt(hex.q, hex.r)
+        if (sign) {
+          const read = () => {
+            const live = findSignAt(getSession(), sign.position.q, sign.position.r)
+            if (!live) {
+              return
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            if (activePlayer(getSession())?.is_ai) {
+              return
+            }
+            const catalog = getCachedCatalog()
+            if (!catalog) {
+              return
+            }
+            let text: string | null = null
+            updateSession((current) => {
+              const result = readSign(current, catalog, live.id, heroId)
+              if (!result) {
+                return current
+              }
+              text = result.text
+              return result.session
+            })
+            if (text) {
+              onSignReadRef.current?.(text)
+            }
+          }
+          if (hexDistance(hero, sign.position) <= 1) {
+            read()
+            return
+          }
+          const dest = approachHex(hero, sign.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, read)
+          return
+        }
+        const library = liveWorldLibraryAt(hex.q, hex.r)
+        if (library) {
+          const open = () => {
+            const live = findWorldLibraryAt(
+              getSession(),
+              library.position.q,
+              library.position.r,
+            )
+            if (!live) {
+              return
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            const actor = activePlayer(getSession())
+            if (!actor || actor.is_ai) {
+              return
+            }
+            openWorldLibraryVisit(live.id, actor.id)
+            setMapInputLocked(true)
+            onWorldLibraryRef.current?.({
+              featureId: live.id,
+              heroId,
+            })
+          }
+          if (hexDistance(hero, library.position) <= 1) {
+            open()
+            return
+          }
+          const dest = approachHex(hero, library.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, open)
+          return
+        }
+        const hanger = liveWorldHangerAt(hex.q, hex.r)
+        if (hanger) {
+          const open = () => {
+            const live = findWorldHangerAt(
+              getSession(),
+              hanger.position.q,
+              hanger.position.r,
+            )
+            if (!live) {
+              return
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            const actor = activePlayer(getSession())
+            if (!actor || actor.is_ai) {
+              return
+            }
+            setMapInputLocked(true)
+            onWorldHangerRef.current?.({
+              featureId: live.id,
+              heroId,
+            })
+          }
+          if (hexDistance(hero, hanger.position) <= 1) {
+            open()
+            return
+          }
+          const dest = approachHex(hero, hanger.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, open)
+          return
+        }
+        const dock = liveWorldDockAt(hex.q, hex.r)
+        if (dock) {
+          const open = () => {
+            const live = findWorldDockAt(
+              getSession(),
+              dock.position.q,
+              dock.position.r,
+            )
+            if (!live) {
+              return
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            const actor = activePlayer(getSession())
+            if (!actor || actor.is_ai) {
+              return
+            }
+            setMapInputLocked(true)
+            onWorldDockRef.current?.({
+              featureId: live.id,
+              heroId,
+            })
+          }
+          if (hexDistance(hero, dock.position) <= 1) {
+            open()
+            return
+          }
+          const dest = approachHex(hero, dock.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, open)
+          return
+        }
+        const recruits = liveWorldRecruitsAt(hex.q, hex.r)
+        if (recruits) {
+          const open = () => {
+            const live = findWorldRecruitsAt(
+              getSession(),
+              recruits.position.q,
+              recruits.position.r,
+            )
+            if (!live) {
+              return
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            const actor = activePlayer(getSession())
+            if (!actor || actor.is_ai) {
+              return
+            }
+            setMapInputLocked(true)
+            onWorldRecruitsRef.current?.({
+              featureId: live.id,
+              heroId,
+            })
+          }
+          if (hexDistance(hero, recruits.position) <= 1) {
+            open()
+            return
+          }
+          const dest = approachHex(hero, recruits.position, obstacleHexes(hero))
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, open)
+          return
+        }
+        const noticeBoard = liveNoticeBoardAt(hex.q, hex.r)
+        if (noticeBoard) {
+          const open = () => {
+            const live = findNoticeBoardAt(
+              getSession(),
+              noticeBoard.position.q,
+              noticeBoard.position.r,
+            )
+            if (!live) {
+              return
+            }
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            const actor = activePlayer(getSession())
+            if (!actor || actor.is_ai) {
+              return
+            }
+            setMapInputLocked(true)
+            onWorldNoticeBoardRef.current?.({
+              featureId: live.id,
+              heroId,
+            })
+          }
+          if (hexDistance(hero, noticeBoard.position) <= 1) {
+            open()
+            return
+          }
+          const dest = approachHex(
+            hero,
+            noticeBoard.position,
+            obstacleHexes(hero),
+          )
+          if (!dest) {
+            return
+          }
+          commitViaWaypoints(dest, open)
+          return
+        }
+        const emptyBoat = emptyBoatAt(hex.q, hex.r)
+        if (emptyBoat) {
+          const board = () => {
+            const heroId = selectedMapHeroId ?? heroRef.current?.id
+            if (!heroId) {
+              return
+            }
+            updateSession((current) =>
+              boardBoat(current, heroId, emptyBoat.id).session,
+            )
+            const row = getSession().heroes.find((h) => h.id === heroId)
+            if (row && heroRef.current) {
+              heroRef.current.q = row.position.q
+              heroRef.current.r = row.position.r
+              heroRef.current.remaining = row.movement_remaining
+              onHeroState({ ...heroRef.current })
+            }
+            placeHeroMarkers()
+          }
+          if (
+            hero.q === emptyBoat.position.q &&
+            hero.r === emptyBoat.position.r
+          ) {
+            board()
+            return
+          }
+          commitViaWaypoints(emptyBoat.position, board, emptyBoat.position)
+          return
+        }
         commitViaWaypoints(hex)
       }
       canvas.addEventListener('pointerup', stopPointer, { signal })
@@ -2504,7 +4073,13 @@ export function HexMap({
         { signal },
       )
 
+      let perfFrame = 0
       instance.ticker.add((ticker) => {
+        chunkRenderer.noteFrame(ticker.deltaMS)
+        perfFrame += 1
+        if (perfFrame % 15 === 0) {
+          setWorldRenderStats(chunkRenderer.stats(world))
+        }
         if (moving || mapInputLocked) {
           return
         }
@@ -2546,6 +4121,7 @@ export function HexMap({
 
     return () => {
       cancelled = true
+      rebakeTerrainRef.current = null
       applyHeroMovement = null
       panMapToHex = null
       applyHeroMarkerLabel = null
@@ -2556,7 +4132,7 @@ export function HexMap({
       abort.abort()
       app?.destroy()
     }
-  }, [hexSize, onMapInfo, onHeroState, onResources, onTownWelcome])
+  }, [hexSize, onMapInfo, onHeroState, onResources, onTownWelcome, onFountainRestore, onChestOffer, onSignRead, onWorldLibrary, onWorldHanger, onWorldDock, onWorldRecruits, onWorldNoticeBoard])
 
   return <div ref={hostRef} className="hex-map" tabIndex={0} />
 }

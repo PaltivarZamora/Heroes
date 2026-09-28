@@ -62,12 +62,12 @@ export function hexLine(from: Axial, to: Axial): Axial[] {
  * Ordered ring of hexes around a town's 2×1 footprint (excludes the town
  * hexes). Used for Hanger "circling" while the hero slot is occupied.
  */
-export function townCirclePath(townPos: Axial): Axial[] {
+export function townCirclePath(townPos: Axial, flipped?: boolean): Axial[] {
   const footprint = new Set(
-    townFootprintHexes(townPos).map((hex) => `${hex.q},${hex.r}`),
+    townFootprintHexes(townPos, flipped).map((hex) => `${hex.q},${hex.r}`),
   )
   const ring = new Map<string, Axial>()
-  for (const hex of townFootprintHexes(townPos)) {
+  for (const hex of townFootprintHexes(townPos, flipped)) {
     for (const n of neighborHexes(hex)) {
       const key = `${n.q},${n.r}`
       if (!footprint.has(key)) {
@@ -77,7 +77,7 @@ export function townCirclePath(townPos: Axial): Axial[] {
   }
   const cells = [...ring.values()]
   // Midpoint of the 2×1 (entry on the right, blocked on the left).
-  const cx = townPos.q - 0.5
+  const cx = flipped ? townPos.q + 0.5 : townPos.q - 0.5
   const cy = townPos.r
   cells.sort((a, b) => {
     const aa = Math.atan2(a.r - cy, a.q - cx)
@@ -106,8 +106,8 @@ function circleIndex(ring: Axial[], at: Axial): number {
 }
 
 /** Next hex one step clockwise on the town circle (wraps). */
-export function nextTownCircleHex(townPos: Axial, from: Axial): Axial {
-  const ring = townCirclePath(townPos)
+export function nextTownCircleHex(townPos: Axial, from: Axial, flipped?: boolean): Axial {
+  const ring = townCirclePath(townPos, flipped)
   if (ring.length === 0) {
     return { q: from.q, r: from.r }
   }
@@ -124,8 +124,8 @@ export function nextTownCircleHex(townPos: Axial, from: Axial): Axial {
  * One full clockwise lap starting after `from` (excludes `from` if already
  * on the ring; includes a return to the start hex).
  */
-export function townCircleLapSteps(townPos: Axial, from: Axial): Axial[] {
-  const ring = townCirclePath(townPos)
+export function townCircleLapSteps(townPos: Axial, from: Axial, flipped?: boolean): Axial[] {
+  const ring = townCirclePath(townPos, flipped)
   if (ring.length === 0) {
     return []
   }

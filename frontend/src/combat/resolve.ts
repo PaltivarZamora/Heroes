@@ -17,6 +17,8 @@ import { defenderArmyIsGarrison, isHeroStack } from './battle'
 import { applyDemonReinforcement } from './demonReinforcement'
 import { applyClericEndOfBattlePassive } from './templePassive'
 import { isCreatureArmyUnit } from './siege'
+import { creditDefeatMobKill } from '../session/quests'
+import { removeWorldMob } from '../session/mobs'
 
 export type OpeningStack = {
   id: string
@@ -262,16 +264,7 @@ function applyMobArmy(
 }
 
 function removeDefeatedMob(session: GameSession, mob: Mob): GameSession {
-  const drop = new Set(
-    mob.slots_1_to_6.filter((id): id is string => id != null && id !== ''),
-  )
-  return {
-    ...session,
-    units: session.units.filter(
-      (row) => !drop.has(row.id) && row.mob_id !== mob.id,
-    ),
-    mobs: session.mobs.filter((row) => row.id !== mob.id),
-  }
+  return removeWorldMob(session, mob)
 }
 
 function occupiedArmySlots(hero: Hero): number {
@@ -362,6 +355,10 @@ function removeDefeatedHero(session: GameSession, hero: Hero): GameSession {
     ...session,
     units: session.units.filter((row) => row.hero_id !== hero.id),
     heroes: session.heroes.filter((row) => row.id !== hero.id),
+    // Naval / boat: sink the loser's boat with the hero (BR S9-12).
+    boats: (session.boats ?? []).filter(
+      (boat) => boat.occupant_hero_id !== hero.id,
+    ),
     players: session.players.map((player) =>
       player.id === hero.player_id
         ? {
@@ -506,6 +503,10 @@ export function applyCombatOutcome(
     next = applyGarrisonArmy(next, siegeTown, 'def', battle)
   }
   if (mob && loserSide === 'def') {
+    const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
+    if (attacker) {
+      next = creditDefeatMobKill(next, mob.id, attacker.player_id)
+    }
     next = removeDefeatedMob(next, mob)
   } else if (mob && winnerSide === 'def') {
     next = applyMobArmy(next, mob, 'def', battle)

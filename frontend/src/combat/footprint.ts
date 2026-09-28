@@ -1,13 +1,14 @@
 import type { Axial } from '../hex/hero'
 
 /** Diamond-stacked battlefield footprint codes (odd-r aware via axial math). */
-export const FOOTPRINT_CODES = ['1x1', '2x1', '2x2', '3x2', '3x3'] as const
+export const FOOTPRINT_CODES = ['1x1', '2x1', '3x1', '2x2', '3x2', '3x3'] as const
 export type FootprintCode = (typeof FOOTPRINT_CODES)[number]
 
 /** Bottom→top row widths for each shape. */
 const FOOTPRINT_ROW_WIDTHS: Record<FootprintCode, readonly number[]> = {
   '1x1': [1],
   '2x1': [2],
+  '3x1': [3],
   '2x2': [2, 1],
   '3x2': [3, 2],
   '3x3': [3, 2, 3],
@@ -104,6 +105,33 @@ export function footprintHexes(
   return out
 }
 
+/**
+ * Prop footprints anchored on the **centre** hex (BR S9-12 gangplank 3x1).
+ * Odd-width bottom rows centre on `origin`; even widths keep left-origin
+ * `footprintHexes(..., +1)` so town/unit 2x1 is unchanged when called there.
+ */
+export function footprintHexesCentered(
+  origin: Axial,
+  code: FootprintCode,
+): Axial[] {
+  const widths = FOOTPRINT_ROW_WIDTHS[code] ?? FOOTPRINT_ROW_WIDTHS['1x1']
+  const bottomW = widths[0] ?? 1
+  if (bottomW % 2 === 0) {
+    return footprintHexes(origin, code, 1)
+  }
+  const half = Math.floor(bottomW / 2)
+  let row: Axial[] = []
+  for (let i = -half; i <= half; i += 1) {
+    row.push({ q: origin.q + i, r: origin.r })
+  }
+  const out: Axial[] = [...row]
+  for (let u = 1; u < widths.length; u += 1) {
+    row = centeredRowAbove(row, widths[u] ?? 1)
+    out.push(...row)
+  }
+  return out
+}
+
 /** Bottom-row hexes only (for render anchor: bottom-center). */
 export function footprintBottomRow(
   origin: Axial,
@@ -114,6 +142,23 @@ export function footprintBottomRow(
   const row: Axial[] = []
   for (let i = 0; i < bottomW; i += 1) {
     row.push({ q: origin.q + along * i, r: origin.r })
+  }
+  return row
+}
+
+/** Bottom row centred on `origin` (props / gangplank). */
+export function footprintBottomRowCentered(
+  origin: Axial,
+  code: FootprintCode,
+): Axial[] {
+  const bottomW = FOOTPRINT_ROW_WIDTHS[code]?.[0] ?? 1
+  if (bottomW % 2 === 0) {
+    return footprintBottomRow(origin, code, 1)
+  }
+  const half = Math.floor(bottomW / 2)
+  const row: Axial[] = []
+  for (let i = -half; i <= half; i += 1) {
+    row.push({ q: origin.q + i, r: origin.r })
   }
   return row
 }

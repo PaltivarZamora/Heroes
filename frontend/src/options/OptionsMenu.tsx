@@ -32,7 +32,7 @@ import {
   type LevelUpNotice,
 } from '../session/xp'
 import {
-  DEFAULT_HERO_MOVEMENT_STEPS,
+  FLAT_HERO_MOVEMENT_STEPS,
   fetchCatalog,
   getCachedCatalog,
   heroResourcePools,
@@ -47,7 +47,7 @@ import { getExploredHexes } from '../hex/world'
 import { HEX_SCALES, type HexScaleName } from '../hex/hexScale'
 import type { FixedFightKind } from '../session/fixedFight'
 
-const STEPS_UNLIMITED = DEFAULT_HERO_MOVEMENT_STEPS
+const STEPS_FLAT = FLAT_HERO_MOVEMENT_STEPS
 
 type Panel = 'new' | 'save' | 'load' | 'quit' | null
 
@@ -88,9 +88,60 @@ function withCurrentFog(session: GameSession): GameSession {
   }
 }
 
+function normalizeRecruitsKnowledge(
+  raw: unknown,
+): Record<string, { unit_id: number; stock: number }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {}
+  }
+  const out: Record<string, { unit_id: number; stock: number }> = {}
+  for (const [playerId, entry] of Object.entries(
+    raw as Record<string, unknown>,
+  )) {
+    if (entry === true) {
+      // Legacy seen_by_player boolean — treat as unknown unit until next visit.
+      continue
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      continue
+    }
+    const rec = entry as { unit_id?: unknown; stock?: unknown }
+    const unitId = Math.floor(Number(rec.unit_id))
+    const stock = Math.floor(Number(rec.stock))
+    if (!(unitId > 0) || !(stock >= 0)) {
+      continue
+    }
+    out[playerId] = { unit_id: unitId, stock: Math.max(0, stock) }
+  }
+  return out
+}
+
 function withExploredDefaults(session: GameSession): GameSession {
   return normalizeHeroProgress({
     ...session,
+    features: Array.isArray(session.features)
+      ? session.features.map((row) =>
+          row.kind === 'recruits'
+            ? {
+                ...row,
+                unit_id:
+                  typeof row.unit_id === 'number' && row.unit_id > 0
+                    ? row.unit_id
+                    : 0,
+                stock:
+                  typeof row.stock === 'number' && row.stock > 0
+                    ? Math.floor(row.stock)
+                    : 0,
+                known_by_player: normalizeRecruitsKnowledge(
+                  (row as { known_by_player?: unknown; seen_by_player?: unknown })
+                    .known_by_player ??
+                    (row as { seen_by_player?: unknown }).seen_by_player,
+                ),
+              }
+            : row,
+        )
+      : [],
+    boats: Array.isArray(session.boats) ? session.boats : [],
     activePlayerIndex:
       typeof session.activePlayerIndex === 'number' &&
       session.activePlayerIndex >= 0 &&
@@ -121,6 +172,10 @@ function withExploredDefaults(session: GameSession): GameSession {
         : [],
       arch_id:
         typeof hero.arch_id === 'number' && hero.arch_id > 0 ? hero.arch_id : null,
+      travel_facing:
+        hero.travel_facing === 'left' || hero.travel_facing === 'right'
+          ? hero.travel_facing
+          : 'right',
     })),
     building_states: session.building_states.map((row) => ({
       ...row,
@@ -445,13 +500,30 @@ export function OptionsMenu({
     if (unlimited) {
       updateSession((current) => ({
         ...current,
+        game: {
+          ...current.game,
+          settings: {
+            ...current.game.settings,
+            move_mode: 'flat_100',
+          },
+        },
         heroes: current.heroes.map((hero) => ({
           ...hero,
-          movement_remaining: STEPS_UNLIMITED,
+          movement_remaining: STEPS_FLAT,
         })),
       }))
-      setHeroMovementRemaining(STEPS_UNLIMITED)
+      setHeroMovementRemaining(STEPS_FLAT)
     } else {
+      updateSession((current) => ({
+        ...current,
+        game: {
+          ...current.game,
+          settings: {
+            ...current.game.settings,
+            move_mode: 'hero_speed',
+          },
+        },
+      }))
       setSession(restoreAllHeroMovement(getSession()))
       const session = getSession()
       const selected = getSelectedMapHeroId()
@@ -704,7 +776,7 @@ export function OptionsMenu({
             Level Up
           </button>
           <button type="button" role="menuitem" onClick={toggleSteps}>
-            Steps: {stepsUnlimited ? String(STEPS_UNLIMITED) : 'Speed'}
+            Steps: {stepsUnlimited ? String(STEPS_FLAT) : 'Hero Speed'}
           </button>
           <button type="button" role="menuitem" onClick={restoreSelectedHeroPools}>
             Restore
@@ -765,13 +837,43 @@ export function OptionsMenu({
                 >
                   Fight Yourself
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('boat_vs_boat')
+                    setExpanded(false)
+                  }}
+                >
+                  Boat vs Boat
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('boat_vs_land')
+                    setExpanded(false)
+                  }}
+                >
+                  Boat vs Land
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onStartFixedFight('land_vs_boat')
+                    setExpanded(false)
+                  }}
+                >
+                  Land vs Boat
+                </button>
               </div>
             </div>
           ) : null}
           <div className="options-separator" role="separator" />
           <div className="options-flyout">
             <button type="button" role="menuitem" aria-haspopup="true">
-              Grid Size: {hexScale}
+              Hex Size: {hexScale}
             </button>
             <div className="options-submenu" role="menu">
               {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (

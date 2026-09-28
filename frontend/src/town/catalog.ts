@@ -376,12 +376,23 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
 
 export type MoveTypeRow = {
   id: number
+  /** Display / legacy alias — usually same as `value`. */
   name: string
+  /** Canonical `move_type.value` from the DB (prefer this for lookups). */
+  value: string
+  description: string | null
 }
 
 export type AppConfigRow = {
   key: string
   value: string
+  description: string | null
+}
+
+/** `map_config` / `ai_config` jsonb rows — value stays decoded (object/number/array). */
+export type JsonConfigRow = {
+  key: string
+  value: unknown
   description: string | null
 }
 
@@ -419,6 +430,16 @@ export type PropRow = {
   /** terrain.id → density (0..1 independent placement chance). */
   terrain_rules: Record<number, number>
   /**
+   * From `terrain_rules.naval_only` — excluded from world + normal battle
+   * prop rolls; naval layout places these explicitly (BR S9-12).
+   */
+  naval_only: boolean
+  /**
+   * From `terrain_rules.wall` — placed only by the zones/walls layer.
+   * Excluded from world scatter and from battlefield prop sampling.
+   */
+  wall: boolean
+  /**
    * Battle-only footprint shape (`1x1` default). World map always paints 1x1.
    */
   footprint: string
@@ -447,6 +468,26 @@ export type FeatureRow = {
    * Defaults true when the column is absent.
    */
   flippable: boolean
+}
+
+/** World sign copy pool (`sign_text` table). */
+export type SignTextRow = {
+  id: number
+  category: string
+  text: string
+  /** Set when `category === 'terrain'`; otherwise null. */
+  terrain_id: number | null
+  weight: number
+}
+
+/** Notice Board quest flavour pool (`quest_text` table). */
+export type QuestTextRow = {
+  id: number
+  category: string
+  text: string
+  resource_id: number | null
+  terrain_id: number | null
+  weight: number
 }
 
 export type HeroTypeRow = {
@@ -654,7 +695,13 @@ export type ReferenceCatalog = {
   feature_type: FeatureTypeRow[]
   /** Adventure-map features (`feature` table). */
   feature: FeatureRow[]
+  /** World sign copy pool (`sign_text` table). */
+  sign_text: SignTextRow[]
+  /** Notice Board quest flavour pool (`quest_text` table). */
+  quest_text: QuestTextRow[]
   app_config: AppConfigRow[]
+  map_config: JsonConfigRow[]
+  ai_config: JsonConfigRow[]
   ai_arch: AiArchRow[]
   ai_arch_weight: AiArchWeightRow[]
   levels: LevelRow[]
@@ -889,16 +936,71 @@ function asMoveTypes(rows: unknown): MoveTypeRow[] {
   return rows
     .map((row) => {
       const rec = row as Record<string, unknown>
-      const name =
-        typeof rec.name === 'string'
-          ? rec.name.trim()
-          : typeof rec.value === 'string'
-            ? rec.value.trim()
+      const value =
+        typeof rec.value === 'string'
+          ? rec.value.trim()
+          : typeof rec.name === 'string'
+            ? rec.name.trim()
             : ''
-      return { id: asInt(rec.id), name }
+      const name =
+        typeof rec.name === 'string' && rec.name.trim()
+          ? rec.name.trim()
+          : value
+      const description =
+        typeof rec.description === 'string' ? rec.description.trim() : null
+      return {
+        id: asInt(rec.id),
+        name,
+        value: value || name,
+        description: description || null,
+      }
     })
-    .filter((row) => row.id > 0 && row.name.length > 0)
+    .filter((row) => row.id > 0 && row.value.length > 0)
     .sort((a, b) => a.id - b.id)
+}
+
+/**
+ * Resolve `move_type.value` for a unit's move_type_id (falls back to name).
+ * Null / missing id → empty string (non-mover; not an error, not Walker).
+ */
+export function moveTypeValue(
+  catalog: ReferenceCatalog | null | undefined,
+  moveTypeId: number | null | undefined,
+): string {
+  if (!catalog || moveTypeId == null || moveTypeId <= 0) {
+    return ''
+  }
+  const row = catalog.move_type.find((entry) => entry.id === moveTypeId)
+  const raw = row?.value?.trim() || row?.name?.trim() || ''
+  return raw
+}
+
+/** Hover rule text — overrides stale DB copy after Submerge retirement. */
+const HOVER_MOVE_DESCRIPTION =
+  'Flies. Takes half damage from ground melee.'
+
+/**
+ * Display name + description for a move_type id.
+ * Null id → null (non-mover; omit from tips).
+ */
+export function moveTypeDisplay(
+  catalog: ReferenceCatalog | null | undefined,
+  moveTypeId: number | null | undefined,
+): { name: string; description: string } | null {
+  if (!catalog || moveTypeId == null || moveTypeId <= 0) {
+    return null
+  }
+  const row = catalog.move_type.find((entry) => entry.id === moveTypeId)
+  const value = row?.value?.trim() || row?.name?.trim() || ''
+  if (!value) {
+    return null
+  }
+  const name = row?.name?.trim() || value
+  if (value.toLowerCase().includes('hover')) {
+    return { name, description: HOVER_MOVE_DESCRIPTION }
+  }
+  const description = row?.description?.trim() || ''
+  return { name, description }
 }
 
 function asAppConfig(rows: unknown): AppConfigRow[] {
@@ -913,6 +1015,22 @@ function asAppConfig(rows: unknown): AppConfigRow[] {
       const description =
         typeof rec.description === 'string' ? rec.description : null
       return { key, value, description }
+    })
+    .filter((row) => row.key.length > 0)
+}
+
+/** Keep jsonb values as objects/numbers/arrays (do not stringify). */
+function asJsonConfig(rows: unknown): JsonConfigRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const key = typeof rec.key === 'string' ? rec.key.trim() : ''
+      const description =
+        typeof rec.description === 'string' ? rec.description : null
+      return { key, value: rec.value, description }
     })
     .filter((row) => row.key.length > 0)
 }
@@ -1069,6 +1187,9 @@ function asPropTerrainRules(value: unknown): Record<number, number> {
   }
   const out: Record<number, number> = {}
   for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === 'naval_only') {
+      continue
+    }
     const terrainId = Math.floor(Number(key))
     const density = Number(entry)
     if (
@@ -1081,6 +1202,46 @@ function asPropTerrainRules(value: unknown): Record<number, number> {
     }
   }
   return out
+}
+
+function asPropWall(value: unknown): boolean {
+  let raw: unknown = value
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (!trimmed) {
+      return false
+    }
+    try {
+      raw = JSON.parse(trimmed)
+    } catch {
+      return false
+    }
+  }
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return false
+  }
+  const flag = (raw as Record<string, unknown>).wall
+  return flag === true || flag === 1 || flag === 'true' || flag === '1'
+}
+
+function asPropNavalOnly(value: unknown): boolean {
+  let raw: unknown = value
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (!trimmed) {
+      return false
+    }
+    try {
+      raw = JSON.parse(trimmed)
+    } catch {
+      return false
+    }
+  }
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return false
+  }
+  const flag = (raw as Record<string, unknown>).naval_only
+  return flag === true || flag === 1 || flag === 'true' || flag === '1'
 }
 
 function asProps(rows: unknown): PropRow[] {
@@ -1121,6 +1282,8 @@ function asProps(rows: unknown): PropRow[] {
         is_blocker: asBoolFlag(rec.is_blocker),
         is_los_blocker: asBoolFlag(rec.is_los_blocker),
         terrain_rules: asPropTerrainRules(rec.terrain_rules),
+        naval_only: asPropNavalOnly(rec.terrain_rules),
+        wall: asPropWall(rec.terrain_rules),
         footprint: parseFootprintCode(footprintRaw),
       }
     })
@@ -1188,6 +1351,68 @@ function asFeatures(rows: unknown): FeatureRow[] {
       }
     })
     .filter((row) => row.id > 0 && row.image_path.length > 0)
+    .sort((a, b) => a.id - b.id)
+}
+
+function asSignText(rows: unknown): SignTextRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const category =
+        typeof rec.category === 'string' ? rec.category.trim().toLowerCase() : ''
+      const text = typeof rec.text === 'string' ? rec.text : ''
+      const terrainRaw = rec.terrain_id
+      const terrainId =
+        terrainRaw == null || terrainRaw === ''
+          ? null
+          : asInt(terrainRaw)
+      const weight = Math.max(1, asInt(rec.weight) || 1)
+      return {
+        id: asInt(rec.id),
+        category,
+        text,
+        terrain_id: terrainId != null && terrainId > 0 ? terrainId : null,
+        weight,
+      }
+    })
+    .filter((row) => row.id > 0 && row.category.length > 0 && row.text.length > 0)
+    .sort((a, b) => a.id - b.id)
+}
+
+function asQuestText(rows: unknown): QuestTextRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const category =
+        typeof rec.category === 'string' ? rec.category.trim().toLowerCase() : ''
+      const text = typeof rec.text === 'string' ? rec.text : ''
+      const resourceRaw = rec.resource_id
+      const resourceId =
+        resourceRaw == null || resourceRaw === ''
+          ? null
+          : asInt(resourceRaw)
+      const terrainRaw = rec.terrain_id
+      const terrainId =
+        terrainRaw == null || terrainRaw === ''
+          ? null
+          : asInt(terrainRaw)
+      const weight = Math.max(1, asInt(rec.weight) || 1)
+      return {
+        id: asInt(rec.id),
+        category,
+        text,
+        resource_id: resourceId != null && resourceId > 0 ? resourceId : null,
+        terrain_id: terrainId != null && terrainId > 0 ? terrainId : null,
+        weight,
+      }
+    })
+    .filter((row) => row.id > 0 && row.category.length > 0 && row.text.length > 0)
     .sort((a, b) => a.id - b.id)
 }
 
@@ -1394,7 +1619,7 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         passive_ability = {
           ...(livePassive ?? {}),
           display:
-            'On Shadow: step cost × (1 - STR × 2%), max 75% reduction. While standing in Shadow, Ground/Submerge units deal STR% bonus Physical damage.',
+            'On Shadow: step cost × (1 - STR × 2%), max 75% reduction. While standing in Shadow, Ground units deal STR% bonus Physical damage.',
         }
       }
       return {
@@ -1438,7 +1663,7 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
                   condition: 'standing_in_shadow',
                   dmg_stat_source: 'STR',
                   dmg_multiplier_pct: 1,
-                  unit_filter: ['Ground', 'Submerge'],
+                  unit_filter: ['Ground'],
                   ...(asJsonObject(rec.passive_stats) ?? {}),
                 }
               : asJsonObject(rec.passive_stats),
@@ -4672,8 +4897,16 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       (payload as { feature_type?: unknown }).feature_type,
     ),
     feature: asFeatures((payload as { feature?: unknown }).feature),
+    sign_text: asSignText((payload as { sign_text?: unknown }).sign_text),
+    quest_text: asQuestText((payload as { quest_text?: unknown }).quest_text),
     app_config: asAppConfig(
       (payload as { app_config?: unknown }).app_config,
+    ),
+    map_config: asJsonConfig(
+      (payload as { map_config?: unknown }).map_config,
+    ),
+    ai_config: asJsonConfig(
+      (payload as { ai_config?: unknown }).ai_config,
     ),
     ai_arch: asAiArch((payload as { ai_arch?: unknown }).ai_arch),
     ai_arch_weight: asAiArchWeight(
@@ -5387,17 +5620,39 @@ export function formatHeroLevelLine(
   return `${name} - Lvl ${level} - XP ${xp}/${nextXp}`
 }
 
-/** World-map movement budget (steps per day). */
-export const DEFAULT_HERO_MOVEMENT_STEPS = 1000
+/** World-map daily movement: hero speed × this (app_config hero_steps_per_speed). */
+export const DEFAULT_HERO_STEPS_PER_SPEED = 10
 
-/** World-map movement budget. Uses {@link DEFAULT_HERO_MOVEMENT_STEPS}. */
+/** Flat daily steps when New Game Speed = 100 Steps. */
+export const FLAT_HERO_MOVEMENT_STEPS = 100
+
+/**
+ * World-map movement budget (steps per day).
+ * - {@code flat_100}: every hero gets {@link FLAT_HERO_MOVEMENT_STEPS}
+ * - default / {@code hero_speed}: hero speed × {@code hero_steps_per_speed}
+ */
 export function heroMovementPoints(
-  _catalog?: ReferenceCatalog | null,
-  _hero?:
+  catalog?: ReferenceCatalog | null,
+  hero?:
     | { class_id: number | null; current_level?: number }
     | null,
+  moveMode?: string | null,
 ): number {
-  return DEFAULT_HERO_MOVEMENT_STEPS
+  if (moveMode === 'flat_100') {
+    return FLAT_HERO_MOVEMENT_STEPS
+  }
+  const stepsPer = Math.max(
+    1,
+    Math.floor(
+      appConfigNumber(catalog, 'hero_steps_per_speed', DEFAULT_HERO_STEPS_PER_SPEED),
+    ),
+  )
+  if (!catalog) {
+    return Math.max(1, 10 * stepsPer)
+  }
+  const level = Math.max(1, Math.floor(hero?.current_level ?? 1))
+  const speed = heroEffectiveStats(catalog, hero?.class_id ?? null, level).speed
+  return Math.max(1, Math.floor(Math.max(0, speed) * stepsPer))
 }
 
 export function abilityMult(
@@ -5445,35 +5700,43 @@ function retaliationDefaultDmgPct(
   )
 }
 
-const STARTING_FALLBACK: Record<string, number> = {
-  gold: 10000,
-  wood: 20,
-  ore: 20,
-  ichor: 20,
-  crystal: 10,
-  sap: 10,
-  ash: 10,
-  aether: 10,
-  incense: 10,
-  brimstone: 10,
-  nuore: 10,
-  processed_nuore: 10,
-}
-
-function startingConfigKey(name: string): string {
-  return `starting_${name.trim().toLowerCase().replaceAll(/\s+/g, '_')}`
-}
-
+/**
+ * Starting stockpile from `difficulty.payload.start_resources` for the chosen
+ * difficulty. Keys may be resource ids or names; missing resource → 0.
+ */
 export function startingStockpileFor(
   catalog: ReferenceCatalog | null | undefined,
   resource: { id: number; name: string },
+  difficultyId?: number | null,
 ): number {
-  const slug = startingConfigKey(resource.name).slice('starting_'.length)
-  const fallback = STARTING_FALLBACK[slug] ?? 0
-  return Math.max(
-    0,
-    Math.floor(appConfigNumber(catalog, startingConfigKey(resource.name), fallback)),
-  )
+  const id =
+    difficultyId != null && difficultyId > 0
+      ? difficultyId
+      : Math.trunc(mapCfgNumber(catalog, 'new_difficulty', null, 2))
+  const row =
+    catalog?.difficulty.find((entry) => entry.id === id) ??
+    catalog?.difficulty.find(
+      (entry) => entry.name.trim().toLowerCase() === 'normal',
+    ) ??
+    null
+  const start = row?.payload?.start_resources
+  if (start == null || typeof start !== 'object' || Array.isArray(start)) {
+    return 0
+  }
+  const map = start as Record<string, unknown>
+  const byId = map[String(resource.id)] ?? map[resource.id as unknown as string]
+  if (byId != null) {
+    const n = Number(byId)
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+  }
+  const want = resource.name.trim().toLowerCase()
+  for (const [key, amount] of Object.entries(map)) {
+    if (key.trim().toLowerCase() === want) {
+      const n = Number(amount)
+      return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+    }
+  }
+  return 0
 }
 
 /** Whole units per week from an owned mine of this resource (`payload.weekly_node`). */
@@ -5527,7 +5790,7 @@ export function libraryGoldCost(
 export function visionRange(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, Math.floor(appConfigNumber(catalog, 'vision_range', 4)))
+  return Math.max(0, Math.floor(mapCfgNumber(catalog, 'vision_range', null, 6)))
 }
 
 export function heroInteractCost(
@@ -5887,6 +6150,261 @@ export function unitTakesTurns(unit: UnitRow | null | undefined): boolean {
   return unit != null && unit.speed != null
 }
 
+function jsonConfigRaw(
+  rows: JsonConfigRow[] | undefined,
+  key: string,
+): unknown {
+  return rows?.find((row) => row.key === key)?.value
+}
+
+function asFiniteNumber(raw: unknown): number | null {
+  if (typeof raw === 'boolean') {
+    return raw ? 1 : 0
+  }
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? raw : null
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const n = Number(raw.trim())
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+/**
+ * Size-aware `map_config` lookup: if value is an object keyed by size name,
+ * return that entry; otherwise return the plain value.
+ */
+export function mapCfg(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  sizeName?: string | null,
+): unknown {
+  const value = jsonConfigRaw(catalog?.map_config, key)
+  if (
+    value == null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    sizeName == null ||
+    !String(sizeName).trim()
+  ) {
+    return value
+  }
+  const want = String(sizeName).trim().toLowerCase()
+  const map = value as Record<string, unknown>
+  for (const [entryKey, entryValue] of Object.entries(map)) {
+    if (entryKey.trim().toLowerCase() === want) {
+      return entryValue
+    }
+  }
+  return value
+}
+
+export function mapCfgNumber(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  sizeName: string | null | undefined,
+  fallback: number,
+): number {
+  const n = asFiniteNumber(mapCfg(catalog, key, sizeName))
+  return n != null ? n : fallback
+}
+
+export function mapCfgFlag(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  sizeName: string | null | undefined,
+  fallback = false,
+): boolean {
+  const raw = mapCfg(catalog, key, sizeName)
+  if (raw == null || raw === '') {
+    return fallback
+  }
+  if (typeof raw === 'boolean') {
+    return raw
+  }
+  const text = String(raw).trim().toLowerCase()
+  if (text === '1' || text === 'true' || text === 't' || text === 'yes' || text === 'on') {
+    return true
+  }
+  if (text === '0' || text === 'false' || text === 'f' || text === 'no' || text === 'off') {
+    return false
+  }
+  const n = Number(raw)
+  if (Number.isFinite(n)) {
+    return n !== 0
+  }
+  return fallback
+}
+
+/** Round(normalCount × size_scale) for a map_config count key. */
+export function scaledMapCount(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  sizeName: string | null | undefined,
+  fallbackNormal = 0,
+): number {
+  const name = sizeName?.trim() || defaultSizeName(catalog)
+  const normal = mapCfgNumber(catalog, key, name, fallbackNormal)
+  const scale = sizeScale(catalog, name)
+  return Math.max(0, Math.round(normal * scale))
+}
+
+export function sizeNames(
+  catalog?: ReferenceCatalog | null,
+): string[] {
+  const raw = jsonConfigRaw(catalog?.map_config, 'sizes')
+  const out: string[] = []
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (entry == null) {
+        continue
+      }
+      const name = String(entry).trim().toLowerCase()
+      if (name) {
+        out.push(name)
+      }
+    }
+  }
+  return out.length > 0 ? out : ['normal', 'large', 'giant']
+}
+
+export function sizeDims(
+  catalog?: ReferenceCatalog | null,
+): Record<string, number> {
+  const raw = jsonConfigRaw(catalog?.map_config, 'size_dims')
+  const out: Record<string, number> = {}
+  if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      const n = asFiniteNumber(value)
+      if (n != null && n > 0) {
+        out[key.trim().toLowerCase()] = Math.floor(n)
+      }
+    }
+  }
+  if (Object.keys(out).length === 0) {
+    return { normal: 72, large: 144, giant: 216 }
+  }
+  return out
+}
+
+export function sizeScale(
+  catalog: ReferenceCatalog | null | undefined,
+  sizeName: string | null | undefined,
+): number {
+  const name = sizeName?.trim() || defaultSizeName(catalog)
+  const n = asFiniteNumber(mapCfg(catalog, 'size_scale', name))
+  return n != null && n > 0 ? n : 1
+}
+
+export function sizeDim(
+  catalog: ReferenceCatalog | null | undefined,
+  sizeName: string | null | undefined,
+): number {
+  const name = (sizeName?.trim() || defaultSizeName(catalog)).toLowerCase()
+  const dims = sizeDims(catalog)
+  if (dims[name] != null && dims[name]! > 0) {
+    return dims[name]!
+  }
+  if (name === 'large') {
+    return 144
+  }
+  if (name === 'giant') {
+    return 216
+  }
+  return 72
+}
+
+export function defaultSizeName(
+  catalog?: ReferenceCatalog | null,
+): string {
+  const raw = jsonConfigRaw(catalog?.map_config, 'new_size')
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.trim().toLowerCase()
+  }
+  const names = sizeNames(catalog)
+  return names[0] ?? 'normal'
+}
+
+/** Resolve size name from stored WxH (or fall back to map_size / default). */
+export function sizeNameFromDims(
+  catalog: ReferenceCatalog | null | undefined,
+  width?: number | null,
+  height?: number | null,
+  mapSize?: string | null,
+): string {
+  if (width != null && width > 0) {
+    const dim = height != null && height > 0 ? Math.min(width, height) : width
+    for (const [name, value] of Object.entries(sizeDims(catalog))) {
+      if (value === dim || value === width) {
+        return name
+      }
+    }
+  }
+  if (mapSize && mapSize.trim()) {
+    const want = mapSize.trim().toLowerCase()
+    const names = sizeNames(catalog)
+    const match = names.find((name) => name === want)
+    if (match) {
+      return match
+    }
+  }
+  return defaultSizeName(catalog)
+}
+
+export function playersMin(
+  catalog: ReferenceCatalog | null | undefined,
+  sizeName: string | null | undefined,
+): number {
+  const name = sizeName?.trim() || defaultSizeName(catalog)
+  return Math.max(1, Math.floor(mapCfgNumber(catalog, 'players_min', name, 1)))
+}
+
+export function playersMax(
+  catalog: ReferenceCatalog | null | undefined,
+  sizeName: string | null | undefined,
+): number {
+  const name = sizeName?.trim() || defaultSizeName(catalog)
+  const min = playersMin(catalog, name)
+  return Math.max(min, Math.floor(mapCfgNumber(catalog, 'players_max', name, 6)))
+}
+
+/** Slot index (1-based) → hero_type id from `map_config.new_heroes`; missing → null (Random). */
+export function newHeroTypeId(
+  catalog: ReferenceCatalog | null | undefined,
+  slotIndex1Based: number,
+): number | null {
+  const raw = jsonConfigRaw(catalog?.map_config, 'new_heroes')
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null
+  }
+  const map = raw as Record<string, unknown>
+  const entry = map[String(slotIndex1Based)] ?? map[slotIndex1Based as unknown as string]
+  const id = Math.trunc(Number(entry))
+  return id > 0 ? id : null
+}
+
+export function signTokenRadius(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(1, Math.floor(mapCfgNumber(catalog, 'sign_token_radius', null, 12)))
+}
+
+export function questFeatureMult(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(1, Math.floor(mapCfgNumber(catalog, 'quest_feature_mult', null, 8)))
+}
+
+export function aiCfgNumber(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  fallback: number,
+): number {
+  const n = asFiniteNumber(jsonConfigRaw(catalog?.ai_config, key))
+  return n != null ? n : fallback
+}
+
 export function appConfigNumber(
   catalog: ReferenceCatalog | null | undefined,
   key: string,
@@ -5912,6 +6430,16 @@ export function flightCostPerHex(
     0,
     Math.floor(appConfigNumber(catalog, 'flight_cost_per_hex', 50)),
   )
+}
+
+/**
+ * Flat movement cost on `hasRoad` hexes (`map_config.road_move_cost`).
+ * Default 0.75 — cheaper than common open terrain (Grass/Dirt = 1.0).
+ */
+export function roadMoveCost(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0.01, mapCfgNumber(catalog, 'road_move_cost', null, 0.75))
 }
 
 /**
@@ -5970,11 +6498,11 @@ export function appConfigFlag(
   return fallback
 }
 
-/** Show world-map hex outline strokes (app_config map_show_hexes_world). */
+/** Show world-map hex outline strokes (`map_config.show_hexes`). */
 export function mapShowHexesWorld(
   catalog: ReferenceCatalog | null | undefined,
 ): boolean {
-  return appConfigFlag(catalog, 'map_show_hexes_world', true)
+  return mapCfgFlag(catalog, 'show_hexes', null, false)
 }
 
 /** Show battle hex outline strokes (app_config map_show_hexes_battle). */
@@ -6010,11 +6538,11 @@ export function battlePropDensityMultiplier(
   )
 }
 
-/** BR: terrain.image_path textures vs terrain.color flat fills. */
+/** BR: terrain.image_path textures vs terrain.color flat fills (`map_config.use_images`). */
 export function mapUseTerrainImages(
   catalog: ReferenceCatalog | null | undefined,
 ): boolean {
-  return appConfigFlag(catalog, 'map_use_images', false)
+  return mapCfgFlag(catalog, 'use_images', null, true)
 }
 
 export function hexTerrainByName(
