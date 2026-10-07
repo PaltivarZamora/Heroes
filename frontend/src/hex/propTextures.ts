@@ -147,6 +147,9 @@ export function layoutHexFootprintSprite(
   hexWidth: number,
   hexHeight: number,
 ): void {
+  if (sprite.destroyed) {
+    return
+  }
   const pts = centers.length > 0 ? centers : [{ x: 0, y: 0 }]
   const bottoms = bottomCenters.length > 0 ? bottomCenters : pts
   let minX = Infinity
@@ -282,6 +285,9 @@ export function applyWorldFeatureRenderScale(
   sprite: Sprite,
   renderScale: number,
 ): void {
+  if (sprite.destroyed) {
+    return
+  }
   const mult = renderScale > 0 ? renderScale : 1
   sprite.scale.x *= mult
   sprite.scale.y *= mult
@@ -307,6 +313,13 @@ export function finishWorldMapFeatureSprite(
   hexWidth: number,
   cullSizeFactor = 1,
 ): PropCullBox {
+  if (sprite.destroyed) {
+    return {
+      cullX: cullAnchorWorld.x,
+      cullY: cullAnchorWorld.y,
+      cullMargin: worldMapFeatureCullMargin(hexWidth, renderScale, cullSizeFactor),
+    }
+  }
   applyWorldFeatureRenderScale(sprite, renderScale)
   if (flipped) {
     sprite.scale.x = -Math.abs(sprite.scale.x)

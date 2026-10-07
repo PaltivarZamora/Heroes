@@ -145,7 +145,12 @@ export type WorldChunkRendererOpts = {
   grid: Grid<Hex>
   terrainLayer: Container
   fogLayer: Container
-  propLayer: Container
+  /** Non-blocking prop sprites (ground decor). */
+  groundPropLayer: Container
+  /** Blocking prop sprites (staging until actor depth pass). */
+  blockingPropLayer: Container
+  /** World-map feature views only. */
+  mapArtLayer: Container
   offsetX: number
   offsetY: number
   hexSize: number
@@ -163,7 +168,10 @@ export class WorldChunkRenderer {
   private readonly grid: Grid<Hex>
   private readonly terrainLayer: Container
   private readonly fogLayer: Container
-  private readonly propLayer: Container
+  private readonly groundPropLayer: Container
+  private readonly blockingPropLayer: Container
+  private readonly mapArtLayer: Container
+  private readonly propBlockerByHex = new Map<string, boolean>()
   private readonly offsetX: number
   private readonly offsetY: number
   private readonly hexSize: number
@@ -189,7 +197,9 @@ export class WorldChunkRenderer {
     this.grid = opts.grid
     this.terrainLayer = opts.terrainLayer
     this.fogLayer = opts.fogLayer
-    this.propLayer = opts.propLayer
+    this.groundPropLayer = opts.groundPropLayer
+    this.blockingPropLayer = opts.blockingPropLayer
+    this.mapArtLayer = opts.mapArtLayer
     this.offsetX = opts.offsetX
     this.offsetY = opts.offsetY
     this.hexSize = opts.hexSize
@@ -199,7 +209,8 @@ export class WorldChunkRenderer {
     this.wedgesEnabled = opts.wedgesEnabled
     this.hexTerrainTextures = opts.hexTerrainTextures
     this.getCatalog = opts.getCatalog
-    this.propLayer.sortableChildren = true
+    this.groundPropLayer.sortableChildren = true
+    this.blockingPropLayer.sortableChildren = true
     this.buildBuckets()
     this.rebuildDecors()
   }
@@ -610,8 +621,10 @@ export class WorldChunkRenderer {
           tile?.propRenderScale ??
           row?.render_scale ??
           1
+        const isBlocker = row?.is_blocker === true
         const sprite = new Sprite()
-        this.propLayer.addChild(sprite)
+        const layer = isBlocker ? this.blockingPropLayer : this.groundPropLayer
+        layer.addChild(sprite)
         const cull = layoutWorldMapPropSprite(
           sprite,
           texture,
@@ -630,22 +643,86 @@ export class WorldChunkRenderer {
         )
         this.propByHex.set(job.key, sprite)
         this.propCullByHex.set(job.key, cull)
+        this.propBlockerByHex.set(job.key, isBlocker)
       }),
     )
     this.syncPropDrawOrder()
   }
 
-  /** Lower on screen (larger y) draws in front — props and feature views together. */
+  /** Screen-y sort for non-blocking ground props. */
+  private syncGroundPropDepth() {
+    const layer = this.groundPropLayer
+    if (layer.destroyed) {
+      return
+    }
+    for (const [key, sprite] of this.propByHex) {
+      if (this.propBlockerByHex.get(key) || sprite.destroyed) {
+        continue
+      }
+      if (sprite.parent !== layer) {
+        layer.addChild(sprite)
+      }
+      sprite.zIndex = Math.round(sprite.y * 1000)
+    }
+    layer.sortChildren()
+  }
+
+  /** Feature views only (always below {@link actorLayer} heroes). */
   syncMapArtDepth(
     featureViews: Array<{ container: Container; sortY: number }>,
   ) {
-    for (const sprite of this.propByHex.values()) {
-      sprite.zIndex = Math.round(sprite.y * 1000)
+    const layer = this.mapArtLayer
+    if (layer.destroyed) {
+      return
     }
     for (const { container, sortY } of featureViews) {
+      if (
+        container.destroyed ||
+        container.parent !== layer ||
+        !Number.isFinite(sortY)
+      ) {
+        continue
+      }
       container.zIndex = Math.round(sortY * 1000)
     }
-    this.propLayer.sortChildren()
+    layer.sortChildren()
+    this.syncGroundPropDepth()
+  }
+
+  /** Blocking props for hero/mob/boat occlusion (world y + cull box). */
+  blockingPropEntries(): Array<{
+    key: string
+    sprite: Sprite
+    cull: PropCullBox
+  }> {
+    const out: Array<{ key: string; sprite: Sprite; cull: PropCullBox }> = []
+    for (const [key, sprite] of this.propByHex) {
+      if (!this.propBlockerByHex.get(key) || sprite.destroyed) {
+        continue
+      }
+      const cull = this.propCullByHex.get(key)
+      if (!cull) {
+        continue
+      }
+      out.push({ key, sprite, cull })
+    }
+    return out
+  }
+
+  /** Move blocking props onto the actor layer for y-sort vs units. */
+  syncBlockingPropsToActorLayer(actorLayer: Container) {
+    if (actorLayer.destroyed) {
+      return
+    }
+    for (const [key, sprite] of this.propByHex) {
+      if (!this.propBlockerByHex.get(key) || sprite.destroyed) {
+        continue
+      }
+      if (sprite.parent !== actorLayer) {
+        actorLayer.addChild(sprite)
+      }
+      sprite.zIndex = Math.round(sprite.y * 1000)
+    }
   }
 
   /** @deprecated internal — use {@link syncMapArtDepth} from the map after feature layout. */
@@ -674,6 +751,17 @@ export class WorldChunkRenderer {
     )
   }
 
+  /** Drop only tracked world-prop sprites (never strip the whole prop layer). */
+  private clearPropSpritesOnly() {
+    for (const sprite of this.propByHex.values()) {
+      sprite.parent?.removeChild(sprite)
+      sprite.destroy()
+    }
+    this.propByHex.clear()
+    this.propCullByHex.clear()
+    this.propBlockerByHex.clear()
+  }
+
   /** Full prop resync (hotseat / remount). */
   async rebuildAllProps(
     loadProp: (
@@ -689,11 +777,7 @@ export class WorldChunkRenderer {
       hexH: number,
     ) => Sprite,
   ) {
-    this.propByHex.clear()
-    this.propCullByHex.clear()
-    for (const child of this.propLayer.removeChildren()) {
-      child.destroy({ children: true })
-    }
+    this.clearPropSpritesOnly()
     const hexes: Axial[] = []
     forEachTile((q, r) => {
       if (isExplored(q, r)) {
@@ -806,8 +890,7 @@ export class WorldChunkRenderer {
       bucket.fogGfx.destroy()
     }
     this.buckets.clear()
-    this.propByHex.clear()
-    this.propCullByHex.clear()
+    this.clearPropSpritesOnly()
     this.chunkDecors.clear()
   }
 }

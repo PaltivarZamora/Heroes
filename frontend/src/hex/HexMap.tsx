@@ -875,15 +875,24 @@ export function HexMap({
       // Placeholder roads on the ground, under props/objects/fog/heroes.
       world.addChild(roadLayer)
 
+      /** Non-blocking props — above roads, below features and all actors. */
+      const groundPropLayer = new Container()
+      groundPropLayer.sortableChildren = true
+      world.addChild(groundPropLayer)
+
       // Path preview under map objects so yellow hexes don't paint over town art
       // when the route passes behind / through the keep.
       const preview = new Graphics()
       world.addChild(preview)
 
-      /** Props + world features share screen-y depth sort (zIndex). */
+      /** World features (towns, mines, …) — below fog and heroLayer. */
       const artLayer = new Container()
       artLayer.sortableChildren = true
       world.addChild(artLayer)
+
+      /** Blocking props (staging; actor pass moves them onto heroLayer). */
+      const blockingPropLayer = new Container()
+      blockingPropLayer.sortableChildren = true
 
       world.addChild(fogLayer)
 
@@ -1239,12 +1248,21 @@ export function HexMap({
       world.addChild(heroLayer)
       instance.stage.addChild(world)
 
+      const canvas = instance.canvas
+      const tipEl = document.createElement('div')
+      tipEl.className = 'world-hover-tip'
+      tipEl.hidden = true
+      host.replaceChildren(canvas, tipEl)
+      app = instance
+
       const chunkRenderer = new WorldChunkRenderer({
         app: instance,
         grid,
         terrainLayer,
         fogLayer,
-        propLayer: artLayer,
+        groundPropLayer,
+        blockingPropLayer,
+        mapArtLayer: artLayer,
         offsetX,
         offsetY,
         hexSize,
@@ -1278,13 +1296,39 @@ export function HexMap({
         }
       >()
 
+      const mapSceneLive = () => !cancelled && !world.destroyed
+
       const syncMapArtDepth = () => {
+        if (!mapSceneLive()) {
+          return
+        }
         chunkRenderer.syncMapArtDepth(
           [...objectByKey.values()].map((entry) => ({
             container: entry.view,
             sortY: entry.sortY,
           })),
         )
+      }
+
+      const ensureFeatureEntryDraw = (entry: {
+        view: Container
+        badge: Graphics
+        label: Text
+        sprite: Sprite
+        ring: Graphics
+      }): boolean => {
+        if (entry.view.destroyed) {
+          return false
+        }
+        if (!entry.sprite.destroyed) {
+          return true
+        }
+        const sprite = new Sprite()
+        sprite.visible = false
+        const ringIdx = entry.view.getChildIndex(entry.ring)
+        entry.view.addChildAt(sprite, Math.max(0, ringIdx))
+        entry.sprite = sprite
+        return true
       }
 
       const paintObjectBadge = (target: Graphics, fill: number) => {
@@ -1415,6 +1459,9 @@ export function HexMap({
         entry.badge.visible = !hasArt
         entry.label.visible = !hasArt
         if (hasArt && texture) {
+          if (!ensureFeatureEntryDraw(entry)) {
+            return
+          }
           const catalog = getCachedCatalog()
           const sessionTown =
             entry.data.kind === 'town'
@@ -1437,12 +1484,13 @@ export function HexMap({
           if (entry.data.kind === 'town') {
             const origin = townFootprintOrigin(entry.data)
             const bottom = townFootprintBottomRow(entry.data)
+            const viewPos = entry.view.position
             const centers = bottom.map((axial) => {
               const hex = grid.getHex(axial) ?? grid.createHex(axial)
               const c = hexCenter(hex, offsetX, offsetY)
               return {
-                x: c.x - entry.view.position.x,
-                y: c.y - entry.view.position.y,
+                x: c.x - viewPos.x,
+                y: c.y - viewPos.y,
               }
             })
             const sample = grid.getHex(origin) ?? grid.createHex(origin)
@@ -1483,7 +1531,6 @@ export function HexMap({
             )
             entry.sortY = cullAnchor.y
             placeTownOwnershipRing(entry, ownerId)
-            syncTownActorDepth()
             syncMapArtDepth()
             return
           }
@@ -1530,6 +1577,18 @@ export function HexMap({
         entry.label.style.fill = mineOwned ? '#ffffff' : '#111111'
       }
 
+      const whenFeatureTextureLoaded = (
+        promise: Promise<Texture | null>,
+        onTexture: (texture: Texture | null) => void,
+      ) => {
+        void promise.then((texture) => {
+          if (cancelled) {
+            return
+          }
+          onTexture(texture)
+        })
+      }
+
       const loadObjectFeatureArt = (entry: {
         data: MapObjectData
         badge: Graphics
@@ -1548,7 +1607,7 @@ export function HexMap({
             (sessionTown
               ? `${getCachedCatalog()?.town.find((t) => t.id === typeId)?.name ?? ''}.png`
               : null)
-          void loadFeatureTexture(imagePath).then((texture) => {
+          whenFeatureTextureLoaded(loadFeatureTexture(imagePath), (texture) => {
             const live = objectByKey.get(key)
             if (!live || live !== entry) {
               return
@@ -1564,7 +1623,8 @@ export function HexMap({
         }
         if (entry.data.kind === 'fountain') {
           const feature = featureForFountain(getCachedCatalog())
-          void loadFeatureTexture(feature?.image_path ?? 'Fountain.png').then(
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Fountain.png'),
             (texture) => {
               const live = objectByKey.get(key)
               if (!live || live !== entry) {
@@ -1590,7 +1650,7 @@ export function HexMap({
               featureForChest(catalog, level)?.image_path
             : chestClosedImage(catalog, level) ??
               featureForChest(catalog, level)?.image_path
-          void loadFeatureTexture(imagePath).then((texture) => {
+          whenFeatureTextureLoaded(loadFeatureTexture(imagePath), (texture) => {
             const live = objectByKey.get(key)
             if (!live || live !== entry) {
               return
@@ -1601,7 +1661,8 @@ export function HexMap({
         }
         if (entry.data.kind === 'sign') {
           const feature = featureForSign(getCachedCatalog())
-          void loadFeatureTexture(feature?.image_path ?? 'Sign.png').then(
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Sign.png'),
             (texture) => {
               const live = objectByKey.get(key)
               if (!live || live !== entry) {
@@ -1614,7 +1675,8 @@ export function HexMap({
         }
         if (entry.data.kind === 'library') {
           const feature = featureForWorldLibrary(getCachedCatalog())
-          void loadFeatureTexture(feature?.image_path ?? 'Library.png').then(
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Library.png'),
             (texture) => {
               const live = objectByKey.get(key)
               if (!live || live !== entry) {
@@ -1627,7 +1689,8 @@ export function HexMap({
         }
         if (entry.data.kind === 'hanger') {
           const feature = featureForWorldHanger(getCachedCatalog())
-          void loadFeatureTexture(feature?.image_path ?? 'Hanger.png').then(
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Hanger.png'),
             (texture) => {
               const live = objectByKey.get(key)
               if (!live || live !== entry) {
@@ -1640,7 +1703,8 @@ export function HexMap({
         }
         if (entry.data.kind === 'dock') {
           const feature = featureForWorldDock(getCachedCatalog())
-          void loadFeatureTexture(feature?.image_path ?? 'Dock.png').then(
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Dock.png'),
             (texture) => {
               const live = objectByKey.get(key)
               if (!live || live !== entry) {
@@ -1653,7 +1717,8 @@ export function HexMap({
         }
         if (entry.data.kind === 'recruits') {
           const feature = featureForWorldRecruits(getCachedCatalog())
-          void loadFeatureTexture(feature?.image_path ?? 'Recruits.png').then(
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Recruits.png'),
             (texture) => {
               const live = objectByKey.get(key)
               if (!live || live !== entry) {
@@ -1666,15 +1731,16 @@ export function HexMap({
         }
         if (entry.data.kind === 'notice_board') {
           const feature = featureForNoticeBoard(getCachedCatalog())
-          void loadFeatureTexture(
-            feature?.image_path ?? 'Notice_Board.png',
-          ).then((texture) => {
-            const live = objectByKey.get(key)
-            if (!live || live !== entry) {
-              return
-            }
-            applyFeatureArt(live, texture, null)
-          })
+          whenFeatureTextureLoaded(
+            loadFeatureTexture(feature?.image_path ?? 'Notice_Board.png'),
+            (texture) => {
+              const live = objectByKey.get(key)
+              if (!live || live !== entry) {
+                return
+              }
+              applyFeatureArt(live, texture, null)
+            },
+          )
           return
         }
         const resourceId = mapObjectResourceId(entry.data)
@@ -1686,7 +1752,7 @@ export function HexMap({
         const imagePath = feature?.image_path ?? null
         // Pickups must use loose `{Resource}.png` only — never Node art.
         // Nodes use `{Resource}_Node.png`. No cross-kind fallback on the map.
-        void loadFeatureTexture(imagePath).then((texture) => {
+        whenFeatureTextureLoaded(loadFeatureTexture(imagePath), (texture) => {
           const live = objectByKey.get(key)
           if (!live || live !== entry) {
             return
@@ -2038,6 +2104,9 @@ export function HexMap({
       }
 
       const applyCamera = () => {
+        if (!mapSceneLive()) {
+          return
+        }
         const viewW = instance.screen.width
         const viewH = instance.screen.height
         const next = clampCamera(
@@ -2090,6 +2159,9 @@ export function HexMap({
       }
 
       const rebakeTerrain = () => {
+        if (!mapSceneLive()) {
+          return
+        }
         const catalog = getCachedCatalog()
         chunkRenderer.setAppearanceFlags({
           useTerrainImages: mapUseTerrainImages(catalog),
@@ -2117,7 +2189,9 @@ export function HexMap({
           void chunkRenderer
             .addPropsForHexes(newly, loadPropTexture, addPropSprite)
             .then(() => {
-              syncMapArtDepth()
+              if (!cancelled) {
+                syncMapArtDepth()
+              }
             })
           applyCamera()
           setWorldRenderStats(chunkRenderer.stats(world))
@@ -2134,26 +2208,73 @@ export function HexMap({
       rebakeTerrain()
       void chunkRenderer
         .rebuildAllProps(loadPropTexture, addPropSprite)
-        .then(() => syncMapArtDepth())
+        .then(() => {
+          if (!cancelled) {
+            syncMapArtDepth()
+          }
+        })
+
+      const ACTOR_ABOVE_NON_OVERLAP_PROP = 1_000_000
+
+      const unitOverlapsPropCull = (
+        cull: PropCullBox,
+        worldX: number,
+        worldY: number,
+        radius: number,
+      ) => {
+        const { cullX: cx, cullY: cy, cullMargin: margin } = cull
+        const reach = margin + radius
+        return (
+          worldX >= cx - reach &&
+          worldX <= cx + reach &&
+          worldY >= cy - reach &&
+          worldY <= cy + reach
+        )
+      }
 
       const syncTownActorDepth = () => {
+        if (!mapSceneLive()) {
+          return
+        }
+        // World positions below assume markers live on heroLayer until we
+        // reparent for keep occlusion.
+        for (const entry of heroMarkers.values()) {
+          if (entry.view.destroyed) {
+            continue
+          }
+          if (entry.view.parent !== heroLayer) {
+            heroLayer.addChild(entry.view)
+          }
+        }
+        for (const entry of mobMarkers.values()) {
+          if (entry.view.destroyed) {
+            continue
+          }
+          if (entry.view.parent !== heroLayer) {
+            heroLayer.addChild(entry.view)
+          }
+        }
+        for (const entry of boatMarkers.values()) {
+          if (entry.view.destroyed) {
+            continue
+          }
+          if (entry.view.parent !== heroLayer) {
+            heroLayer.addChild(entry.view)
+          }
+        }
         // Guarantee occlusion by parenting units under the town view (before the
         // sprite) when they are behind the keep. Entry/drawbridge stays a sibling
         // painted after the town so the unit stays on top. Missing hero art is
         // irrelevant — badge and sprite use the same Container.
-        const entryBoost = hexSize * 2.2
         const townBoost = hexSize * 0.4
 
         type DepthItem = { view: Container; z: number }
         const backItems: DepthItem[] = []
-        const frontUnits: Array<{
-          view: Container
-          z: number
-          worldX: number
-          worldY: number
-        }> = []
 
         for (const entry of objectByKey.values()) {
+          if (entry.view.destroyed) {
+            continue
+          }
           if (entry.data.kind !== 'town' || !entry.sprite.visible) {
             const hex =
               grid.getHex(entry.data) ?? grid.createHex(entry.data)
@@ -2177,7 +2298,12 @@ export function HexMap({
           worldY: number,
         ) => {
           for (const entry of objectByKey.values()) {
-            if (entry.data.kind !== 'town' || !entry.sprite.visible) {
+            if (
+              entry.view.destroyed ||
+              entry.data.kind !== 'town' ||
+              !entry.sprite.visible ||
+              entry.sprite.destroyed
+            ) {
               continue
             }
             const keep = townBlockedHex(entry.data)
@@ -2237,8 +2363,11 @@ export function HexMap({
           worldX: number,
           worldY: number,
         ) => {
+          if (view.destroyed) {
+            return
+          }
           const host = townBehindWhich(pos, worldX, worldY)
-          if (host) {
+          if (host && !host.view.destroyed && !host.sprite.destroyed) {
             // Insert just before the town sprite so opaque castle pixels cover
             // the unit; transparent padding still shows the unit through.
             const spriteIdx = host.view.getChildIndex(host.sprite)
@@ -2249,20 +2378,35 @@ export function HexMap({
             )
             return
           }
-          const hex = grid.getHex(pos) ?? grid.createHex(pos)
-          const c = hexCenter(hex, offsetX, offsetY)
-          let z = c.y
-          for (const entry of objectByKey.values()) {
-            if (
-              entry.data.kind === 'town' &&
-              entry.sprite.visible &&
-              entry.data.q === pos.q &&
-              entry.data.r === pos.r
-            ) {
-              z = Math.max(z, c.y + entryBoost)
+          heroLayer.addChild(view)
+          view.position.set(worldX, worldY)
+        }
+
+        const applyActorLayerZ = (
+          view: Container,
+          worldX: number,
+          worldY: number,
+        ) => {
+          if (view.destroyed || view.parent !== heroLayer) {
+            return
+          }
+          let z = Math.round(worldY * 1000) + ACTOR_ABOVE_NON_OVERLAP_PROP
+          const radius = hexSize * 0.45
+          for (const prop of chunkRenderer.blockingPropEntries()) {
+            if (prop.sprite.destroyed) {
+              continue
+            }
+            if (!unitOverlapsPropCull(prop.cull, worldX, worldY, radius)) {
+              continue
+            }
+            const propZ = Math.round(prop.sprite.y * 1000)
+            if (prop.sprite.y > worldY) {
+              z = Math.min(z, propZ - 1)
+            } else {
+              z = Math.max(z, propZ + 1)
             }
           }
-          frontUnits.push({ view, z, worldX, worldY })
+          view.zIndex = z
         }
 
         for (const hero of getSession().heroes) {
@@ -2296,16 +2440,57 @@ export function HexMap({
           const c = hexCenter(hex, offsetX, offsetY)
           placeUnit(marker.view, mob.position, c.x, c.y)
         }
+        for (const boat of getSession().boats ?? []) {
+          if (boat.occupant_hero_id != null) {
+            continue
+          }
+          const marker = boatMarkers.get(boat.id)
+          if (!marker?.view.visible || marker.view.destroyed) {
+            continue
+          }
+          const hex =
+            grid.getHex(boat.position) ?? grid.createHex(boat.position)
+          const c = hexCenter(hex, offsetX, offsetY)
+          placeUnit(marker.view, boat.position, c.x, c.y)
+        }
 
         backItems.sort((a, b) => a.z - b.z)
-        frontUnits.sort((a, b) => a.z - b.z)
         for (const item of backItems) {
-          artLayer.addChild(item.view)
+          if (!item.view.destroyed) {
+            artLayer.addChild(item.view)
+          }
         }
-        for (const unit of frontUnits) {
-          artLayer.addChild(unit.view)
-          unit.view.position.set(unit.worldX, unit.worldY)
+
+        chunkRenderer.syncBlockingPropsToActorLayer(heroLayer)
+
+        for (const hero of getSession().heroes) {
+          const marker = heroMarkers.get(hero.id)
+          if (!marker?.view.visible || marker.view.destroyed) {
+            continue
+          }
+          const { x, y } = markerWorldXY(marker.view)
+          applyActorLayerZ(marker.view, x, y)
         }
+        for (const mob of getSession().mobs) {
+          const marker = mobMarkers.get(mob.id)
+          if (!marker?.view.visible || marker.view.destroyed) {
+            continue
+          }
+          const { x, y } = markerWorldXY(marker.view)
+          applyActorLayerZ(marker.view, x, y)
+        }
+        for (const boat of getSession().boats ?? []) {
+          if (boat.occupant_hero_id != null) {
+            continue
+          }
+          const marker = boatMarkers.get(boat.id)
+          if (!marker?.view.visible || marker.view.destroyed) {
+            continue
+          }
+          const { x, y } = markerWorldXY(marker.view)
+          applyActorLayerZ(marker.view, x, y)
+        }
+        heroLayer.sortChildren()
         syncMapArtDepth()
       }
 
@@ -2729,7 +2914,11 @@ export function HexMap({
         rebakeTerrain()
         void chunkRenderer
           .rebuildAllProps(loadPropTexture, addPropSprite)
-          .then(() => syncMapArtDepth())
+          .then(() => {
+            if (!cancelled) {
+              syncMapArtDepth()
+            }
+          })
         walletRef.current = walletFromSession(session)
         emitResources()
         const ownHeroes = player
@@ -2848,10 +3037,6 @@ export function HexMap({
       followHero()
       emitResources()
 
-      const canvas = instance.canvas
-      const tipEl = document.createElement('div')
-      tipEl.className = 'world-hover-tip'
-      tipEl.hidden = true
       let lastHoverKey = ''
 
       const hexFromPointer = (event: PointerEvent) => {
@@ -4157,6 +4342,9 @@ export function HexMap({
 
       let perfFrame = 0
       instance.ticker.add((ticker) => {
+        if (!mapSceneLive()) {
+          return
+        }
         chunkRenderer.noteFrame(ticker.deltaMS)
         perfFrame += 1
         if (perfFrame % 15 === 0) {
@@ -4196,10 +4384,9 @@ export function HexMap({
       signal.addEventListener('abort', () => {
         resizeObserver.disconnect()
       })
-
-      host.replaceChildren(canvas, tipEl)
-      app = instance
-    })()
+    })().catch((err) => {
+      console.error('[hex] map init failed', err)
+    })
 
     return () => {
       cancelled = true
