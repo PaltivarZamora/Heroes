@@ -15,6 +15,8 @@ import {
 import { DEFAULT_AI_ARCH_ID } from '../ai/types'
 import { insertHeroArmyStack, nextUnitStackId } from './accessors'
 import { startingResources } from './create'
+import { difficultyIdFromSettings } from './gameDifficulty'
+import { emptyHeroInventory } from '../items/state'
 import {
   ARMY_STACK_SLOTS,
   playerIdForSlot,
@@ -268,7 +270,7 @@ function unitsMatchingTagsAtTier(
     return []
   }
   const base = catalog.unit.filter((unit) => {
-    if (!combatEligible(unit) || isAdvancedUnit(unit)) {
+    if (!combatEligible(unit) || isAdvancedUnit(catalog, unit)) {
       return false
     }
     if (unitEffectiveTier(catalog, unit) !== tier) {
@@ -459,7 +461,10 @@ function opponentPlayerForFixedFight(
     ai_spectator: false,
     arch_id: DEFAULT_AI_ARCH_ID,
     eliminated: false,
-    resources: startingResources(),
+    resources: startingResources(
+      difficultyIdFromSettings(session.game.settings),
+      true,
+    ),
     hero_ids: [],
     town_ids: [],
     explored: [],
@@ -513,6 +518,7 @@ function ensureOpponentHero(
     current_mana: pools.current_mana,
     current_energy: pools.current_energy,
     flight: null,
+    ...emptyHeroInventory(),
   }
   return {
     session: {
@@ -588,6 +594,7 @@ function ensureMirrorDefender(
     current_mana: attacker.current_mana,
     current_energy: attacker.current_energy,
     flight: null,
+    ...emptyHeroInventory(),
   }
   return {
     session: {

@@ -1,4 +1,9 @@
-import { getSelectedMapHeroId, selectHeroOnMap } from '../hex/HexMap'
+import {
+  abortActiveMapMovement,
+  getSelectedMapHeroId,
+  selectHeroOnMap,
+  syncSelectedHeroFromSession,
+} from '../hex/HexMap'
 import {
   activePlayer,
   addHeroStackQty,
@@ -19,6 +24,25 @@ import { applyClericEndOfBattlePassive } from './templePassive'
 import { isCreatureArmyUnit } from './siege'
 import { creditDefeatMobKill } from '../session/quests'
 import { removeWorldMob } from '../session/mobs'
+import { GOLD_RESOURCE_ID } from '../hex/resources'
+import {
+  nearestFriendlyTown,
+  placementAfterEscape,
+  type CombatEscapeKind,
+  type CostMap,
+} from './escape'
+import { rolledItemDisplayName } from '../items/display'
+import { transferDefeatedHeroItems } from '../items/heroLoot'
+import {
+  logLostItemsToHero,
+  logTookItemsFromHero,
+} from '../session/gameLog'
+import { recycleDefeatedHero } from '../session/recycle'
+import {
+  applyMobKillGoldReward,
+  snapshotMobKillRewards,
+} from '../session/mobKillRewards'
+import { runAiItemMaintenanceForPlayer } from '../ai/itemEquip'
 
 export type OpeningStack = {
   id: string
@@ -42,8 +66,12 @@ export type CombatSummary = {
   winnerLosses: CombatLossLine[]
   winnerGains: CombatLossLine[]
   xpLines: string[]
+  /** Item names taken from a defeated hero (BR S9-41). */
+  itemsTakenLines?: string[]
   /** Human winner leveled with bumps — show after summary dismiss. */
   levelUpNotice?: LevelUpNotice | null
+  /** Mob kill gold / item messages (BR S9-43). */
+  rewardLines?: string[]
 }
 
 export function snapshotOpening(stacks: CombatStack[]): OpeningStack[] {
@@ -350,26 +378,6 @@ function persistSummonedStacks(
   return { session: next, gains }
 }
 
-function removeDefeatedHero(session: GameSession, hero: Hero): GameSession {
-  return {
-    ...session,
-    units: session.units.filter((row) => row.hero_id !== hero.id),
-    heroes: session.heroes.filter((row) => row.id !== hero.id),
-    // Naval / boat: sink the loser's boat with the hero (BR S9-12).
-    boats: (session.boats ?? []).filter(
-      (boat) => boat.occupant_hero_id !== hero.id,
-    ),
-    players: session.players.map((player) =>
-      player.id === hero.player_id
-        ? {
-            ...player,
-            hero_ids: player.hero_ids.filter((id) => id !== hero.id),
-          }
-        : player,
-    ),
-  }
-}
-
 function reselectHero(session: GameSession): void {
   const selected = getSelectedMapHeroId()
   if (selected && session.heroes.some((hero) => hero.id === selected)) {
@@ -443,6 +451,7 @@ export function applyCombatOutcome(
     winnerLosses: lossesFor(winnerSide, opening, battleResolved, catalog),
     winnerGains: [],
     xpLines: [...clericLines],
+    itemsTakenLines: [],
     levelUpNotice: null,
   }
   let next = session
@@ -496,15 +505,60 @@ export function applyCombatOutcome(
       summary.winnerGains = [...summary.winnerGains, ...demons.gains]
     }
   }
-  if (loser) {
-    next = removeDefeatedHero(next, loser)
+  if (loser && winner) {
+    const loot = transferDefeatedHeroItems(next, catalog, winner.id, loser.id)
+    next = loot.session
+    if (loot.taken.length > 0) {
+      const items = loot.taken.map((item) => ({
+        uid: item.uid,
+        name: rolledItemDisplayName(catalog, item),
+      }))
+      summary.itemsTakenLines = [
+        `Took ${items.map((row) => row.name).join(', ')}`,
+      ]
+      next = logTookItemsFromHero(
+        next,
+        winner.player_id,
+        winner.id,
+        items,
+      )
+      next = logLostItemsToHero(
+        next,
+        loser.player_id,
+        loser.name,
+        items.map((row) => row.name).join(', '),
+      )
+    }
+    const winnerPlayer = next.players.find((row) => row.id === winner.player_id)
+    if (winnerPlayer?.is_ai) {
+      next = runAiItemMaintenanceForPlayer(next, catalog, winner.player_id, [
+        winner.id,
+      ])
+    }
+    const liveLoser = next.heroes.find((row) => row.id === loser.id)
+    if (liveLoser) {
+      next = recycleDefeatedHero(next, catalog, liveLoser)
+    }
+  } else if (loser) {
+    next = recycleDefeatedHero(next, catalog, loser)
   }
   if (siegeTown && defenderArmyIsGarrison(session, siegeTown, attackerHeroId)) {
     next = applyGarrisonArmy(next, siegeTown, 'def', battle)
   }
   if (mob && loserSide === 'def') {
     const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
-    if (attacker) {
+    if (attacker && winner) {
+      const snap = snapshotMobKillRewards(session, catalog, mob, opening)
+      const goldResult = applyMobKillGoldReward(
+        next,
+        catalog,
+        winner.id,
+        snap,
+      )
+      next = goldResult.session
+      if (goldResult.line) {
+        summary.rewardLines = [goldResult.line]
+      }
       next = creditDefeatMobKill(next, mob.id, attacker.player_id)
     }
     next = removeDefeatedMob(next, mob)
@@ -517,6 +571,207 @@ export function applyCombatOutcome(
   }
   next = withEliminations(next)
   return { session: next, summary }
+}
+
+function transferGoldBetweenPlayers(
+  session: GameSession,
+  fromPlayerId: string,
+  toPlayerId: string | null,
+  cost: CostMap,
+): GameSession {
+  const gold = Math.max(0, Math.floor(cost[GOLD_RESOURCE_ID] ?? 0))
+  if (gold <= 0) {
+    return session
+  }
+  return {
+    ...session,
+    players: session.players.map((player) => {
+      if (player.id === fromPlayerId) {
+        const resources = { ...player.resources }
+        resources[GOLD_RESOURCE_ID] = Math.max(
+          0,
+          (resources[GOLD_RESOURCE_ID] ?? 0) - gold,
+        )
+        return { ...player, resources }
+      }
+      if (toPlayerId && player.id === toPlayerId) {
+        const resources = { ...player.resources }
+        resources[GOLD_RESOURCE_ID] = (resources[GOLD_RESOURCE_ID] ?? 0) + gold
+        return { ...player, resources }
+      }
+      return player
+    }),
+  }
+}
+
+function placeEscapedHero(
+  session: GameSession,
+  hero: Hero,
+  position: { q: number; r: number },
+): GameSession {
+  return {
+    ...session,
+    heroes: session.heroes.map((row) =>
+      row.id === hero.id
+        ? {
+            ...row,
+            position,
+            movement_remaining: 0,
+            flight: null,
+          }
+        : row,
+    ),
+  }
+}
+
+export function applyCombatEscape(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  attackerHeroId: string,
+  defenderHeroId: string | null,
+  battle: CombatBattle,
+  opening: OpeningStack[],
+  escapingSide: CombatSide,
+  kind: CombatEscapeKind,
+  siegeTownId?: string | null,
+  defenderMobId?: string | null,
+  surrenderCost?: CostMap,
+): { session: GameSession; summary: CombatSummary } | null {
+  const winnerSide: CombatSide = escapingSide === 'atk' ? 'def' : 'atk'
+  const loserId = escapingSide === 'atk' ? attackerHeroId : defenderHeroId
+  const winnerId = winnerSide === 'atk' ? attackerHeroId : defenderHeroId
+  const loser = loserId
+    ? session.heroes.find((hero) => hero.id === loserId)
+    : undefined
+  const winner = winnerId
+    ? session.heroes.find((hero) => hero.id === winnerId)
+    : undefined
+  const siegeTown = siegeTownId
+    ? session.towns.find((row) => row.id === siegeTownId)
+    : undefined
+  const mob = defenderMobId
+    ? session.mobs.find((row) => row.id === defenderMobId)
+    : undefined
+  if (!loser) {
+    return null
+  }
+  const summary: CombatSummary = {
+    loserPlayer:
+      escapingSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
+    loserHeroName: loser.name,
+    winnerPlayer:
+      winnerSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,
+    winnerHeroName: winner?.name ?? siegeTown?.name ?? (mob ? 'Creatures' : 'Town'),
+    loserLosses: lossesFor(escapingSide, opening, battle, catalog),
+    winnerLosses: lossesFor(winnerSide, opening, battle, catalog),
+    winnerGains: [],
+    itemsTakenLines: [],
+    xpLines: [
+      kind === 'flee'
+        ? `${loser.name} fled the battle.`
+        : `${loser.name} surrendered.`,
+    ],
+    levelUpNotice: null,
+  }
+  let next = session
+  if (winner) {
+    next = applyWinnerArmy(next, winner, winnerSide, battle)
+    const persisted = persistSummonedStacks(
+      next,
+      winner,
+      winnerSide,
+      battle,
+      catalog,
+    )
+    next = persisted.session
+    summary.winnerGains = persisted.gains
+    const ownValue = partsArmyValue(
+      catalog,
+      openingValueParts(opening, catalog, winnerSide),
+    )
+    const enemyValue = partsArmyValue(
+      catalog,
+      openingValueParts(opening, catalog, escapingSide),
+    )
+    const xp = awardScaledKillXp(
+      next,
+      catalog,
+      winner.id,
+      openingKillParts(opening, battle, catalog, escapingSide),
+      enemyValue,
+      ownValue,
+      'battle',
+    )
+    next = xp.session
+    summary.xpLines = [...summary.xpLines, ...xp.lines]
+    summary.levelUpNotice = levelUpNoticeForAward(catalog, xp)
+  }
+  next = applyWinnerArmy(next, loser, escapingSide, battle)
+  const town = nearestFriendlyTown(next, loser)
+  if (town) {
+    const position = placementAfterEscape(next, loser, town)
+    next = placeEscapedHero(next, loser, position)
+  } else {
+    next = placeEscapedHero(next, loser, loser.position)
+  }
+  if (kind === 'surrender' && surrenderCost) {
+    const winnerPlayerId = winner?.player_id ?? null
+    next = transferGoldBetweenPlayers(
+      next,
+      loser.player_id,
+      mob ? null : winnerPlayerId,
+      surrenderCost,
+    )
+  }
+  if (siegeTown && defenderArmyIsGarrison(session, siegeTown, attackerHeroId)) {
+    next = applyGarrisonArmy(next, siegeTown, 'def', battle)
+  }
+  if (mob) {
+    next = applyMobArmy(next, mob, 'def', battle)
+  }
+  next = withEliminations(next)
+  return { session: next, summary }
+}
+
+export function commitCombatEscape(
+  catalog: ReferenceCatalog,
+  attackerHeroId: string,
+  defenderHeroId: string | null,
+  battle: CombatBattle,
+  opening: OpeningStack[],
+  escapingSide: CombatSide,
+  kind: CombatEscapeKind,
+  siegeTownId?: string | null,
+  defenderMobId?: string | null,
+  surrenderCost?: CostMap,
+): CombatSummary | null {
+  let summary: CombatSummary | null = null
+  const next = updateSession((current) => {
+    const applied = applyCombatEscape(
+      current,
+      catalog,
+      attackerHeroId,
+      defenderHeroId,
+      battle,
+      opening,
+      escapingSide,
+      kind,
+      siegeTownId,
+      defenderMobId,
+      surrenderCost,
+    )
+    if (!applied) {
+      return current
+    }
+    summary = applied.summary
+    return applied.session
+  })
+  if (summary) {
+    syncSelectedHeroFromSession()
+    abortActiveMapMovement()
+    reselectHero(getSession() ?? next)
+  }
+  return summary
 }
 
 export function commitCombatOutcome(

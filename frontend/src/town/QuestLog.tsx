@@ -1,11 +1,14 @@
 import { useSyncExternalStore } from 'react'
-import { formatAmount } from '../hex/resources'
 import { activePlayer } from '../session/accessors'
-import { questLogEntries } from '../session/quests'
+import { questLogEntries, questRewardLabelForPlayer } from '../session/quests'
 import { getSession, subscribe } from '../session/store'
+import { getCachedCatalog, subscribeCatalog } from './catalog'
+import { GameWindowModal } from '../layout/GameWindowModal'
+import { GameWindowOverlay } from '../layout/GameWindowOverlay'
 
 type QuestLogProps = {
   onClose: () => void
+  embedded?: boolean
 }
 
 function statusLabel(state: {
@@ -24,10 +27,57 @@ function statusLabel(state: {
 /**
  * Active player's accepted Notice Board quests (BR S9-10).
  */
-export function QuestLog({ onClose }: QuestLogProps) {
+export function QuestLog({ onClose, embedded = false }: QuestLogProps) {
   const session = useSyncExternalStore(subscribe, getSession)
+  const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const actor = activePlayer(session)
   const entries = actor ? questLogEntries(session, actor.id) : []
+
+  const rewardText = (featureId: string) =>
+    actor && catalog
+      ? questRewardLabelForPlayer(session, catalog, featureId, actor.id)
+      : null
+
+  if (embedded) {
+    return (
+      <GameWindowOverlay className="quest-log-embedded">
+        <GameWindowModal
+          aria-modal="true"
+          aria-labelledby="quest-log-title"
+          onBackdropClick={onClose}
+        >
+          <h1 id="quest-log-title">Quest Log</h1>
+          {entries.length === 0 ? (
+            <p>No accepted quests this week.</p>
+          ) : (
+            <ul className="world-panel-list">
+              {entries.map((entry) => {
+                const reward = rewardText(entry.featureId)
+                return (
+                  <li key={entry.featureId}>
+                    <p>
+                      <strong>
+                        Notice Board (T{entry.quest.tier}) — near {entry.townName}
+                      </strong>
+                      {statusLabel(entry.state)
+                        ? ` — ${statusLabel(entry.state)}`
+                        : ''}
+                    </p>
+                    <p>{entry.quest.flavour_text}</p>
+                    <p>Goal: {entry.quest.goal_line}</p>
+                    {reward ? <p>Reward: {reward}</p> : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <button type="button" className="date-notice-ok" onClick={onClose}>
+            Close
+          </button>
+        </GameWindowModal>
+      </GameWindowOverlay>
+    )
+  }
 
   return (
     <div
@@ -47,20 +97,7 @@ export function QuestLog({ onClose }: QuestLogProps) {
         ) : (
           <ul className="world-panel-list">
             {entries.map((entry) => {
-              const showReward =
-                entry.state.completed || entry.state.turned_in
-              const reward = showReward
-                ? [
-                    entry.quest.reward_xp > 0
-                      ? `${entry.quest.reward_xp} XP`
-                      : null,
-                    entry.quest.reward_gold > 0
-                      ? `${formatAmount(entry.quest.reward_gold)} Gold`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' + ')
-                : ''
+              const reward = rewardText(entry.featureId)
               return (
                 <li key={entry.featureId}>
                   <p>

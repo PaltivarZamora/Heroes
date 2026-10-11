@@ -51,6 +51,8 @@ final class MapGenContext {
     WorldProps.Seed[][] propSeeds;
     boolean[][] propBlocked;
     List<MapObjectData> objects = new ArrayList<>();
+    /** Layer 6 world mobs (position + stacks). Empty until that layer runs. */
+    List<MapMobData> mobs = new ArrayList<>();
     /** Layer-5 rules, loaded when features start. */
     FeatureRules featureRules;
     /** Treasure pockets carved with the walls (BR S9-23). */
@@ -88,6 +90,21 @@ final class MapGenContext {
     int terrainExclusionPairs;
     /** Mainland hexes eligible for permanent buildings (L5a). */
     boolean[][] buildingLand;
+    /** Deep-water river hexes (BR S9-32). Not a lake. */
+    boolean[][] river;
+    /** Width-1 land–water–land crossings roads may use. */
+    boolean[][] bridgeSpot;
+    /** Realized bridge (walkable water). */
+    boolean[][] bridge;
+    /** Zone-pair keys that must not receive walls. */
+    java.util.Set<Long> riverBorderPairs = new java.util.HashSet<>();
+    /** Road crossings that required narrowing the river to width 1. */
+    int riverNarrowed;
+    int riverCountPlaced;
+    int riverHexCount;
+    int bridgeRoad;
+    int bridgeRequired;
+    int bridgeShortcut;
 
     /** One chain link's planned hexes (axial), before washout and orphan trim. */
     static final class RoadDebugLink {

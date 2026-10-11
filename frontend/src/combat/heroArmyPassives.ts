@@ -1,6 +1,13 @@
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
-import { heroEffectiveStats, unitById, unitHasTag } from '../town/catalog'
+import { heroEffectiveStatsForHero, unitById, unitHasTag } from '../town/catalog'
+import {
+  TAG_FIRE_TOTEM,
+  TAG_LIGHTNING_TOTEM,
+  TAG_NATURE_TOTEM,
+  firstUnitWithNamedTag,
+  unitHasNamedTag,
+} from '../town/unitTags'
 import {
   missingPassiveStatKey,
   passiveStatNumber,
@@ -529,14 +536,18 @@ export function applyEvokerSpellBonus(
 
 export type TotemUnitName = 'Fire Totem' | 'Lightning Totem' | 'Nature Totem'
 
+const TOTEM_TAG_BY_KIND: Record<TotemUnitName, string> = {
+  'Fire Totem': TAG_FIRE_TOTEM,
+  'Lightning Totem': TAG_LIGHTNING_TOTEM,
+  'Nature Totem': TAG_NATURE_TOTEM,
+}
+
 export function totemUnitByName(
   catalog: ReferenceCatalog,
   name: TotemUnitName,
 ): UnitRow | null {
-  const needle = name.toLowerCase()
-  return (
-    catalog.unit.find((row) => row.name.trim().toLowerCase() === needle) ?? null
-  )
+  const tag = TOTEM_TAG_BY_KIND[name]
+  return tag ? firstUnitWithNamedTag(catalog, tag) : null
 }
 
 /** Map passive_stats totem_types entry → unit name. */
@@ -588,11 +599,7 @@ export function shamanTotemCount(
     missingPassiveStatKey(catalog, hero, 'totem_min', 'Shaman totems')
     return 0
   }
-  const intel = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  ).intel
+  const intel = heroEffectiveStatsForHero(catalog, hero).intel
   return Math.max(minTotems, Math.floor(intel / divisor))
 }
 
@@ -604,11 +611,14 @@ export function isShamanTotemStack(
   if (stack.qty <= 0) {
     return false
   }
-  const name = unitById(catalog, stack.unitId)?.name ?? ''
+  const unit = unitById(catalog, stack.unitId)
+  if (!unit) {
+    return false
+  }
   return (
-    name === 'Fire Totem' ||
-    name === 'Lightning Totem' ||
-    name === 'Nature Totem'
+    unitHasNamedTag(catalog, unit, TAG_FIRE_TOTEM) ||
+    unitHasNamedTag(catalog, unit, TAG_LIGHTNING_TOTEM) ||
+    unitHasNamedTag(catalog, unit, TAG_NATURE_TOTEM)
   )
 }
 
@@ -619,7 +629,8 @@ export function isNatureTotemStack(
   if (stack.qty <= 0) {
     return false
   }
-  return unitById(catalog, stack.unitId)?.name === 'Nature Totem'
+  const unit = unitById(catalog, stack.unitId)
+  return Boolean(unit && unitHasNamedTag(catalog, unit, TAG_NATURE_TOTEM))
 }
 
 /** How many totems to spawn this round when below max (default 1). */

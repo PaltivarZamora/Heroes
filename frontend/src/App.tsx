@@ -1,12 +1,27 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { HexMap, clearCachedGrid, getSelectedMapHeroId, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView, requestPlayHeroFlight } from './hex/HexMap'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import { HexMap, abortActiveMapMovement, clearCachedGrid, getMapCameraHex, getSelectedMapHeroId, centerMapOnHex, resyncWorldMapAfterMapView, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView, syncSelectedHeroFromSession, requestPlayHeroFlight } from './hex/HexMap'
+import { isArmyPopupOpen, runArmyConfirmPopup } from './town/armyKeybindBridge'
+import { MapView } from './hex/MapView'
 import {
   formatDebugSections,
   formatDebugText,
   type DataStatus,
   type HeroHudState,
 } from './hex/debug'
-import { DebugCopyPanel } from './hex/DebugCopyPanel'
+import { MainMenu, type MainMenuFlow } from './layout/MainMenu'
+import { DevPopup } from './layout/DevPopup'
+import { SettingsScreen } from './settings/SettingsScreen'
+import { useGameKeybindHandler } from './input/useGameKeybindHandler'
+import { tooltipWithKey } from './input/keybindEngine'
+import { loadPlayerSettings } from './settings/playerSettings'
 import { getWorldRenderStats, type WorldRenderStats } from './hex/worldRenderChunks'
 import { formatMovementPoints, HERO_MARKER_LABEL } from './hex/hero'
 import {
@@ -20,21 +35,33 @@ import {
   formatResourceLines,
   type ResourceWallet,
 } from './hex/resources'
-import { ResourceBar } from './hex/ResourceBar'
 import { calendarRolloverTitle, calendarDayNumber, formatCalendar } from './hex/calendar'
 import { TownManagement } from './town/TownManagement'
 import { HeroScreen } from './town/HeroScreen'
-import { FriendlyTrade } from './town/FriendlyTrade'
+import { TradeScreen } from './town/TradeScreen'
 import { WorldLibrary } from './town/WorldLibrary'
 import { WorldHangerFlight } from './town/WorldHangerFlight'
 import { DockBuy } from './town/DockBuy'
 import { WorldRecruits } from './town/WorldRecruits'
 import { WorldNoticeBoard } from './town/WorldNoticeBoard'
 import { QuestLog } from './town/QuestLog'
+import { GameWindowModal } from './layout/GameWindowModal'
+import { GameWindowOverlay } from './layout/GameWindowOverlay'
 import { CombatScreen } from './combat/CombatScreen'
+import {
+  getNavalMaskDebugState,
+  subscribeNavalMaskDebug,
+} from './combat/navalMaskDebugBridge'
 import type { NavalLayoutKind } from './combat/naval'
 import { boatOccupiedByHero } from './hex/boat'
-import { getCachedCatalog, heroMovementPoints, refreshCatalogFromDb } from './town/catalog'
+import {
+  difficultyName,
+  getCachedCatalog,
+  heroMovementPoints,
+  refreshCatalogFromDb,
+  setGameDifficultyCatalog,
+} from './town/catalog'
+import { difficultyIdFromSettings, syncGameDifficultyFromSession } from './session/gameDifficulty'
 import { OptionsMenu } from './options/OptionsMenu'
 import {
   defaultGameConfig,
@@ -77,32 +104,36 @@ import {
   walletFromSession,
   type ArchiveLearnNotice,
 } from './session/accessors'
-import { addWorldMobs } from './session/mobs'
 import { appendAiTrace, clearAiTraces, getAiTraceBlocks, subscribeAiTraces } from './ai/trace'
 import { decideAndApplyHeroTrade } from './ai/armyAlloc'
 import { runAiTurn } from './ai/turn'
 import type { WorldAttackTarget } from './ai/worldMove'
+import { GameBanner } from './layout/GameBanner'
+import {
+  GameLogModal,
+  bannerLogLines,
+  defaultLogTab,
+  maxBannerLogScroll,
+} from './layout/GameLogModal'
+import { GameLeftPanel } from './layout/GameLeftPanel'
+import {
+  logMobAmbush,
+  logMobEncounterResolved,
+  recordCombatEnd,
+  type CombatLogExitPayload,
+  type GameLogTab,
+} from './session/gameLog'
+import { GameStage } from './layout/GameStage'
+import {
+  GAME_WINDOW_HEIGHT,
+  GAME_WINDOW_WIDTH,
+  GAME_WINDOW_X,
+  GAME_WINDOW_Y,
+} from './layout/stageConstants'
 import './App.css'
 
 /** Once Start Game runs, catalog bootstrap must not rewrite the chosen config. */
 let allowCatalogBootDefaults = true
-
-function isEditableKeyTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  }
-  const tag = target.tagName
-  return (
-    tag === 'INPUT' ||
-    tag === 'TEXTAREA' ||
-    tag === 'SELECT' ||
-    target.isContentEditable
-  )
-}
-
-function isInsideOptionsModal(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest('.options-modal') != null
-}
 
 function idInDirection(
   currentId: string | null,
@@ -130,12 +161,27 @@ function App() {
     height: number
     seed: number
   } | null>(null)
+  const [mapViewOpen, setMapViewOpen] = useState(false)
+  const [mapViewRevealAll, setMapViewRevealAll] = useState(false)
+  const [mapViewFocus, setMapViewFocus] = useState<{ q: number; r: number } | null>(
+    null,
+  )
+  const [activeTownId, setActiveTownId] = useState<string | null>(null)
   const [hero, setHero] = useState<HeroHudState | null>(null)
   const wallet = walletFromSession(session)
+  const clearMapGenerating = useCallback(() => {
+    mapGeneratingRef.current = false
+    setMapGenerating(false)
+  }, [])
+  const onMapGenerateFailed = useCallback(() => {
+    clearMapGenerating()
+    setOptionsHudNotice(
+      'Map generation failed or timed out. Check the server, then try New Game again.',
+    )
+  }, [clearMapGenerating])
   const onMapInfo = useCallback(
     (info: { width: number; height: number; seed: number }) => {
-      mapGeneratingRef.current = false
-      setMapGenerating(false)
+      clearMapGenerating()
       setMapInfo(info)
       updateSession((current) => {
         const currentName = current.game.name.trim()
@@ -150,7 +196,32 @@ function App() {
         }
       })
     },
-    [],
+    [clearMapGenerating],
+  )
+  const openMapView = useCallback((revealAll = false) => {
+    const live = getSession()
+    const heroId = getSelectedMapHeroId()
+    const hero = heroId
+      ? live.heroes.find((row) => row.id === heroId)
+      : live.heroes.find((row) => row.player_id === live.players[0]?.id)
+    const focus =
+      hero?.position ?? getMapCameraHex() ?? { q: 0, r: 0 }
+    setMapViewRevealAll(revealAll)
+    setMapViewFocus(focus)
+    setMapViewOpen(true)
+  }, [])
+  const closeMapView = useCallback(() => {
+    setMapInputLocked(false)
+    setMapViewRevealAll(false)
+    setMapViewOpen(false)
+    requestAnimationFrame(() => resyncWorldMapAfterMapView())
+  }, [])
+  const onMapViewFocusHex = useCallback(
+    (q: number, r: number) => {
+      closeMapView()
+      centerMapOnHex(q, r)
+    },
+    [closeMapView],
   )
   const onHeroState = useCallback((state: HeroHudState) => {
     setHero(state)
@@ -174,6 +245,14 @@ function App() {
     defenderMobId?: string
     navalLayout?: NavalLayoutKind
   } | null>(null)
+  type CombatFight = NonNullable<typeof combat>
+  const combatFightIdRef = useRef(0)
+  const recordedCombatFightIdsRef = useRef(new Set<number>())
+  const pendingCombatLogRef = useRef<{
+    fightId: number
+    fight: CombatFight
+    archive: CombatLogExitPayload
+  } | null>(null)
   const [dateNotice, setDateNotice] = useState<{
     title: string
     date: string
@@ -184,6 +263,23 @@ function App() {
     null,
   )
   const [optionsHudNotice, setOptionsHudNotice] = useState<string | null>(null)
+  const [mainMenuOpen, setMainMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<
+    'audio' | 'popups' | 'keybinds' | 'video'
+  >('audio')
+  const [devOpen, setDevOpen] = useState(false)
+  const [gameFlowPanel, setGameFlowPanel] = useState<
+    'new' | 'save' | 'load' | 'quit' | 'restart' | null
+  >(null)
+  const [endTurnConfirmOpen, setEndTurnConfirmOpen] = useState(false)
+  const [gameLogOpen, setGameLogOpen] = useState(false)
+  const [gameLogTab, setGameLogTab] = useState<GameLogTab>('world')
+  const [gameLogFocusCombatId, setGameLogFocusCombatId] = useState<string | null>(
+    null,
+  )
+  const [logScrollBack, setLogScrollBack] = useState(0)
+  const [liveCombatLogLines, setLiveCombatLogLines] = useState<string[]>([])
   const [surrenderPrompt, setSurrenderPrompt] = useState<{
     mobId: string
     heroId: string
@@ -207,6 +303,7 @@ function App() {
   const [zonesDebug, setZonesDebug] = useState(false)
   const [wallGapsDebug, setWallGapsDebug] = useState(false)
   const [roadPlanDebug, setRoadPlanDebug] = useState(false)
+  const [townHexNumbers, setTownHexNumbers] = useState(false)
   const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
 
   useEffect(() => {
@@ -223,15 +320,67 @@ function App() {
     setCombat(null)
     const next = { id: townId, name: townName }
     lastTownRef.current = next
+    setActiveTownId(townId)
     setWelcomeTown(next)
   }, [])
   const onFountainRestore = useCallback((message: string) => {
     setDateNotice({ title: message, date: '' })
   }, [])
+  const onChestMessage = useCallback((payload: { title: string }) => {
+    setDateNotice({ title: payload.title, date: '' })
+  }, [])
   const onSignRead = useCallback((text: string) => {
     setDateNotice({ title: '', date: '', lines: [text] })
   }, [])
   const [questLogOpen, setQuestLogOpen] = useState(false)
+  const viewBehindQuestRef = useRef<{
+    welcomeTown: { id: string; name: string } | null
+    heroScreen: boolean
+  } | null>(null)
+
+  const toggleQuestLog = useCallback(() => {
+    setQuestLogOpen((wasOpen) => {
+      if (!wasOpen) {
+        viewBehindQuestRef.current = {
+          welcomeTown,
+          heroScreen,
+        }
+      } else {
+        viewBehindQuestRef.current = null
+      }
+      return !wasOpen
+    })
+  }, [welcomeTown, heroScreen])
+
+  const openQuestLog = useCallback(() => {
+    viewBehindQuestRef.current = {
+      welcomeTown,
+      heroScreen,
+    }
+    setQuestLogOpen(true)
+  }, [welcomeTown, heroScreen])
+
+  const closeQuestLog = useCallback(() => {
+    setQuestLogOpen(false)
+    viewBehindQuestRef.current = null
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!questLogOpen) {
+      return
+    }
+    const snap = viewBehindQuestRef.current
+    if (!snap) {
+      return
+    }
+    if (snap.welcomeTown && !welcomeTown) {
+      setWelcomeTown(snap.welcomeTown)
+      lastTownRef.current = snap.welcomeTown
+    }
+    if (snap.heroScreen && !heroScreen) {
+      setHeroScreen(true)
+    }
+  }, [questLogOpen, welcomeTown, heroScreen])
   const [worldNoticeBoard, setWorldNoticeBoard] = useState<{
     featureId: string
     heroId: string
@@ -436,6 +585,7 @@ function App() {
     [],
   )
   const dismissDateNotice = useCallback(() => {
+    setMapInputLocked(false)
     setDateNotice(null)
     const pending = pendingLevelUpRef.current
     pendingLevelUpRef.current = null
@@ -530,7 +680,11 @@ function App() {
       siegeTownId: townId,
     })
   }, [])
-  const beginMobEncounter = useCallback((mobId: string): boolean => {
+  const beginMobEncounter = useCallback((
+    mobId: string,
+    forced = false,
+    _trigger: 'ambush' | 'player' | 'ai' = forced ? 'ambush' : 'player',
+  ): boolean => {
     const current = getSession()
     const selfId = getSelectedMapHeroId()
     const self = selfId
@@ -544,7 +698,7 @@ function App() {
     setTrade(null)
     setHeroScreen(false)
     const catalog = getCachedCatalog()
-    if (catalog) {
+    if (catalog && !forced) {
       const owner = current.players.find((row) => row.id === self.player_id)
       const result = resolveMobPreBattle(current, catalog, self, mob, {
         autoAcceptSurrender: owner?.is_ai === true,
@@ -571,7 +725,19 @@ function App() {
         return false
       }
       if (result.kind !== 'fight') {
-        updateSession(() => result.session)
+        updateSession(() => {
+          let next = result.session
+          const kind =
+            result.kind === 'surrender' ? 'mob_surrendered' : 'mob_fled'
+          next = logMobEncounterResolved(
+            next,
+            self.player_id,
+            self.id,
+            mob.id,
+            kind,
+          )
+          return next
+        })
         setCombat(null)
         showDateThenLevelUp(
           {
@@ -587,6 +753,9 @@ function App() {
         return false
       }
     }
+    updateSession((current) =>
+      logMobAmbush(current, self.player_id, self.id, mob.id),
+    )
     setCombat({
       attackerHeroId: self.id,
       defenderHeroId: null,
@@ -607,7 +776,15 @@ function App() {
       return
     }
     const result = acceptMobSurrender(current, hero, mob, prompt.parts)
-    updateSession(() => result.session)
+    updateSession(() =>
+      logMobEncounterResolved(
+        result.session,
+        hero.player_id,
+        hero.id,
+        mob.id,
+        'mob_surrendered',
+      ),
+    )
     setDateNotice({
       title: 'Surrender',
       date: 'The creatures join your army.',
@@ -630,7 +807,15 @@ function App() {
       return
     }
     const result = declineMobSurrender(current, catalog, hero, mob)
-    updateSession(() => result.session)
+    updateSession(() =>
+      logMobEncounterResolved(
+        result.session,
+        hero.player_id,
+        hero.id,
+        mob.id,
+        'mob_fled',
+      ),
+    )
     showDateThenLevelUp(
       {
         title: 'Fled',
@@ -678,7 +863,15 @@ function App() {
       return
     }
     const result = letMobFlee(current, catalog, hero, mob)
-    updateSession(() => result.session)
+    updateSession(() =>
+      logMobEncounterResolved(
+        result.session,
+        hero.player_id,
+        hero.id,
+        mob.id,
+        'mob_fled',
+      ),
+    )
     showDateThenLevelUp(
       {
         title: 'Fled',
@@ -690,6 +883,15 @@ function App() {
   }, [fleePrompt, showDateThenLevelUp])
   const onMobMeet = useCallback((mobId: string) => {
     beginMobEncounter(mobId)
+  }, [beginMobEncounter])
+  const onMobAmbush = useCallback((mobId: string) => {
+    const opened = beginMobEncounter(mobId, true)
+    if (!opened) {
+      return
+    }
+    return new Promise<void>((resolve) => {
+      combatWaitRef.current = resolve
+    })
   }, [beginMobEncounter])
   const maybeShowMatchEnd = useCallback(() => {
     const result = matchVictoryResult(getSession())
@@ -709,40 +911,86 @@ function App() {
       ],
     })
   }, [])
-  const closeCombat = useCallback(
-    (levelUp?: LevelUpNotice | null) => {
-      setCombat(null)
-      const done = combatWaitRef.current
-      combatWaitRef.current = null
-      done?.()
-      // Re-bind world FoW after combat (live Set / paint can desync while the
-      // map stays mounted under the combat overlay).
-      syncActivePlayerView()
-      const result = matchVictoryResult(getSession())
-      if (result && !matchEndShownRef.current) {
-        matchEndShownRef.current = true
-        const winnerNames = result.winners.map((player) => player.id).join(', ')
-        const loserNames = result.losers.map((player) => player.id).join(', ')
-        showDateThenLevelUp(
-          {
-            title: 'Victory',
-            date: formatCalendar(getSession().game.calendar),
-            lines: [
-              `${winnerNames} — Victory`,
-              `${loserNames} — Defeat`,
-              'Eliminated players’ Resource Nodes reverted to Neutral.',
-            ],
-          },
-          levelUp,
-        )
-        return
+  const closeCombat = useCallback((levelUp?: LevelUpNotice | null) => {
+    setLiveCombatLogLines([])
+    syncSelectedHeroFromSession()
+    abortActiveMapMovement()
+    setCombat(null)
+    const done = combatWaitRef.current
+    combatWaitRef.current = null
+    done?.()
+    syncActivePlayerView()
+    const result = matchVictoryResult(getSession())
+    if (result && !matchEndShownRef.current) {
+      matchEndShownRef.current = true
+      const winnerNames = result.winners.map((player) => player.id).join(', ')
+      const loserNames = result.losers.map((player) => player.id).join(', ')
+      showDateThenLevelUp(
+        {
+          title: 'Victory',
+          date: formatCalendar(getSession().game.calendar),
+          lines: [
+            `${winnerNames} — Victory`,
+            `${loserNames} — Defeat`,
+            'Eliminated players’ Resource Nodes reverted to Neutral.',
+          ],
+        },
+        levelUp,
+      )
+      return
+    }
+    if (levelUp) {
+      setLevelUpNotice(levelUp)
+    }
+  }, [showDateThenLevelUp])
+
+  const onCombatExit = useCallback(
+    (levelUp?: LevelUpNotice | null, archive?: CombatLogExitPayload) => {
+      if (archive && combat) {
+        pendingCombatLogRef.current = {
+          fightId: combatFightIdRef.current,
+          fight: combat,
+          archive,
+        }
       }
-      if (levelUp) {
-        setLevelUpNotice(levelUp)
+      const rewardLines = archive?.summary.rewardLines?.filter(Boolean)
+      closeCombat(levelUp ?? null)
+      if (
+        rewardLines &&
+        rewardLines.length > 0 &&
+        !activePlayer(getSession())?.is_ai
+      ) {
+        setMapInputLocked(true)
+        setDateNotice({ title: '', date: '', lines: rewardLines })
       }
     },
-    [showDateThenLevelUp],
+    [combat, closeCombat],
   )
+
+  useEffect(() => {
+    if (combat) {
+      combatFightIdRef.current += 1
+      return
+    }
+    const pending = pendingCombatLogRef.current
+    if (!pending) {
+      return
+    }
+    pendingCombatLogRef.current = null
+    if (recordedCombatFightIdsRef.current.has(pending.fightId)) {
+      return
+    }
+    recordedCombatFightIdsRef.current.add(pending.fightId)
+    const fight = pending.fight
+    updateSession((current) =>
+      recordCombatEnd(current, getCachedCatalog(), {
+        attackerHeroId: fight.attackerHeroId,
+        defenderHeroId: fight.defenderHeroId ?? null,
+        defenderMobId: fight.defenderMobId ?? null,
+        payload: pending.archive,
+      }),
+    )
+  }, [combat])
   const flushPendingFlightSieges = useCallback(() => {
     const current = getSession()
     const actor = activePlayer(current)
@@ -777,7 +1025,7 @@ function App() {
     selectHeroOnMap(first.heroId)
     onSiegeTown(first.townId)
   }, [onSiegeTown])
-  const onEndTurn = useCallback(() => {
+  const runEndTurn = useCallback(() => {
     setWelcomeTown(null)
     setHeroScreen(false)
     setTrade(null)
@@ -801,49 +1049,52 @@ function App() {
       flushPendingFlightSieges()
     }
   }, [closeCombat, maybeShowMatchEnd, flushPendingFlightSieges])
+
+  const onEndTurn = useCallback(() => {
+    if (loadPlayerSettings().confirmEndTurn) {
+      setEndTurnConfirmOpen(true)
+      return
+    }
+    runEndTurn()
+  }, [runEndTurn])
+
   const onStartGame = useCallback((config: GameConfig) => {
     if (mapGeneratingRef.current) {
       return
     }
     mapGeneratingRef.current = true
     setMapGenerating(true)
-    void (async () => {
-      try {
-        await refreshCatalogFromDb()
-      } catch {
-        // Launch with whatever catalog is already cached.
-      }
-      allowCatalogBootDefaults = false
-      setWelcomeTown(null)
-      setHeroScreen(false)
-      setTrade(null)
-      setCombat(null)
-      const done = combatWaitRef.current
-      combatWaitRef.current = null
-      done?.()
-      setDateNotice(null)
-      setLevelUpNotice(null)
-      setArchiveLearn(null)
-      pendingLevelUpRef.current = null
-      setSurrenderPrompt(null)
-      matchEndShownRef.current = false
-      lastTownRef.current = null
-      clearAiTraces()
-      aiRanKeyRef.current = ''
-      setAiPhase('idle')
-      setMapInputLocked(false)
-      setMapCameraFollowMoves(true)
-      clearCachedGrid()
-      setHexScale(config.hexSize)
-      setSession(createSessionFromConfig(config))
-      const catalog = getCachedCatalog()
-      if (catalog) {
-        updateSession((current) =>
-          assignHeroesFromPool(current, catalog.hero_pool),
-        )
-      }
-      setMapEpoch((n) => n + 1)
-    })()
+    allowCatalogBootDefaults = false
+    setWelcomeTown(null)
+    setHeroScreen(false)
+    setTrade(null)
+    setCombat(null)
+    const done = combatWaitRef.current
+    combatWaitRef.current = null
+    done?.()
+    setDateNotice(null)
+    setLevelUpNotice(null)
+    setArchiveLearn(null)
+    pendingLevelUpRef.current = null
+    setSurrenderPrompt(null)
+    matchEndShownRef.current = false
+    lastTownRef.current = null
+    clearAiTraces()
+    aiRanKeyRef.current = ''
+    setAiPhase('idle')
+    setMapInputLocked(false)
+    setMapCameraFollowMoves(true)
+    clearCachedGrid()
+    setHexScale(config.hexSize)
+    setGameDifficultyCatalog(config.difficultyId)
+    setSession(createSessionFromConfig(config))
+    setMapEpoch((n) => n + 1)
+    const catalog = getCachedCatalog()
+    if (catalog) {
+      updateSession((current) =>
+        assignHeroesFromPool(current, catalog.hero_pool),
+      )
+    }
   }, [])
   const adoptHero = useCallback((id: string) => {
     const row = getSession().heroes.find((hero) => hero.id === id)
@@ -906,7 +1157,6 @@ function App() {
     if (town) {
       const next = { id: town.id, name: town.name }
       lastTownRef.current = next
-      setHeroScreen(false)
       setWelcomeTown(next)
     }
   }, [welcomeTown])
@@ -939,11 +1189,59 @@ function App() {
     adoptHero(heroId)
   }, [adoptHero, hero?.id, aiPhase])
 
+  const cycleNextActionable = useCallback(
+    (reverse = false) => {
+      if (aiPhase === 'running') {
+        return
+      }
+      const current = getSession()
+      const player = humanPlayer(current)
+      if (!player) {
+        return
+      }
+      if (welcomeTown && !heroScreen) {
+        const buildable = player.town_ids.filter(
+          (id) => !hasTownBuiltToday(current, id),
+        )
+        if (buildable.length === 0) {
+          return
+        }
+        const currentTownId =
+          welcomeTown.id ?? lastTownRef.current?.id ?? null
+        const townId = idInDirection(currentTownId, buildable, reverse)
+        const town = townId ? findTownById(current, townId) : undefined
+        if (town) {
+          const next = { id: town.id, name: town.name }
+          lastTownRef.current = next
+          setWelcomeTown(next)
+        }
+        return
+      }
+      const movable = player.hero_ids.filter((id) => {
+        const row = current.heroes.find((h) => h.id === id)
+        return row != null && row.movement_remaining > 0
+      })
+      if (movable.length === 0) {
+        return
+      }
+      const selectedId = getSelectedMapHeroId()
+      const currentId = movable.includes(hero?.id ?? '')
+        ? hero?.id ?? null
+        : movable.includes(selectedId ?? '')
+          ? selectedId
+          : null
+      const heroId = idInDirection(currentId, movable, reverse)
+      if (heroId) {
+        adoptHero(heroId)
+      }
+    },
+    [adoptHero, aiPhase, hero?.id, heroScreen, welcomeTown],
+  )
+
   const openHeroScreen = useCallback((heroId?: string | null) => {
     if (heroId) {
       adoptHero(heroId)
     }
-    setWelcomeTown(null)
     setTrade(null)
     closeCombat()
     setHeroScreen(true)
@@ -967,7 +1265,6 @@ function App() {
     }
     const next = { id: town.id, name: town.name }
     lastTownRef.current = next
-    setHeroScreen(false)
     setWelcomeTown(next)
   }, [])
 
@@ -976,180 +1273,149 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.altKey || event.ctrlKey || event.metaKey) {
-        return
-      }
-      const inOptions = isInsideOptionsModal(event.target)
-      const editable = isEditableKeyTarget(event.target)
-
-      if (event.key === 'Escape') {
-        if (inOptions || editable) {
-          return
-        }
-        if (levelUpNotice) {
-          event.preventDefault()
-          setLevelUpNotice(null)
-          return
-        }
-        if (dateNotice) {
-          event.preventDefault()
-          dismissDateNotice()
-          return
-        }
-        if (surrenderPrompt) {
-          event.preventDefault()
-          onSurrenderNo()
-          return
-        }
-        if (fleePrompt) {
-          event.preventDefault()
-          onFleeLetThem()
-          return
-        }
-        if (worldLibrary) {
-          event.preventDefault()
-          closeWorldLibrary()
-          return
-        }
-        if (worldHanger) {
-          event.preventDefault()
-          closeWorldHanger()
-          return
-        }
-        if (dockBuy) {
-          event.preventDefault()
-          closeDockBuy()
-          return
-        }
-        if (worldRecruits) {
-          event.preventDefault()
-          closeWorldRecruits()
-          return
-        }
-        if (worldNoticeBoard) {
-          event.preventDefault()
-          closeWorldNoticeBoard()
-          return
-        }
-        if (questLogOpen) {
-          event.preventDefault()
-          setQuestLogOpen(false)
-          return
-        }
-        if (combat) {
-          if (
-            document.querySelector('.combat-screen[data-hero-cast]') ||
-            document.querySelector('.combat-inspect-popup')
-          ) {
-            return
-          }
-          event.preventDefault()
-          closeCombat()
-          return
-        }
-        if (trade) {
-          event.preventDefault()
-          setTrade(null)
-          return
-        }
-        if (heroScreen) {
-          if (document.querySelector('.hero-screen .marketplace-overlay')) {
-            return
-          }
-          event.preventDefault()
-          setHeroScreen(false)
-        }
-        return
-      }
-
-      if (event.repeat) {
-        return
-      }
-
-      if (event.key === 'Tab') {
-        if (inOptions || editable || combat) {
-          if (combat) {
-            event.preventDefault()
-          }
-          return
-        }
-        event.preventDefault()
-        if (welcomeTown && !heroScreen) {
-          cycleTown(event.shiftKey)
-          return
-        }
-        cycleHero(event.shiftKey)
-        return
-      }
-
-      if (event.key === 'Enter') {
-        if (inOptions || editable || aiPhase !== 'idle') {
-          return
-        }
-        event.preventDefault()
-        if (
-          heroScreen ||
-          welcomeTown ||
-          trade ||
-          combat ||
-          dateNotice ||
-          levelUpNotice ||
-          chestOffer ||
-          worldLibrary ||
-          worldHanger ||
-          dockBuy ||
-          worldRecruits ||
-          worldNoticeBoard ||
-          questLogOpen ||
-          surrenderPrompt ||
-          fleePrompt
-        ) {
-          return
-        }
-        onEndTurn()
-        return
-      }
-
-      if (event.key.toLowerCase() === 'e') {
-        if (inOptions || editable || combat || aiPhase === 'running') {
-          return
-        }
-        event.preventDefault()
-        onEndTurn()
-        return
-      }
-
-      if (inOptions || editable || combat) {
-        return
-      }
-      const key = event.key.toLowerCase()
-      if (key === 'q') {
-        event.preventDefault()
-        setQuestLogOpen((open) => !open)
-        return
-      }
-      if (key === 't') {
-        event.preventDefault()
-        if (heroScreen) {
-          openTownScreen()
-          return
-        }
-        cycleTown()
-        return
-      }
-      if (key === 'h') {
-        event.preventDefault()
-        openHeroScreen()
-      }
+    if (mapViewOpen) {
+      setMapInputLocked(true)
+    } else {
+      setMapInputLocked(false)
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+  }, [mapViewOpen])
+
+  const keybindPopupOpen =
+    mainMenuOpen ||
+    settingsOpen ||
+    devOpen ||
+    endTurnConfirmOpen ||
+    gameLogOpen ||
+    gameFlowPanel != null ||
+    Boolean(dateNotice) ||
+    Boolean(levelUpNotice) ||
+    Boolean(archiveLearn) ||
+    Boolean(surrenderPrompt) ||
+    Boolean(fleePrompt) ||
+    Boolean(chestOffer) ||
+    Boolean(worldLibrary) ||
+    Boolean(worldHanger) ||
+    Boolean(dockBuy) ||
+    Boolean(worldRecruits) ||
+    Boolean(worldNoticeBoard) ||
+    questLogOpen ||
+    isArmyPopupOpen()
+
+  const onKeybindBack = useCallback(() => {
+    if (mainMenuOpen) {
+      setMainMenuOpen(false)
+      return
+    }
+    if (settingsOpen) {
+      setSettingsOpen(false)
+      return
+    }
+    if (devOpen) {
+      setDevOpen(false)
+      return
+    }
+    if (gameFlowPanel) {
+      setGameFlowPanel(null)
+      return
+    }
+    if (endTurnConfirmOpen) {
+      setEndTurnConfirmOpen(false)
+      return
+    }
+    if (gameLogOpen) {
+      setGameLogOpen(false)
+      return
+    }
+    if (mapViewOpen) {
+      closeMapView()
+      return
+    }
+    if (levelUpNotice) {
+      setLevelUpNotice(null)
+      return
+    }
+    if (dateNotice) {
+      dismissDateNotice()
+      return
+    }
+    if (archiveLearn) {
+      setArchiveLearn(null)
+      return
+    }
+    if (surrenderPrompt) {
+      onSurrenderNo()
+      return
+    }
+    if (fleePrompt) {
+      onFleeLetThem()
+      return
+    }
+    if (worldLibrary) {
+      closeWorldLibrary()
+      return
+    }
+    if (worldHanger) {
+      closeWorldHanger()
+      return
+    }
+    if (dockBuy) {
+      closeDockBuy()
+      return
+    }
+    if (worldRecruits) {
+      closeWorldRecruits()
+      return
+    }
+    if (worldNoticeBoard) {
+      closeWorldNoticeBoard()
+      return
+    }
+    if (questLogOpen) {
+      closeQuestLog()
+      return
+    }
+    if (combat) {
+      if (
+        document.querySelector('.combat-screen[data-hero-cast]') ||
+        document.querySelector('.combat-inspect-popup') ||
+        document.querySelector('.combat-modal-stack')
+      ) {
+        return
+      }
+      closeCombat()
+      return
+    }
+    if (trade) {
+      setTrade(null)
+      return
+    }
+    if (heroScreen) {
+      if (document.querySelector('.hero-screen .marketplace-overlay')) {
+        return
+      }
+      setHeroScreen(false)
+      return
+    }
+    if (welcomeTown) {
+      setWelcomeTown(null)
+      return
+    }
+    setMainMenuOpen(true)
   }, [
-    combat,
-    cycleHero,
-    cycleTown,
-    chestOffer,
+    mainMenuOpen,
+    settingsOpen,
+    devOpen,
+    gameFlowPanel,
+    endTurnConfirmOpen,
+    gameLogOpen,
+    mapViewOpen,
+    closeMapView,
+    levelUpNotice,
+    dateNotice,
+    dismissDateNotice,
+    archiveLearn,
+    surrenderPrompt,
+    fleePrompt,
     worldLibrary,
     closeWorldLibrary,
     worldHanger,
@@ -1161,22 +1427,134 @@ function App() {
     worldNoticeBoard,
     closeWorldNoticeBoard,
     questLogOpen,
+    closeQuestLog,
+    combat,
+    closeCombat,
+    trade,
+    heroScreen,
+    welcomeTown,
+    onSurrenderNo,
+    onFleeLetThem,
+  ])
+
+  const onKeybindConfirm = useCallback(() => {
+    if (runArmyConfirmPopup()) {
+      return
+    }
+    if (endTurnConfirmOpen) {
+      setEndTurnConfirmOpen(false)
+      runEndTurn()
+      return
+    }
+    if (levelUpNotice) {
+      setLevelUpNotice(null)
+      return
+    }
+    if (archiveLearn) {
+      setArchiveLearn(null)
+      return
+    }
+    if (surrenderPrompt) {
+      onSurrenderYes()
+      return
+    }
+    if (fleePrompt) {
+      onFleeFightAnyway()
+      return
+    }
+    if (dateNotice) {
+      dismissDateNotice()
+    }
+  }, [
+    endTurnConfirmOpen,
+    runEndTurn,
+    levelUpNotice,
+    archiveLearn,
+    surrenderPrompt,
+    fleePrompt,
     dateNotice,
     dismissDateNotice,
-    fleePrompt,
-    heroScreen,
-    levelUpNotice,
-    onEndTurn,
-    onFleeLetThem,
-    onSurrenderNo,
-    openHeroScreen,
-    openTownScreen,
-    surrenderPrompt,
-    trade,
-    welcomeTown,
-    aiPhase,
-    closeCombat,
+    onSurrenderYes,
+    onFleeFightAnyway,
   ])
+
+  const keybindActions = useMemo(
+    () => ({
+      onBack: onKeybindBack,
+      onConfirm: onKeybindConfirm,
+      onEndTurn,
+      onHeroScreen: () => {
+        if (heroScreen) {
+          cycleHero()
+        } else {
+          openHeroScreen()
+        }
+      },
+      onTownScreen: () => {
+        if (welcomeTown && !heroScreen) {
+          cycleTown()
+        } else {
+          openTownScreen()
+        }
+      },
+      onNextActionable: (reverse: boolean) => cycleNextActionable(reverse),
+      onMapView: () => {
+        if (mapViewOpen) {
+          closeMapView()
+        } else {
+          openMapView()
+        }
+      },
+      onQuestLog: toggleQuestLog,
+      onGameLog: () => {
+        if (gameLogOpen) {
+          setGameLogOpen(false)
+          return
+        }
+        openGameLog()
+      },
+      onKeybinds: () => {
+        setSettingsTab('keybinds')
+        setSettingsOpen(true)
+        setMainMenuOpen(false)
+      },
+      onDevMenu: () => {
+        setDevOpen(true)
+        setMainMenuOpen(false)
+      },
+      onMainMenu: () => setMainMenuOpen(true),
+    }),
+    [
+      onKeybindBack,
+      onKeybindConfirm,
+      onEndTurn,
+      heroScreen,
+      cycleHero,
+      openHeroScreen,
+      welcomeTown,
+      cycleTown,
+      openTownScreen,
+      cycleNextActionable,
+      mapViewOpen,
+      closeMapView,
+      openMapView,
+      toggleQuestLog,
+    ],
+  )
+
+  useGameKeybindHandler(
+    {
+      popupOpen: keybindPopupOpen,
+      inBattle: Boolean(combat),
+      mapViewOpen,
+      townOpen: Boolean(welcomeTown),
+      heroOpen: heroScreen,
+      aiAnimating: aiPhase === 'running',
+      blockEndTurn: aiPhase !== 'idle',
+    },
+    keybindActions,
+    true,
+  )
 
   useEffect(() => {
     if (!dateNotice) {
@@ -1196,11 +1574,12 @@ function App() {
     flushPendingFlightSieges()
   }, [dateNotice, combat, flushPendingFlightSieges, session.game.pending_flight_sieges])
 
+  const calendarDay = calendarDayNumber(session.game.calendar)
+
   useEffect(() => {
     syncActivePlayerView()
-  }, [session.activePlayerIndex])
+  }, [session.activePlayerIndex, calendarDay])
 
-  const calendarDay = calendarDayNumber(session.game.calendar)
   useEffect(() => {
     const player = activePlayer(getSession())
     const key = `${calendarDay}-${getSession().activePlayerIndex}`
@@ -1238,7 +1617,7 @@ function App() {
               combatWaitRef.current = resolve
             })
             if (target.type === 'mob') {
-              const opened = beginMobEncounter(target.mobId)
+              const opened = beginMobEncounter(target.mobId, false, 'ai')
               if (!opened) {
                 combatWaitRef.current = null
                 return
@@ -1265,7 +1644,7 @@ function App() {
         return
       }
       setAiPhase('idle')
-      onEndTurn()
+      runEndTurn()
     })()
     return () => {
       cancelled = true
@@ -1274,7 +1653,7 @@ function App() {
     session.activePlayerIndex,
     calendarDay,
     mapEpoch,
-    onEndTurn,
+    runEndTurn,
     beginMobEncounter,
     onHeroMeet,
     onSiegeTown,
@@ -1320,8 +1699,11 @@ function App() {
             ) {
               const defaults = defaultGameConfig(catalog)
               setHexScale(defaults.hexSize)
-              return createSessionFromConfig(defaults)
+              const session = createSessionFromConfig(defaults)
+              syncGameDifficultyFromSession(session)
+              return session
             }
+            syncGameDifficultyFromSession(current)
             return assignHeroesFromPool(current, catalog.hero_pool)
           })
         }
@@ -1350,6 +1732,10 @@ function App() {
   )
   const resourceLines = formatResourceLines(wallet)
   const calendarLabel = formatCalendar(calendar)
+  const difficultyLabel = difficultyName(
+    getCachedCatalog(),
+    difficultyIdFromSettings(session.game.settings),
+  )
   const actor = activePlayer(session)
   const turnKind = !actor
     ? ''
@@ -1405,6 +1791,154 @@ function App() {
     })
   }, [debugText])
 
+  const panelTownId =
+    welcomeTown?.id ?? activeTownId ?? humanPlayer(session)?.town_ids[0] ?? null
+  const activeHeroId = hero?.id ?? getSelectedMapHeroId()
+  const tradePartnerHeroId =
+    trade && activeHeroId
+      ? trade.leftHeroId === activeHeroId
+        ? trade.rightHeroId
+        : trade.leftHeroId
+      : null
+  const inCombat = Boolean(combat)
+  const navalMaskDebugBridge = useSyncExternalStore(
+    subscribeNavalMaskDebug,
+    getNavalMaskDebugState,
+    () => null,
+  )
+  const inTown = Boolean(welcomeTown)
+  const activeLogTab = defaultLogTab(inCombat, inTown)
+  const catalogForLog = getCachedCatalog()
+  const bannerLog = useMemo(() => {
+    const base = bannerLogLines(
+      session,
+      catalogForLog,
+      activeLogTab,
+      liveCombatLogLines,
+      logScrollBack,
+    )
+    if (optionsHudNotice) {
+      return [{ text: optionsHudNotice }, ...base].slice(-3)
+    }
+    return base
+  }, [
+    session,
+    catalogForLog,
+    activeLogTab,
+    liveCombatLogLines,
+    logScrollBack,
+    optionsHudNotice,
+  ])
+  const bannerLogScrollMax = useMemo(
+    () =>
+      maxBannerLogScroll(
+        session,
+        catalogForLog,
+        activeLogTab,
+        liveCombatLogLines,
+      ),
+    [session, catalogForLog, activeLogTab, liveCombatLogLines],
+  )
+  useEffect(() => {
+    setLogScrollBack(0)
+  }, [activeLogTab, calendarDayNumber(session.game.calendar)])
+  const turnLabel = `Player ${(session.activePlayerIndex ?? 0) + 1}${turnKind}${
+    aiPhase === 'running' ? ' — moving…' : aiPhase === 'review' ? ' — review' : ''
+  }`
+  const openGameLog = useCallback(
+    (tab?: GameLogTab, combatId?: string | null) => {
+      setGameLogTab(tab ?? defaultLogTab(Boolean(combat), Boolean(welcomeTown)))
+      setGameLogFocusCombatId(combatId ?? null)
+      setGameLogOpen(true)
+    },
+    [combat, welcomeTown],
+  )
+
+  const optionsMenu = (
+    <OptionsMenu
+      hexScale={hexScale}
+      onHexScale={(name) => {
+        setHexScale(name)
+        updateSession((current) => ({
+          ...current,
+          game: {
+            ...current.game,
+            settings: {
+              ...current.game.settings,
+              hex_size: name,
+            },
+          },
+        }))
+      }}
+      onLevelUpNotice={setLevelUpNotice}
+      onHudNotice={setOptionsHudNotice}
+      onStartFixedFight={(kind: FixedFightKind) => {
+        const result = prepareFixedFight(getSession(), kind)
+        if ('error' in result) {
+          setOptionsHudNotice(result.error)
+          return
+        }
+        setWelcomeTown(null)
+        setTrade(null)
+        setHeroScreen(false)
+        setSurrenderPrompt(null)
+        setFleePrompt(null)
+        setSession(result.session)
+        setCombat({
+          attackerHeroId: result.heroId,
+          defenderHeroId: result.defenderHeroId,
+          defenderMobId: result.mobId ?? undefined,
+          navalLayout: result.navalLayout,
+        })
+        setOptionsHudNotice(result.notice)
+      }}
+      onLoaded={() => {
+        setWelcomeTown(null)
+        setHeroScreen(false)
+        setTrade(null)
+        closeCombat()
+        setDateNotice(null)
+        setLevelUpNotice(null)
+        setArchiveLearn(null)
+        setOptionsHudNotice(null)
+        pendingLevelUpRef.current = null
+        lastTownRef.current = null
+        setActiveTownId(null)
+        clearAiTraces()
+        aiRanKeyRef.current = ''
+        setAiPhase('idle')
+        setMapInputLocked(false)
+        setMapCameraFollowMoves(true)
+        setHexScale(parseHexSize(getSession().game.settings.hex_size))
+        syncGameDifficultyFromSession(getSession())
+        const catalog = getCachedCatalog()
+        if (catalog) {
+          updateSession((current) =>
+            assignHeroesFromPool(current, catalog.hero_pool),
+          )
+        }
+        setMapEpoch((n) => n + 1)
+      }}
+      onDataStatus={setDataStatus}
+      onCopyDebug={copyDebug}
+      onStartGame={onStartGame}
+      mapGenerating={mapGenerating}
+      onPrepareNewGame={clearMapGenerating}
+      onSeeWorld={() => openMapView(true)}
+      hideToggle
+      flowPanel={gameFlowPanel}
+      onFlowPanelChange={setGameFlowPanel}
+    />
+  )
+
+  const onMainMenuFlow = useCallback((flow: MainMenuFlow) => {
+    setMainMenuOpen(false)
+    if (!flow) {
+      return
+    }
+    setGameFlowPanel(flow)
+  }, [])
+
   return (
     <main className="app">
       {dataStatus && !dataStatus.ok ? (
@@ -1412,136 +1946,231 @@ function App() {
           Data load error — check debug panel
         </div>
       ) : null}
-      <header className="map-hud">
-        <p>Steps: {heroName} {stepsLabel}</p>
-        <p className="calendar-readout">{calendarLabel}</p>
-        <p className="turn-readout">
-          Player {(session.activePlayerIndex ?? 0) + 1}
-          {turnKind}
-          {aiPhase === 'running' ? ' — moving…' : ''}
-          {aiPhase === 'review' ? ' — review, then End Turn' : ''}
-        </p>
-        <button
-          type="button"
-          onClick={onEndTurn}
-          disabled={aiPhase === 'running'}
+      <GameStage>
+        <GameLeftPanel
+          activeTownId={panelTownId}
+          selectedHeroId={activeHeroId}
+          townScreenOpen={inTown}
+          tradePartnerHeroId={tradePartnerHeroId}
+          visitingHeroName={heroName}
+          heroStepsLabel={hero ? stepsLabel : null}
+          hasActedToday={hasActedToday}
+          readOnly={Boolean(actor?.is_ai)}
+          dimTowns={inCombat}
+          dimHeroes={inCombat}
+          dimArmy={inCombat}
+          onSelectTown={(townId) => {
+            setActiveTownId(townId)
+            const town = findTownById(getSession(), townId)
+            if (!town) {
+              return
+            }
+            const next = { id: town.id, name: town.name }
+            lastTownRef.current = next
+            setWelcomeTown(next)
+          }}
+          onSelectHero={(heroId) => {
+            adoptHero(heroId)
+          }}
+          onOpenHero={() => openHeroScreen()}
+        />
+        <GameBanner
+          wallet={wallet}
+          calendarLabel={calendarLabel}
+          weekLabel={`${difficultyLabel}`}
+          turnLabel={turnLabel}
+          logLines={bannerLog}
+          logScrollBack={logScrollBack}
+          logScrollMax={bannerLogScrollMax}
+          onLogScrollUp={() =>
+            setLogScrollBack((value) =>
+              Math.min(bannerLogScrollMax, value + 1),
+            )
+          }
+          onLogScrollDown={() =>
+            setLogScrollBack((value) => Math.max(0, value - 1))
+          }
+          onOpenLog={() => openGameLog()}
+          onLogDetails={(combatId) => openGameLog('combat', combatId)}
+          buttons={[
+            {
+              id: 'menu',
+              label: '☰ Menu',
+              title: 'Main Menu',
+              onClick: () => setMainMenuOpen((open) => !open),
+              dimmed: false,
+            },
+            {
+              id: 'end',
+              label: 'End Turn',
+              title: tooltipWithKey('End Turn', 'end_turn'),
+              disabled: aiPhase === 'running',
+              dimmed: inCombat,
+              onClick: onEndTurn,
+            },
+            {
+              id: 'hero',
+              label: 'Hero',
+              title: tooltipWithKey('Hero', 'hero_screen'),
+              dimmed: inCombat || inTown,
+              onClick: () => openHeroScreen(),
+            },
+            {
+              id: 'town',
+              label: 'Town',
+              title: tooltipWithKey('Town', 'town_screen'),
+              dimmed: inCombat,
+              onClick: () => openTownScreen(),
+            },
+            {
+              id: 'map',
+              label: 'Map',
+              title: tooltipWithKey('Map', 'map_view'),
+              disabled: !mapInfo || aiPhase === 'running',
+              dimmed: inCombat || inTown,
+              onClick: () => {
+                if (mapViewOpen) {
+                  closeMapView()
+                } else {
+                  openMapView()
+                }
+              },
+            },
+            {
+              id: 'quest',
+              label: 'Quest',
+              title: tooltipWithKey('Quest', 'quest_log'),
+              dimmed: inCombat,
+              onClick: openQuestLog,
+            },
+          ]}
+        />
+        <div
+          className="game-window"
+          style={{
+            left: GAME_WINDOW_X,
+            top: GAME_WINDOW_Y,
+            width: GAME_WINDOW_WIDTH,
+            height: GAME_WINDOW_HEIGHT,
+          }}
         >
-          End Turn
-        </button>
-        {optionsHudNotice ? (
-          <p className="options-notice hud-options-notice" role="status">
-            {optionsHudNotice}
-          </p>
-        ) : null}
-        <div className="hud-end">
-          <DebugCopyPanel
-            sections={debugSections}
-            worldPerf={worldPerf}
-            terrainWedgesDebug={{
-              enabled: terrainWedgesEnabled,
-              onToggle: () => setTerrainWedgesEnabled((on) => !on),
-            }}
-            zonesDebug={{
-              enabled: zonesDebug,
-              onToggle: () => setZonesDebug((on) => !on),
-            }}
-            wallGapsDebug={{
-              enabled: wallGapsDebug,
-              onToggle: () => setWallGapsDebug((on) => !on),
-            }}
-            roadPlanDebug={{
-              enabled: roadPlanDebug,
-              onToggle: () => setRoadPlanDebug((on) => !on),
-            }}
-            onAddStartingUnits={() => {
-              const session = getSession()
-              const selectedId = getSelectedMapHeroId()
-              const hero =
-                (selectedId
-                  ? session.heroes.find((row) => row.id === selectedId)
-                  : undefined) ?? session.heroes[0]
-              if (!hero) {
-                return
+      <MainMenu
+        open={mainMenuOpen}
+        inBattle={inCombat}
+        onClose={() => setMainMenuOpen(false)}
+        onFlow={onMainMenuFlow}
+        onSettings={() => {
+          setMainMenuOpen(false)
+          setSettingsTab('audio')
+          setSettingsOpen(true)
+        }}
+        onDev={() => {
+          setMainMenuOpen(false)
+          setDevOpen(true)
+        }}
+      />
+      <SettingsScreen
+        open={settingsOpen}
+        initialTab={settingsTab}
+        hexScale={hexScale}
+        onHexScale={(name) => {
+          setHexScale(name)
+          updateSession((current) => ({
+            ...current,
+            game: {
+              ...current.game,
+              settings: {
+                ...current.game.settings,
+                hex_size: name,
+              },
+            },
+          }))
+        }}
+        onClose={() => setSettingsOpen(false)}
+      />
+      <DevPopup
+        open={devOpen}
+        onClose={() => setDevOpen(false)}
+        inCombat={inCombat}
+        aiTraces={aiTraces}
+        sections={debugSections}
+        worldPerf={worldPerf}
+        onCopyDebug={copyDebug}
+        onSeeWorld={() => openMapView(true)}
+        onStartFixedFight={(kind: FixedFightKind) => {
+          const result = prepareFixedFight(getSession(), kind)
+          if ('error' in result) {
+            setOptionsHudNotice(result.error)
+            return
+          }
+          setWelcomeTown(null)
+          setTrade(null)
+          setHeroScreen(false)
+          setSurrenderPrompt(null)
+          setFleePrompt(null)
+          setSession(result.session)
+          setCombat({
+            attackerHeroId: result.heroId,
+            defenderHeroId: result.defenderHeroId,
+            defenderMobId: result.mobId ?? undefined,
+            navalLayout: result.navalLayout,
+          })
+          setOptionsHudNotice(result.notice)
+          setDevOpen(false)
+        }}
+        onLevelUpNotice={setLevelUpNotice}
+        onDataStatus={setDataStatus}
+        onHudNotice={setOptionsHudNotice}
+        terrainWedgesDebug={{
+          enabled: terrainWedgesEnabled,
+          onToggle: () => setTerrainWedgesEnabled((on) => !on),
+        }}
+        zonesDebug={{
+          enabled: zonesDebug,
+          onToggle: () => setZonesDebug((on) => !on),
+        }}
+        wallGapsDebug={{
+          enabled: wallGapsDebug,
+          onToggle: () => setWallGapsDebug((on) => !on),
+        }}
+        roadPlanDebug={{
+          enabled: roadPlanDebug,
+          onToggle: () => setRoadPlanDebug((on) => !on),
+        }}
+        navalMaskDebug={
+          navalMaskDebugBridge?.available
+            ? {
+                enabled: navalMaskDebugBridge.enabled,
+                onToggle: navalMaskDebugBridge.onToggle,
               }
-              if (hero.class_id == null || heroArmyStackCount(session, hero.id) > 0) {
-                return
-              }
-              updateSession((current) => grantHeroStartingArmy(current, hero.id))
-            }}
-            onAddWorldMobs={() => {
-              updateSession(addWorldMobs)
-            }}
-          />
-          <OptionsMenu
-            hexScale={hexScale}
-            onHexScale={(name) => {
-              setHexScale(name)
-              updateSession((current) => ({
-                ...current,
-                game: {
-                  ...current.game,
-                  settings: {
-                    ...current.game.settings,
-                    hex_size: name,
-                  },
-                },
-              }))
-            }}
-            onLevelUpNotice={setLevelUpNotice}
-            onHudNotice={setOptionsHudNotice}
-            onStartFixedFight={(kind: FixedFightKind) => {
-              const result = prepareFixedFight(getSession(), kind)
-              if ('error' in result) {
-                setOptionsHudNotice(result.error)
-                return
-              }
-              setWelcomeTown(null)
-              setTrade(null)
-              setHeroScreen(false)
-              setSurrenderPrompt(null)
-              setFleePrompt(null)
-              setSession(result.session)
-              setCombat({
-                attackerHeroId: result.heroId,
-                defenderHeroId: result.defenderHeroId,
-                defenderMobId: result.mobId ?? undefined,
-                navalLayout: result.navalLayout,
-              })
-              setOptionsHudNotice(result.notice)
-            }}
-            onLoaded={() => {
-              setWelcomeTown(null)
-              setHeroScreen(false)
-              setTrade(null)
-              closeCombat()
-              setDateNotice(null)
-              setLevelUpNotice(null)
-              setArchiveLearn(null)
-              setOptionsHudNotice(null)
-              pendingLevelUpRef.current = null
-              lastTownRef.current = null
-              clearAiTraces()
-              aiRanKeyRef.current = ''
-              setAiPhase('idle')
-              setMapInputLocked(false)
-              setMapCameraFollowMoves(true)
-              setHexScale(parseHexSize(getSession().game.settings.hex_size))
-              const catalog = getCachedCatalog()
-              if (catalog) {
-                updateSession((current) =>
-                  assignHeroesFromPool(current, catalog.hero_pool),
-                )
-              }
-              setMapEpoch((n) => n + 1)
-            }}
-            onDataStatus={setDataStatus}
-            onCopyDebug={copyDebug}
-            onStartGame={onStartGame}
-            mapGenerating={mapGenerating}
-          />
-        </div>
-        <ResourceBar wallet={wallet} />
-      </header>
+            : undefined
+        }
+        townHexNumbers={{
+          enabled: townHexNumbers,
+          onToggle: () => setTownHexNumbers((on) => !on),
+        }}
+        onAddStartingUnits={() => {
+            const session = getSession()
+            const selectedId = getSelectedMapHeroId()
+            const hero =
+              (selectedId
+                ? session.heroes.find((row) => row.id === selectedId)
+                : undefined) ?? session.heroes[0]
+            if (!hero) {
+              return
+            }
+            if (
+              hero.class_id == null ||
+              heroArmyStackCount(session, hero.id) > 0
+            ) {
+              return
+            }
+            updateSession((current) =>
+              grantHeroStartingArmy(current, hero.id),
+            )
+          }}
+      />
+      <div className="game-window-tools-anchor">{optionsMenu}</div>
       <HexMap
         key={mapEpoch}
         hexSize={hexSize}
@@ -1552,11 +2181,13 @@ function App() {
         wallGapsDebug={wallGapsDebug}
         roadPlanDebug={roadPlanDebug}
         onMapInfo={onMapInfo}
+        onMapGenerateFailed={onMapGenerateFailed}
         onHeroState={onHeroState}
         onResources={onResources}
         onTownWelcome={onTownWelcome}
         onFountainRestore={onFountainRestore}
         onChestOffer={onChestOffer}
+        onChestMessage={onChestMessage}
         onSignRead={onSignRead}
         onWorldLibrary={onWorldLibrary}
         onWorldHanger={onWorldHanger}
@@ -1567,40 +2198,111 @@ function App() {
         onHeroMeet={onHeroMeet}
         onSiegeTown={onSiegeTown}
         onMobMeet={onMobMeet}
+        onMobAmbush={onMobAmbush}
       />
+      {mapViewOpen && mapInfo && mapViewFocus ? (
+        <MapView
+          open={mapViewOpen}
+          embedded
+          session={session}
+          mapWidth={mapInfo.width}
+          mapHeight={mapInfo.height}
+          mapSeed={mapInfo.seed}
+          selectedHeroId={getSelectedMapHeroId()}
+          focusHex={mapViewFocus}
+          terrainWedgesEnabled={terrainWedgesEnabled}
+          revealAll={mapViewRevealAll}
+          onClose={closeMapView}
+          onFocusWorldHex={onMapViewFocusHex}
+        />
+      ) : null}
+      {combat ? (
+        <CombatScreen
+          attackerHeroId={combat.attackerHeroId}
+          defenderHeroId={combat.defenderHeroId}
+          siegeTownId={combat.siegeTownId}
+          defenderMobId={combat.defenderMobId}
+          navalLayout={combat.navalLayout}
+          debugSections={debugSections}
+          onLiveLogLines={setLiveCombatLogLines}
+          onExit={onCombatExit}
+        />
+      ) : null}
+      {trade && activeHeroId ? (
+        <TradeScreen
+          activeHeroId={activeHeroId}
+          partnerHeroId={
+            trade.leftHeroId === activeHeroId
+              ? trade.rightHeroId
+              : trade.leftHeroId
+          }
+          onClose={() => setTrade(null)}
+        />
+      ) : null}
+      {welcomeTown && !trade && !combat ? (
+        <TownManagement
+          key={welcomeTown.id}
+          townId={welcomeTown.id}
+          townName={welcomeTown.name}
+          wallet={wallet}
+          onExit={() => {
+            setWelcomeTown(null)
+            setMapInputLocked(false)
+            abortActiveMapMovement()
+          }}
+          calendarLabel={calendarLabel}
+          hasActedToday={hasActedToday}
+          onActed={() => onTownActed(welcomeTown.id)}
+          visitingHeroName={heroName}
+          selectedHeroId={selectedHero?.id ?? null}
+          onOpenHero={openHeroScreen}
+          onCycleTown={cycleTown}
+          onQuests={openQuestLog}
+          onArchiveLearn={setArchiveLearn}
+          readOnly={Boolean(actor?.is_ai)}
+          onHeroFlew={playHeroFlight}
+          embedded
+          showHexNumbers={townHexNumbers}
+        />
+      ) : null}
+      {heroScreen && selectedHero && !combat && !trade ? (
+        <HeroScreen
+          heroId={selectedHero.id}
+          embedded
+          onClose={() => setHeroScreen(false)}
+        />
+      ) : null}
+      {questLogOpen ? (
+        <QuestLog embedded onClose={closeQuestLog} />
+      ) : null}
       {chestOffer ? (
-        <div
-          className="date-notice"
-          role="dialog"
+        <GameWindowOverlay>
+        <GameWindowModal
           aria-modal="true"
           aria-labelledby="chest-offer-title"
-          onClick={(event) => event.stopPropagation()}
         >
-          <div
-            className="date-notice-card"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h1 id="chest-offer-title">{chestOffer.title}</h1>
-            <p>XP or Loot?</p>
-            <p className="surrender-prompt-actions">
-              <button type="button" onClick={() => resolveChestChoice('xp')}>
-                XP
-              </button>
-              <button type="button" onClick={() => resolveChestChoice('loot')}>
-                Loot
-              </button>
-              <button type="button" onClick={() => resolveChestChoice('leave')}>
-                Leave
-              </button>
-            </p>
-          </div>
-        </div>
+          <h1 id="chest-offer-title">{chestOffer.title}</h1>
+          <p>XP or Loot?</p>
+          <p className="surrender-prompt-actions">
+            <button type="button" onClick={() => resolveChestChoice('xp')}>
+              XP
+            </button>
+            <button type="button" onClick={() => resolveChestChoice('loot')}>
+              Loot
+            </button>
+            <button type="button" onClick={() => resolveChestChoice('leave')}>
+              Leave
+            </button>
+          </p>
+        </GameWindowModal>
+        </GameWindowOverlay>
       ) : null}
       {worldLibrary ? (
         <WorldLibrary
           featureId={worldLibrary.featureId}
           heroId={worldLibrary.heroId}
           onClose={closeWorldLibrary}
+          embedded
         />
       ) : null}
       {worldHanger ? (
@@ -1609,6 +2311,7 @@ function App() {
           heroId={worldHanger.heroId}
           onClose={closeWorldHanger}
           onFlyLaunched={playHeroFlight}
+          embedded
         />
       ) : null}
       {dockBuy ? (
@@ -1616,6 +2319,7 @@ function App() {
           featureId={dockBuy.featureId}
           heroId={dockBuy.heroId}
           onClose={closeDockBuy}
+          embedded
         />
       ) : null}
       {worldRecruits ? (
@@ -1623,6 +2327,7 @@ function App() {
           featureId={worldRecruits.featureId}
           heroId={worldRecruits.heroId}
           onClose={closeWorldRecruits}
+          embedded
         />
       ) : null}
       {worldNoticeBoard ? (
@@ -1630,6 +2335,7 @@ function App() {
           featureId={worldNoticeBoard.featureId}
           heroId={worldNoticeBoard.heroId}
           onClose={closeWorldNoticeBoard}
+          embedded
           onDeclineMessage={(message) =>
             setDateNotice({ title: '', date: '', lines: [message] })
           }
@@ -1640,182 +2346,141 @@ function App() {
           }}
         />
       ) : null}
-      {questLogOpen ? (
-        <QuestLog onClose={() => setQuestLogOpen(false)} />
-      ) : null}
       {surrenderPrompt ? (
-        <div
-          className="date-notice"
-          role="dialog"
+        <GameWindowOverlay>
+        <GameWindowModal
           aria-modal="true"
           aria-labelledby="surrender-prompt-title"
-          onClick={(event) => event.stopPropagation()}
         >
-          <div
-            className="date-notice-card"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h1 id="surrender-prompt-title">Surrender</h1>
-            <p>{surrenderPrompt.question}</p>
-            <p className="surrender-prompt-actions">
-              <button type="button" onClick={onSurrenderYes}>
-                Yes
-              </button>
-              <button type="button" onClick={onSurrenderNo}>
-                No
-              </button>
-            </p>
-          </div>
-        </div>
+          <h1 id="surrender-prompt-title">Surrender</h1>
+          <p>{surrenderPrompt.question}</p>
+          <p className="surrender-prompt-actions">
+            <button type="button" onClick={onSurrenderYes}>
+              Yes
+            </button>
+            <button type="button" onClick={onSurrenderNo}>
+              No
+            </button>
+          </p>
+        </GameWindowModal>
+        </GameWindowOverlay>
       ) : null}
       {fleePrompt ? (
-        <div
-          className="date-notice"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="flee-prompt-title"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div
-            className="date-notice-card"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h1 id="flee-prompt-title">Flee</h1>
-            <p>{fleeOfferPrompt()}</p>
-            <p className="surrender-prompt-actions">
-              <button type="button" onClick={onFleeFightAnyway}>
-                Fight Anyway
-              </button>
-              <button type="button" onClick={onFleeLetThem}>
-                Let Them Flee
-              </button>
-            </p>
-          </div>
-        </div>
+        <GameWindowOverlay>
+        <GameWindowModal aria-modal="true" aria-labelledby="flee-prompt-title">
+          <h1 id="flee-prompt-title">Flee</h1>
+          <p>{fleeOfferPrompt()}</p>
+          <p className="surrender-prompt-actions">
+            <button type="button" onClick={onFleeFightAnyway}>
+              Fight Anyway
+            </button>
+            <button type="button" onClick={onFleeLetThem}>
+              Let Them Flee
+            </button>
+          </p>
+        </GameWindowModal>
+        </GameWindowOverlay>
       ) : null}
       {dateNotice ? (
-        <div
-          className="date-notice"
+        <GameWindowOverlay>
+        <GameWindowModal
           role="status"
           aria-live="polite"
           aria-labelledby={dateNotice.title ? 'date-notice-title' : undefined}
-          onClick={dismissDateNotice}
+          onBackdropClick={dismissDateNotice}
         >
-          <div className="date-notice-card">
-            {dateNotice.title ? (
-              <h1 id="date-notice-title">{dateNotice.title}</h1>
-            ) : null}
-            {dateNotice.date ? <p>{dateNotice.date}</p> : null}
-            {dateNotice.lines?.map((line, index) => (
-              <p key={`notice-${index}`}>{line}</p>
-            ))}
-          </div>
-        </div>
+          {dateNotice.title ? (
+            <h1 id="date-notice-title">{dateNotice.title}</h1>
+          ) : null}
+          {dateNotice.date ? <p>{dateNotice.date}</p> : null}
+          {dateNotice.lines?.map((line, index) => (
+            <p key={`notice-${index}`}>{line}</p>
+          ))}
+        </GameWindowModal>
+        </GameWindowOverlay>
       ) : null}
       {levelUpNotice ? (
-        <div
-          className="date-notice"
-          role="dialog"
+        <GameWindowOverlay>
+        <GameWindowModal
           aria-modal="true"
           aria-labelledby="level-up-notice-title"
-          onClick={() => setLevelUpNotice(null)}
+          onBackdropClick={() => setLevelUpNotice(null)}
         >
-          <div
-            className="date-notice-card"
-            onClick={(event) => event.stopPropagation()}
+          <h1 id="level-up-notice-title">
+            {levelUpNotice.heroName} is now Level {levelUpNotice.level}
+          </h1>
+          {levelUpNotice.bumps.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+          <button
+            type="button"
+            className="date-notice-ok"
+            onClick={() => setLevelUpNotice(null)}
           >
-            <h1 id="level-up-notice-title">
-              {levelUpNotice.heroName} is now Level {levelUpNotice.level}
-            </h1>
-            {levelUpNotice.bumps.map((line) => (
-              <p key={line}>{line}</p>
-            ))}
+            OK
+          </button>
+        </GameWindowModal>
+        </GameWindowOverlay>
+      ) : null}
+      {endTurnConfirmOpen ? (
+        <GameWindowOverlay>
+        <GameWindowModal
+          aria-labelledby="end-turn-confirm-title"
+          onBackdropClick={() => setEndTurnConfirmOpen(false)}
+        >
+          <h1 id="end-turn-confirm-title">End turn?</h1>
+          <p>End your turn for this player?</p>
+          <p className="surrender-prompt-actions">
             <button
               type="button"
-              className="date-notice-ok"
-              onClick={() => setLevelUpNotice(null)}
+              onClick={() => {
+                setEndTurnConfirmOpen(false)
+                runEndTurn()
+              }}
             >
-              OK
+              End Turn
             </button>
-          </div>
-        </div>
+            <button
+              type="button"
+              onClick={() => setEndTurnConfirmOpen(false)}
+            >
+              Cancel
+            </button>
+          </p>
+        </GameWindowModal>
+        </GameWindowOverlay>
       ) : null}
-      {combat ? (
-        <CombatScreen
-          attackerHeroId={combat.attackerHeroId}
-          defenderHeroId={combat.defenderHeroId}
-          siegeTownId={combat.siegeTownId}
-          defenderMobId={combat.defenderMobId}
-          navalLayout={combat.navalLayout}
-          debugSections={debugSections}
-          onExit={closeCombat}
-        />
-      ) : null}
-      {trade ? (
-        <FriendlyTrade
-          leftHeroId={trade.leftHeroId}
-          rightHeroId={trade.rightHeroId}
-          wallet={wallet}
-          onExit={() => setTrade(null)}
-        />
-      ) : null}
-      {welcomeTown && !trade ? (
-        <TownManagement
-          key={welcomeTown.id}
-          townId={welcomeTown.id}
-          townName={welcomeTown.name}
-          wallet={wallet}
-          onExit={() => setWelcomeTown(null)}
-          calendarLabel={calendarLabel}
-          hasActedToday={hasActedToday}
-          onActed={() => onTownActed(welcomeTown.id)}
-          visitingHeroName={heroName}
-          selectedHeroId={selectedHero?.id ?? null}
-          onOpenHero={openHeroScreen}
-          onCycleTown={cycleTown}
-          onQuests={() => setQuestLogOpen(true)}
-          onArchiveLearn={setArchiveLearn}
-          readOnly={Boolean(actor?.is_ai)}
-          onHeroFlew={playHeroFlight}
-        />
-      ) : null}
+      <GameLogModal
+        open={gameLogOpen}
+        initialTab={gameLogTab}
+        focusCombatId={gameLogFocusCombatId}
+        liveCombatLines={liveCombatLogLines}
+        onClose={() => setGameLogOpen(false)}
+      />
       {archiveLearn ? (
-        <div
-          className="date-notice"
-          role="dialog"
+        <GameWindowOverlay>
+        <GameWindowModal
           aria-modal="true"
           aria-labelledby="archive-learn-title"
-          onClick={() => setArchiveLearn(null)}
+          onBackdropClick={() => setArchiveLearn(null)}
         >
-          <div
-            className="date-notice-card"
-            onClick={(event) => event.stopPropagation()}
+          <h1 id="archive-learn-title">Infernal Archive</h1>
+          <p>{archiveLearn.heroName} learned:</p>
+          {archiveLearn.abilityNames.map((name) => (
+            <p key={name}>{name}</p>
+          ))}
+          <button
+            type="button"
+            className="date-notice-ok"
+            onClick={() => setArchiveLearn(null)}
           >
-            <h1 id="archive-learn-title">Infernal Archive</h1>
-            <p>{archiveLearn.heroName} learned:</p>
-            {archiveLearn.abilityNames.map((name) => (
-              <p key={name}>{name}</p>
-            ))}
-            <button
-              type="button"
-              className="date-notice-ok"
-              onClick={() => setArchiveLearn(null)}
-            >
-              OK
-            </button>
-          </div>
+            OK
+          </button>
+        </GameWindowModal>
+        </GameWindowOverlay>
+      ) : null}
         </div>
-      ) : null}
-      {heroScreen && selectedHero ? (
-        <HeroScreen
-          heroId={selectedHero.id}
-          onClose={() => setHeroScreen(false)}
-          onSelectHero={adoptHero}
-          onOpenHero={openHeroScreen}
-          onCycleTown={cycleTown}
-          onQuests={() => setQuestLogOpen(true)}
-        />
-      ) : null}
+      </GameStage>
     </main>
   )
 }

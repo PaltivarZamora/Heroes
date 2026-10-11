@@ -49,6 +49,8 @@ export type CombatTile = {
   blocked: boolean
   /** From hex terrain is_blocker / blocks_los. */
   blocksLos: boolean
+  /** BR S9-34 frame border — render only, never enter combat logic. */
+  displayOnly?: boolean
   /** Generation chunk id for continuous hex-terrain texturing. */
   chunkId?: number | null
   /** Battle prop from world sample (`prop` table id). */

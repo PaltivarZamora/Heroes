@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import type { Hero, GameSession } from '../session/types'
 import type { ReferenceCatalog } from './catalog'
-import { heroTypeName } from './catalog'
+import { heroEffectiveStatsForHero, heroTypeName } from './catalog'
+import { heroStatValueLines } from './statCatalog'
 import { AbilityTip } from './AbilityTip'
 import {
   disciplineResourceId,
@@ -39,12 +40,17 @@ export function heroTooltipText(
   const current = poolCurrent(hero, resourceId)
   const max = poolMax(catalog, hero, resourceId)
   const passive = heroPassiveDisplay(catalog, hero)
+  const stats = heroEffectiveStatsForHero(catalog, hero)
+  const statLines = heroStatValueLines(catalog, stats)
   const lines = [
     hero.name,
     `Class: ${className}`,
     `Level: ${level}`,
     `${label}: ${current} / ${max}`,
   ]
+  if (statLines.length > 0) {
+    lines.push('', ...statLines)
+  }
   if (passive) {
     lines.push('', `Passive: ${passive}`)
   }

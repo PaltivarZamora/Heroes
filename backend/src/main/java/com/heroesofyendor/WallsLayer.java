@@ -83,8 +83,21 @@ final class WallsLayer {
         int open = 0;
         int wallHexes = 0;
         Set<Long> walledPairs = new HashSet<>();
+        long riverT0 = System.nanoTime();
+        List<Rivers.Edge> riverEdges = new ArrayList<>();
+        for (Border border : borders) {
+            riverEdges.add(new Rivers.Edge(border.zoneA(), border.zoneB(), border.hexes));
+        }
+        Rivers.paint(ctx, riverEdges, rng);
+        long riverMs = (System.nanoTime() - riverT0) / 1_000_000L;
+        MapGenPipeline.logCounts(
+                LAYER, "rivers step " + riverMs + " ms " + Rivers.summary(ctx));
 
         for (Border border : borders) {
+            if (ctx.riverBorderPairs.contains(pairKey(border.zoneA(), border.zoneB()))) {
+                open++;
+                continue;
+            }
             if (border.hexes.isEmpty() || rng.nextInt(100) >= borderPct) {
                 open++;
                 continue;
@@ -115,9 +128,11 @@ final class WallsLayer {
         open -= forced[0];
         wallHexes += forced[1];
 
-        int repairs = repairCuts(ctx, clear, island, minChunk);
+        Set<Long> townKeepHexes = townKeepHexKeys(ctx);
+        int repairs = repairCuts(ctx, borders, clear, island, minChunk, townKeepHexes);
         markUncoveredGaps(ctx);
         Pockets.carve(ctx);
+        Rivers.yieldToPockets(ctx);
         MapGenPipeline.logCounts(
                 LAYER,
                 String.format(
@@ -490,6 +505,9 @@ final class WallsLayer {
 
     private static boolean[][] townClearance(MapGenContext ctx, int radius) {
         boolean[][] clear = new boolean[ctx.height][ctx.width];
+        if (radius <= 0) {
+            return clear;
+        }
         for (TownSite site : ctx.townSites) {
             int[][] anchors = {
                 {site.col(), site.row()},
@@ -497,22 +515,47 @@ final class WallsLayer {
                 {site.col() + 1, site.row()},
             };
             for (int[] anchor : anchors) {
-                if (anchor[0] < 0 || anchor[0] >= ctx.width || anchor[1] < 0 || anchor[1] >= ctx.height) {
-                    continue;
-                }
-                int aq = HexCoords.qOf(anchor[0], anchor[1]);
-                int ar = anchor[1];
-                for (int row = 0; row < ctx.height; row++) {
-                    for (int col = 0; col < ctx.width; col++) {
-                        int q = HexCoords.qOf(col, row);
-                        if (HexCoords.hexDistance(q, row, aq, ar) <= radius) {
-                            clear[row][col] = true;
-                        }
-                    }
-                }
+                stampClearRadius(ctx, clear, anchor[0], anchor[1], radius);
             }
         }
         return clear;
+    }
+
+    /** BFS within {@code radius} hex steps — avoids whole-map scans per town anchor. */
+    private static void stampClearRadius(
+            MapGenContext ctx, boolean[][] clear, int col, int row, int radius) {
+        if (col < 0 || row < 0 || col >= ctx.width || row >= ctx.height) {
+            return;
+        }
+        java.util.ArrayDeque<int[]> queue = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<Integer> dist = new java.util.ArrayDeque<>();
+        boolean[][] seen = new boolean[ctx.height][ctx.width];
+        queue.add(new int[] {col, row});
+        dist.add(0);
+        seen[row][col] = true;
+        clear[row][col] = true;
+        while (!queue.isEmpty()) {
+            int[] cur = queue.removeFirst();
+            int d = dist.removeFirst();
+            if (d >= radius) {
+                continue;
+            }
+            int q = HexCoords.qOf(cur[0], cur[1]);
+            for (int[] delta : HexCoords.AXIAL_NEIGHBORS) {
+                int nrow = cur[1] + delta[1];
+                int ncol = HexCoords.colOf(q + delta[0], nrow);
+                if (ncol < 0 || nrow < 0 || ncol >= ctx.width || nrow >= ctx.height) {
+                    continue;
+                }
+                if (seen[nrow][ncol]) {
+                    continue;
+                }
+                seen[nrow][ncol] = true;
+                clear[nrow][ncol] = true;
+                queue.addLast(new int[] {ncol, nrow});
+                dist.addLast(d + 1);
+            }
+        }
     }
 
     private record Border(int zoneA, int zoneB, List<int[]> hexes) {}
@@ -856,12 +899,25 @@ final class WallsLayer {
      * Zones that share a land border must stay in one on-foot component.
      * If a wall splits them, open a gap on that border and log it.
      */
+    private static Set<Long> townKeepHexKeys(MapGenContext ctx) {
+        Set<Long> keys = new HashSet<>();
+        for (TownSite site : ctx.townSites) {
+            keys.add(site.row() * (long) ctx.width + site.keepCol());
+        }
+        return keys;
+    }
+
     private static int repairCuts(
-            MapGenContext ctx, boolean[][] clear, boolean[][] island, int minChunk) {
+            MapGenContext ctx,
+            List<Border> borders,
+            boolean[][] clear,
+            boolean[][] island,
+            int minChunk,
+            Set<Long> townKeepHexes) {
         int repairs = 0;
         for (int attempt = 0; attempt < MapGenContext.LAYER_ATTEMPTS; attempt++) {
-            int[] comp = components(ctx);
-            Border cut = firstCut(ctx, comp, clear, island, minChunk);
+            int[] comp = components(ctx, townKeepHexes);
+            Border cut = firstCut(ctx, borders, comp, clear, island, minChunk);
             if (cut == null) {
                 break;
             }
@@ -894,14 +950,14 @@ final class WallsLayer {
     }
 
     /** Component id per hex; -1 if not on-foot walkable. */
-    private static int[] components(MapGenContext ctx) {
+    private static int[] components(MapGenContext ctx, Set<Long> townKeepHexes) {
         int[] comp = new int[ctx.height * ctx.width];
         java.util.Arrays.fill(comp, -1);
         int id = 0;
         for (int row = 0; row < ctx.height; row++) {
             for (int col = 0; col < ctx.width; col++) {
                 int idx = row * ctx.width + col;
-                if (comp[idx] >= 0 || !onFoot(ctx, col, row)) {
+                if (comp[idx] >= 0 || !onFoot(ctx, col, row, townKeepHexes)) {
                     continue;
                 }
                 List<int[]> stack = new ArrayList<>();
@@ -917,7 +973,7 @@ final class WallsLayer {
                             continue;
                         }
                         int nidx = nrow * ctx.width + ncol;
-                        if (comp[nidx] >= 0 || !onFoot(ctx, ncol, nrow)) {
+                        if (comp[nidx] >= 0 || !onFoot(ctx, ncol, nrow, townKeepHexes)) {
                             continue;
                         }
                         comp[nidx] = id;
@@ -930,7 +986,8 @@ final class WallsLayer {
         return comp;
     }
 
-    private static boolean onFoot(MapGenContext ctx, int col, int row) {
+    private static boolean onFoot(
+            MapGenContext ctx, int col, int row, Set<Long> townKeepHexes) {
         if (!land(ctx, col, row)) {
             return false;
         }
@@ -941,16 +998,16 @@ final class WallsLayer {
         if (ctx.propBlocked != null && ctx.propBlocked[row][col]) {
             return false;
         }
-        for (TownSite site : ctx.townSites) {
-            if (site.row() == row && site.keepCol() == col) {
-                return false;
-            }
-        }
-        return true;
+        return !townKeepHexes.contains(row * (long) ctx.width + col);
     }
 
     private static Border firstCut(
-            MapGenContext ctx, int[] comp, boolean[][] clear, boolean[][] island, int minChunk) {
+            MapGenContext ctx,
+            List<Border> borders,
+            int[] comp,
+            boolean[][] clear,
+            boolean[][] island,
+            int minChunk) {
         Map<Integer, Set<Integer>> compsByZone = new HashMap<>();
         for (int row = 0; row < ctx.height; row++) {
             for (int col = 0; col < ctx.width; col++) {
@@ -964,7 +1021,6 @@ final class WallsLayer {
                 }
             }
         }
-        List<Border> borders = collectBorders(ctx, clear, island, minChunk);
         for (Border border : borders) {
             Set<Integer> a = compsByZone.getOrDefault(border.zoneA, Set.of());
             Set<Integer> b = compsByZone.getOrDefault(border.zoneB, Set.of());

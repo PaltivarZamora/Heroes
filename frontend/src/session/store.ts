@@ -1,4 +1,7 @@
 import { createInitialSession } from './create'
+import { normalizeSessionGameLogs } from './gameLog'
+import { normalizeSessionItems } from '../items/state'
+import { normalizeHeroProgress } from './accessors'
 import type { GameSession } from './types'
 
 let session: GameSession = createInitialSession()
@@ -22,12 +25,14 @@ export function subscribe(listener: () => void): () => void {
 }
 
 export function setSession(next: GameSession): void {
-  session = next
+  session = normalizeSessionItems(
+    normalizeHeroProgress(normalizeSessionGameLogs(next)),
+  )
   emit()
 }
 
 export function updateSession(fn: (current: GameSession) => GameSession): GameSession {
-  session = fn(session)
+  session = normalizeSessionItems(normalizeHeroProgress(fn(session)))
   emit()
   return session
 }

@@ -1,0 +1,401 @@
+import { neighborHexes } from '../hex/pathfinding';
+import { slotStatesForTown } from '../session/accessors';
+import { getCachedCatalog, moveTypeValue, retaliationCharges, unitAttackShape, unitById, } from '../town/catalog';
+import { firstUnitWithNamedTag, TAG_SIEGE_DRAWBRIDGE, TAG_SIEGE_ENGINE, TAG_SIEGE_SHOOTER, TAG_SIEGE_WALL, unitHasNamedTag, } from '../town/unitTags';
+import { warRoomSiegeMult } from '../town/townUniques';
+import { COMBAT_COLUMNS, COMBAT_ROWS, SIEGE_CATAPULT_COL, SIEGE_CATAPULT_ROW, isSiegeExteriorCol, siegeWallColForRow, } from './battlefield';
+import { isHeroStack } from './battle';
+import { isMoatMechanic } from './groundEffect';
+import { stackFootprint } from './occupancy';
+const RAMPARTS_SLOT_INDEX = 1;
+const WALL_KIND_BY_ROW = [
+    'end',
+    'shooter',
+    'wall',
+    'shooter',
+    'wall',
+    'drawbridge',
+    'wall',
+    'shooter',
+    'wall',
+    'shooter',
+    'end',
+];
+export const DRAWBRIDGE_ROW_INDEX = WALL_KIND_BY_ROW.indexOf('drawbridge');
+function siegeCatalog(catalog) {
+    return catalog ?? getCachedCatalog();
+}
+export function isWallSegmentUnit(unit, catalog) {
+    const cat = siegeCatalog(catalog);
+    if (!unit || !cat) {
+        return false;
+    }
+    return (unitHasNamedTag(cat, unit, TAG_SIEGE_WALL) ||
+        unitHasNamedTag(cat, unit, TAG_SIEGE_SHOOTER) ||
+        unitHasNamedTag(cat, unit, TAG_SIEGE_DRAWBRIDGE));
+}
+/**
+ * Dropped battlefield blockers (Ice Shards / Earth Spikes / Rift-style):
+ * stationary LOS blockers that are not siege wall segments.
+ * Arcane Shield is a real HP unit (immune_to_magic_dmg) — not terrain.
+ */
+export function isTerrainBlockerUnit(unit) {
+    if (!unit || isWallSegmentUnit(unit) || isSiegeEngineUnit(unit)) {
+        return false;
+    }
+    if (unitAttackShape(unit).immuneToMagicDmg === true) {
+        return false;
+    }
+    return unit.stationary === true && unit.blocks_los === true;
+}
+export function isDrawbridgeUnit(unit, catalog) {
+    const cat = siegeCatalog(catalog);
+    return Boolean(unit && cat && unitHasNamedTag(cat, unit, TAG_SIEGE_DRAWBRIDGE));
+}
+export function livingDrawbridge(stacks, catalog) {
+    return (stacks.find((stack) => stack.qty > 0 && isDrawbridgeUnit(unitById(catalog, stack.unitId))) ?? null);
+}
+function tileAt(tiles, q, r) {
+    return tiles.find((tile) => tile.q === q && tile.r === r);
+}
+/** Town-side neighbor of the Drawbridge (higher offset col, same row). */
+export function isInteriorBehindDrawbridge(hex, gate, tiles) {
+    const hexTile = tileAt(tiles, hex.q, hex.r);
+    const gateTile = tileAt(tiles, gate.q, gate.r);
+    if (hexTile?.col == null ||
+        gateTile?.col == null ||
+        hexTile.row == null ||
+        gateTile.row == null) {
+        return false;
+    }
+    // Singular "interior hex behind the gate" — same row, one column toward town.
+    if (hexTile.row !== gateTile.row || hexTile.col !== gateTile.col + 1) {
+        return false;
+    }
+    return neighborHexes(gate).some((n) => n.q === hex.q && n.r === hex.r);
+}
+function unitIsAirborne(unit, catalog) {
+    if (unit?.move_type_id == null) {
+        return false;
+    }
+    const value = moveTypeValue(catalog, unit.move_type_id).toLowerCase();
+    return value.includes('fly') || value.includes('hover');
+}
+/**
+ * Open if destroyed, if any unit stands on the Drawbridge hex, on the
+ * lowered moat/bridge span, or if a ground creature stands in
+ * the single interior hex directly behind the gate.
+ */
+export function isDrawbridgeOpen(stacks, catalog, tiles, gate) {
+    const live = livingDrawbridge(stacks, catalog);
+    // Destroyed drawbridge stays open (permanent breach).
+    if (!live) {
+        return gate != null;
+    }
+    const at = { q: live.q, r: live.r };
+    const moatKey = gate?.moatQ != null && gate.moatR != null
+        ? `${gate.moatQ},${gate.moatR}`
+        : null;
+    for (const stack of stacks) {
+        if (stack.qty <= 0 || stack.id === live.id) {
+            continue;
+        }
+        if (stack.q === at.q && stack.r === at.r) {
+            return true;
+        }
+        // Occupying the lowered bridge span (moat hex) also holds it open.
+        if (moatKey && `${stack.q},${stack.r}` === moatKey) {
+            return true;
+        }
+        if (!isCreatureArmyUnit(unitById(catalog, stack.unitId))) {
+            continue;
+        }
+        if (unitIsAirborne(unitById(catalog, stack.unitId), catalog)) {
+            continue;
+        }
+        if (isInteriorBehindDrawbridge({ q: stack.q, r: stack.r }, at, tiles)) {
+            return true;
+        }
+    }
+    return false;
+}
+export function openBridgeMoatKeys(battle, catalog, tiles) {
+    const keys = new Set();
+    const gate = battle.siegeGate;
+    if (!gate) {
+        return keys;
+    }
+    if (!isDrawbridgeOpen(battle.stacks, catalog, tiles, gate)) {
+        return keys;
+    }
+    keys.add(`${gate.moatQ},${gate.moatR}`);
+    return keys;
+}
+/** Hazardous Moat hex (not the open Drawbridge span). */
+export function isHazardousMoatHex(hex, battle, catalog, tiles) {
+    const key = `${hex.q},${hex.r}`;
+    if (openBridgeMoatKeys(battle, catalog, tiles).has(key)) {
+        return false;
+    }
+    const hasMoatZone = (battle.groundEffects ?? []).some((zone) => zone.flatDmg > 0 &&
+        isMoatMechanic(zone.effect, zone.templateId) &&
+        zone.hexKeys.includes(key));
+    if (hasMoatZone) {
+        return true;
+    }
+    // Fallback: Moat terrain paint before GE stamp (should be rare).
+    const tile = tileAt(tiles, hex.q, hex.r);
+    return (tile != null &&
+        tile.terrain.replaceAll(' ', '_').toLowerCase() === 'moat');
+}
+/** True when any step (or the stand hex) is a damaging Moat. */
+export function pathCrossesHazardousMoat(origin, steps, battle, catalog, tiles) {
+    const stand = steps[steps.length - 1] ?? origin;
+    if (isHazardousMoatHex(stand, battle, catalog, tiles)) {
+        return true;
+    }
+    return steps.some((hex) => isHazardousMoatHex(hex, battle, catalog, tiles));
+}
+/** Town interior (on or behind the tapered wall column). */
+export function isSiegeInteriorHex(hex, tiles) {
+    const tile = tileAt(tiles, hex.q, hex.r);
+    if (tile?.col == null || tile.row == null) {
+        return false;
+    }
+    return tile.col >= siegeWallColForRow(tile.row);
+}
+/**
+ * Defender leaving the castle: start inside, destination outside.
+ * Used for drawbridge-vs-moat egress scoring bias.
+ */
+export function isDefenderSiegeEgress(stack, origin, steps, battle, tiles) {
+    if (stack.side !== 'def' || !battle.siegeGate) {
+        return false;
+    }
+    if (!isSiegeInteriorHex(origin, tiles)) {
+        return false;
+    }
+    const stand = steps[steps.length - 1] ?? origin;
+    const standTile = tileAt(tiles, stand.q, stand.r);
+    if (standTile?.col == null || standTile.row == null) {
+        return false;
+    }
+    return isSiegeExteriorCol(standTile.col, standTile.row);
+}
+/** Path steps (or stand) touch the Drawbridge hex or its bridge-moat span. */
+export function pathUsesDrawbridgeEgress(origin, steps, battle) {
+    const gate = battle.siegeGate;
+    if (!gate) {
+        return false;
+    }
+    const keys = new Set([`${gate.q},${gate.r}`]);
+    if (gate.moatQ != null && gate.moatR != null) {
+        keys.add(`${gate.moatQ},${gate.moatR}`);
+    }
+    const stand = steps[steps.length - 1] ?? origin;
+    if (keys.has(`${stand.q},${stand.r}`)) {
+        return true;
+    }
+    return steps.some((hex) => keys.has(`${hex.q},${hex.r}`));
+}
+/** Closed Drawbridge hex: stop here is allowed; pathing through is not. */
+export function closedDrawbridgeKeys(stacks, catalog, tiles, gate) {
+    const keys = new Set();
+    const live = livingDrawbridge(stacks, catalog);
+    const at = live ?? gate ?? null;
+    if (!at) {
+        return keys;
+    }
+    if (isDrawbridgeOpen(stacks, catalog, tiles, gate ?? live)) {
+        return keys;
+    }
+    keys.add(`${at.q},${at.r}`);
+    return keys;
+}
+export function isSiegeEngineUnit(unit, catalog) {
+    const cat = siegeCatalog(catalog);
+    return Boolean(unit && cat && unitHasNamedTag(cat, unit, TAG_SIEGE_ENGINE));
+}
+/** Siege/Catapult cannot be chosen or hit as a target. */
+export function isUntargetableUnit(unit) {
+    return isSiegeEngineUnit(unit);
+}
+/** Fixture-instance flag plus unit-type untargetable (Siege, wall ends). */
+export function isUntargetableStack(stack, catalog) {
+    if (!stack) {
+        return true;
+    }
+    if (stack.indestructible || isHeroStack(stack)) {
+        return true;
+    }
+    return isUntargetableUnit(unitById(catalog, stack.unitId));
+}
+/** Creature army only — not Wall/Shooter/Drawbridge and not Siege. */
+export function isCreatureArmyUnit(unit) {
+    return !isWallSegmentUnit(unit) && !isUntargetableUnit(unit);
+}
+/** Living Wall/Shooter/Drawbridge. Indestructible ends are not segments. */
+export function isSiegeEngineWallTarget(stack, catalog) {
+    if (!stack || stack.qty <= 0 || stack.indestructible) {
+        return false;
+    }
+    return isWallSegmentUnit(unitById(catalog, stack.unitId));
+}
+/** True when this battle has a living Wall/Shooter/Drawbridge line. */
+export function battleHasSiegeWalls(stacks, catalog) {
+    return stacks.some((stack) => stack.qty > 0 && isWallSegmentUnit(unitById(catalog, stack.unitId)));
+}
+/**
+ * Stand hexes for attacking Wall/Shooter must be on the exterior side of
+ * that row's tapered wall column. Interior / same-col stands are invalid
+ * ("Can't Stand Here"), including the top/bottom edge-row gap.
+ */
+export function isValidSiegeWallAttackStand(stand, tiles, stacks, catalog) {
+    if (!battleHasSiegeWalls(stacks, catalog)) {
+        return true;
+    }
+    const tile = tileAt(tiles, stand.q, stand.r);
+    if (tile?.col == null || tile.row == null) {
+        return true;
+    }
+    return isSiegeExteriorCol(tile.col, tile.row);
+}
+/** Live stacks that block sight. Drawbridge stays on closedDrawbridgeKeys. */
+export function liveWallLosKeys(stacks, catalog, tiles = [], gate) {
+    const keys = closedDrawbridgeKeys(stacks, catalog, tiles, gate);
+    const addFootprint = (stack) => {
+        for (const hex of stackFootprint(stack, catalog)) {
+            keys.add(`${hex.q},${hex.r}`);
+        }
+    };
+    for (const stack of stacks) {
+        if (stack.qty <= 0) {
+            continue;
+        }
+        const unit = unitById(catalog, stack.unitId);
+        if (isDrawbridgeUnit(unit)) {
+            continue;
+        }
+        if (unit?.blocks_los === true || isWallSegmentUnit(unit)) {
+            addFootprint(stack);
+            continue;
+        }
+        // Earth Spike / Ice Shard drops: indestructible stationary fixtures even
+        // when an older DB row omitted blocks_los. Skip Arcane Shield / Illusions.
+        if (stack.indestructible === true &&
+            unit?.stationary === true &&
+            (unit.speed == null || unit.speed <= 0) &&
+            !isSiegeEngineUnit(unit) &&
+            unitAttackShape(unit).immuneToMagicDmg !== true &&
+            unitAttackShape(unit).aiTreatAsThreat !== true) {
+            addFootprint(stack);
+        }
+    }
+    return keys;
+}
+export function siegeEngineArt(townName) {
+    return `${townName}_Siege.png`;
+}
+export function rampartsTier(session, townId) {
+    const level = slotStatesForTown(session, townId)[RAMPARTS_SLOT_INDEX]?.level ?? 0;
+    if (level >= 1 && level <= 3) {
+        return level;
+    }
+    return 1;
+}
+export function townTypeName(catalog, townTypeId) {
+    return catalog.town.find((row) => row.id === townTypeId)?.name ?? 'Necropolis';
+}
+function unitTagForWallKind(kind) {
+    if (kind === 'shooter') {
+        return TAG_SIEGE_SHOOTER;
+    }
+    if (kind === 'drawbridge') {
+        return TAG_SIEGE_DRAWBRIDGE;
+    }
+    return TAG_SIEGE_WALL;
+}
+export function siegeDrawbridgeDownArt(townName) {
+    return `${townName}_Drawbridge_Down.png`;
+}
+export function siegeSegmentArt(townName, unitName, qty) {
+    const n = Math.min(3, Math.max(1, Math.floor(qty)));
+    const role = unitName.trim().replaceAll(' ', '_');
+    return `${townName}_${role}_${n}.png`;
+}
+export function hexesInOffsetColumn(byOffset, col) {
+    const hexes = [];
+    for (let row = 0; row < COMBAT_ROWS; row += 1) {
+        const hex = byOffset.get(`${col},${row}`);
+        if (hex) {
+            hexes.push({ q: hex.q, r: hex.r });
+        }
+    }
+    return hexes;
+}
+export function siegeWallHexes(byOffset) {
+    const hexes = [];
+    for (let row = 0; row < COMBAT_ROWS; row += 1) {
+        const col = siegeWallColForRow(row);
+        if (col < 0 || col >= COMBAT_COLUMNS) {
+            continue;
+        }
+        const hex = byOffset.get(`${col},${row}`);
+        if (hex) {
+            hexes.push({ q: hex.q, r: hex.r });
+        }
+    }
+    return hexes;
+}
+export function siegeCatapultHex(byOffset) {
+    const hex = byOffset.get(`${SIEGE_CATAPULT_COL},${SIEGE_CATAPULT_ROW}`);
+    return hex ? { q: hex.q, r: hex.r } : null;
+}
+function makeStack(catalog, unit, side, slot, hex, qty, id, indestructible, opts) {
+    const hpMult = opts?.hpMult ?? 1;
+    const dmgMult = opts?.dmgMult ?? 1;
+    const baseHp = Math.max(1, unitById(catalog, unit.id)?.health ?? 1);
+    return {
+        id,
+        side,
+        slot,
+        unitId: unit.id,
+        qty,
+        topHealth: Math.max(1, Math.floor(baseHp * hpMult)),
+        startingQty: qty,
+        q: hex.q,
+        r: hex.r,
+        startHex: { q: hex.q, r: hex.r },
+        hasActedThisRound: false,
+        retaliationsLeft: retaliationCharges(unitById(catalog, unit.id)),
+        indestructible,
+        ...(dmgMult !== 1
+            ? { minDmgMult: dmgMult, maxDmgMult: dmgMult }
+            : {}),
+    };
+}
+/** Wall column stacks + Catapult/Siege in the attacker corner. */
+export function siegeStructureStacks(session, catalog, townId, wallHexes, catapultHex) {
+    const qty = rampartsTier(session, townId);
+    const warMult = warRoomSiegeMult(session, catalog, townId);
+    const stacks = [];
+    for (let i = 0; i < wallHexes.length; i += 1) {
+        const kind = WALL_KIND_BY_ROW[i] ?? 'wall';
+        const unit = firstUnitWithNamedTag(catalog, unitTagForWallKind(kind));
+        const hex = wallHexes[i];
+        if (!unit || !hex) {
+            continue;
+        }
+        const isShooter = kind === 'shooter';
+        const isWallHp = kind === 'wall' || kind === 'end' || kind === 'drawbridge';
+        stacks.push(makeStack(catalog, unit, 'def', 100 + i, hex, qty, `combat-wall-${i}`, kind === 'end', {
+            hpMult: isWallHp ? warMult : 1,
+            dmgMult: isShooter ? warMult : 1,
+        }));
+    }
+    const engine = firstUnitWithNamedTag(catalog, TAG_SIEGE_ENGINE);
+    if (engine && catapultHex) {
+        stacks.push(makeStack(catalog, engine, 'atk', 90, catapultHex, 1, 'combat-siege-engine', false));
+    }
+    return stacks;
+}

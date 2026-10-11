@@ -152,10 +152,11 @@ final class WorldProps {
         boolean blocker = asBool(row.get("is_blocker"), false);
         boolean flippable = asBool(row.get("flippable"), true);
         boolean navalOnly = parseFlag(row.get("terrain_rules"), "naval_only");
+        boolean bridgeOnly = parseFlag(row.get("terrain_rules"), "bridge_only");
         boolean wall = parseFlag(row.get("terrain_rules"), "wall");
         Map<Integer, Double> rules = parseTerrainRules(row.get("terrain_rules"));
-        if (navalOnly || wall) {
-            // Naval-only: combat naval layout. wall:true: Walls layer only.
+        if (navalOnly || wall || bridgeOnly) {
+            // Naval-only: combat naval layout. wall / bridge_only: placed by their layers.
             return null;
         }
         if (rules.isEmpty()) {
@@ -245,7 +246,7 @@ final class WorldProps {
             double renderScale,
             List<Integer> terrains) {}
 
-    private static boolean parseFlag(Object raw, String flagName) {
+    static boolean parseFlag(Object raw, String flagName) {
         Map<?, ?> map = asRulesMap(raw);
         if (map == null) {
             return false;
@@ -264,7 +265,7 @@ final class WorldProps {
         return false;
     }
 
-    private static Map<?, ?> asRulesMap(Object raw) {
+    static Map<?, ?> asRulesMap(Object raw) {
         Object value = raw;
         if (value != null && !(value instanceof Map<?, ?>) && !(value instanceof String)) {
             value = value.toString();
@@ -310,7 +311,11 @@ final class WorldProps {
         Map<Integer, Double> out = new LinkedHashMap<>();
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             String key = String.valueOf(entry.getKey());
-            if ("naval_only".equals(key) || "wall".equals(key) || "terrains".equals(key)) {
+            if ("naval_only".equals(key)
+                    || "bridge_only".equals(key)
+                    || "axis".equals(key)
+                    || "wall".equals(key)
+                    || "terrains".equals(key)) {
                 continue;
             }
             Integer terrainId = asInt(entry.getKey());

@@ -1,5 +1,5 @@
 import {
-  findPath,
+  findPathAvoidingMobRings,
   findPathOnBoard,
   hexDistance,
   neighborHexes,
@@ -21,6 +21,7 @@ import {
   heroMovementPoints,
   heroResourcePools,
   flightSpeed,
+  aiCfgNumber,
   unitById,
   type ReferenceCatalog,
   type ResourceRow,
@@ -87,6 +88,14 @@ import {
   pickWeighted,
   scoreOption,
 } from './weights'
+import { itemSlotUpgradeGain } from './itemScore'
+import { normalizeHeroInventory } from '../items/state'
+import {
+  applyAiRouteChoice,
+  shouldCompareRoute,
+  stepAiRouteCommit,
+  type AiRouteCommit,
+} from './routeChoice'
 
 export type WorldAttackTarget =
   | { type: 'mob'; mobId: string }
@@ -115,6 +124,8 @@ export type WorldMoveIntent =
   | { kind: 'mine'; dest: Axial; nodeId: string; resourceId: number }
   | { kind: 'fountain'; dest: Axial; featureId: string }
   | { kind: 'chest'; dest: Axial; featureId: string }
+  | { kind: 'ground_item'; dest: Axial; featureId: string }
+  | { kind: 'meet_ally'; dest: Axial; allyHeroId: string }
   | { kind: 'return'; dest: Axial; townId: string }
   | { kind: 'capture'; dest: Axial; townId: string }
   | { kind: 'seek_library'; dest: Axial; townId?: string; featureId?: string }
@@ -468,7 +479,8 @@ function pathTravelMp(
   if (hero.movement_remaining <= 1e-9) {
     return null
   }
-  const path = findPath(hero.position, dest, blocked)
+  const planned = findPathAvoidingMobRings(hero.position, dest, blocked)
+  const path = planned?.path
   if (!path || path.length < 2) {
     return null
   }
@@ -623,17 +635,89 @@ function formatFactors(
   }).join('  ')
 }
 
+export type WorldMoveDecision = {
+  intent: WorldMoveIntent | null
+  /** When set, replaces the hero's `ai_route_commit` (use `null` to clear). */
+  routeCommit?: AiRouteCommit | null
+}
+
+function routeCompareInput(
+  session: GameSession,
+  player: Player,
+  hero: Hero,
+  catalog: ReferenceCatalog | null,
+  maxMp: number,
+  pursuitId: string,
+  baseIntent: WorldMoveIntent,
+  seen: ReadonlySet<string>,
+) {
+  return {
+    session,
+    player,
+    hero,
+    catalog,
+    maxMp,
+    pursuitId,
+    baseIntent,
+    blockedHexes,
+    seen,
+  }
+}
+
 export function decideWorldMove(
   session: GameSession,
   player: Player,
   hero: Hero,
-): WorldMoveIntent | null {
+): WorldMoveDecision {
   restoreExplored(player.explored)
   const seen = seenSet(player)
   const catalog = getCachedCatalog()
   const aboardBoat = boatOccupiedByHero(session, hero.id)
+  const maxMpEarly = heroMovementPoints(
+    catalog,
+    hero,
+    session.game.settings.move_mode,
+  )
+  if (hero.ai_route_commit && !aboardBoat) {
+    const stepped = stepAiRouteCommit(
+      routeCompareInput(
+        session,
+        player,
+        hero,
+        catalog,
+        maxMpEarly,
+        hero.ai_route_commit.pursuit_id,
+        hero.ai_route_commit.base_intent,
+        seen,
+      ),
+      hero.ai_route_commit,
+    )
+    if (stepped) {
+      return { intent: stepped }
+    }
+  }
   if (aboardBoat) {
-    return decideBoardedWorldMove(session, hero, aboardBoat.id, seen)
+    if (hero.ai_route_commit?.mode === 'boat' && hero.ai_route_commit.sail_water) {
+      const sail = stepAiRouteCommit(
+        routeCompareInput(
+          session,
+          player,
+          hero,
+          catalog,
+          maxMpEarly,
+          hero.ai_route_commit.pursuit_id,
+          hero.ai_route_commit.base_intent,
+          seen,
+        ),
+        hero.ai_route_commit,
+      )
+      if (sail) {
+        return { intent: sail }
+      }
+    }
+    return {
+      intent: decideBoardedWorldMove(session, hero, aboardBoat.id, seen),
+    }
   }
   const maxMp = heroMovementPoints(
     catalog,
@@ -839,6 +923,7 @@ export function decideWorldMove(
       continue
     }
     const levelFrac = clamp01(feature.level / 4)
+    const openItem = feature.open && feature.item
     add(
       `chest ${feature.name} @ ${posKey(feature.position)} → ${posKey(approach)} (L${feature.level})`,
       {
@@ -848,10 +933,73 @@ export function decideWorldMove(
       },
       blankFactors({
         safety: safetyAt(session, player.id, approach),
-        resource_value: 0.4 + 0.6 * levelFrac,
+        resource_value: openItem ? 0.85 : 0.4 + 0.6 * levelFrac,
         explore_value: exploreValueAt(feature.position) * 0.2,
       }),
     )
+  }
+
+  for (const feature of session.features ?? []) {
+    if (feature.kind !== 'ground_item') {
+      continue
+    }
+    if (!visibleToPlayer(seen, feature.position)) {
+      continue
+    }
+    add(
+      `ground item ${feature.name} @ ${posKey(feature.position)}`,
+      {
+        kind: 'ground_item',
+        dest: feature.position,
+        featureId: feature.id,
+      },
+      blankFactors({
+        safety: safetyAt(session, player.id, feature.position),
+        resource_value: 0.75,
+        explore_value: exploreValueAt(feature.position) * 0.25,
+      }),
+    )
+  }
+
+  if (catalog) {
+  const upgradeMult = aiCfgNumber(catalog, 'ai_item_upgrade_value', 1)
+  const carrier = normalizeHeroInventory(hero)
+  for (const ally of session.heroes) {
+    if (ally.player_id !== player.id || ally.id === hero.id) {
+      continue
+    }
+    for (const item of carrier.backpack) {
+      if (!item) {
+        continue
+      }
+      const gain = itemSlotUpgradeGain(catalog, ally, item)
+      if (gain <= 0) {
+        continue
+      }
+      const approach = approachHex(
+        hero.position,
+        ally.position,
+        blockedHexes(session, hero, null),
+      )
+      if (!approach) {
+        continue
+      }
+      // gain 2 × mult 1.0 → resource_value 0.55 (≈ L1 basic chest factor).
+      const resourceValue = gain * upgradeMult * 0.275
+      add(
+        `deliver upgrade → ${ally.name} (+${gain.toFixed(1)}) @ ${posKey(ally.position)}`,
+        {
+          kind: 'meet_ally',
+          dest: approach,
+          allyHeroId: ally.id,
+        },
+        blankFactors({
+          safety: safetyAt(session, player.id, approach),
+          resource_value: resourceValue,
+        }),
+      )
+    }
+  }
   }
 
   for (const town of session.towns) {
@@ -1642,7 +1790,7 @@ export function decideWorldMove(
 
   if (options.length === 0) {
     appendAiTrace([...header, '  no reachable options this turn'].join('\n'))
-    return null
+    return { intent: null, routeCommit: null }
   }
 
   // BR S9-11 / S9-13: from day 5, collecting a completed quest overrides
@@ -1667,14 +1815,30 @@ export function decideWorldMove(
           }),
         ].join('\n'),
       )
-      return forced.data
+      const forcedIntent = forced.data
+      if (shouldCompareRoute(forcedIntent)) {
+        const routed = applyAiRouteChoice(
+          routeCompareInput(
+            session,
+            player,
+            hero,
+            catalog,
+            maxMp,
+            forced.id,
+            forcedIntent,
+            seen,
+          ),
+        )
+        return { intent: routed.intent, routeCommit: routed.commit }
+      }
+      return { intent: forcedIntent, routeCommit: null }
     }
   }
 
   const pick = pickWeighted(options)
   if (!pick) {
     appendAiTrace([...header, '  pick failed'].join('\n'))
-    return null
+    return { intent: null }
   }
 
   const body = options.map((option, index) => {
@@ -1689,5 +1853,44 @@ export function decideWorldMove(
       `  roll=${pick.roll.toFixed(3)} / ${pick.weightSum.toFixed(3)} → ${pick.picked.label}`,
     ].join('\n'),
   )
-  return pick.picked.data
+
+  const baseIntent = pick.picked.data
+  const pursuitId = pick.picked.id
+  if (
+    hero.ai_route_commit?.pursuit_id === pursuitId &&
+    hero.ai_route_commit.base_intent.kind === baseIntent.kind
+  ) {
+    const stepped = stepAiRouteCommit(
+      routeCompareInput(
+        session,
+        player,
+        hero,
+        catalog,
+        maxMp,
+        pursuitId,
+        hero.ai_route_commit.base_intent,
+        seen,
+      ),
+      hero.ai_route_commit,
+    )
+    return { intent: stepped ?? baseIntent }
+  }
+
+  if (!shouldCompareRoute(baseIntent)) {
+    return { intent: baseIntent, routeCommit: null }
+  }
+
+  const routed = applyAiRouteChoice(
+    routeCompareInput(
+      session,
+      player,
+      hero,
+      catalog,
+      maxMp,
+      pursuitId,
+      baseIntent,
+      seen,
+    ),
+  )
+  return { intent: routed.intent, routeCommit: routed.commit }
 }

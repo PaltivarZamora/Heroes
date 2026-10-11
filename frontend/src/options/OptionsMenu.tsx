@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
-import {
-  clearCachedGrid,
-  getSelectedMapHeroId,
-  setHeroMovementRemaining,
-  setMapCameraFollowMoves,
-} from '../hex/HexMap'
+import { clearCachedGrid } from '../hex/HexMap'
 import type { DataStatus } from '../hex/debug'
 import {
   createSave,
@@ -14,42 +9,20 @@ import {
   listSaves,
   type SaveSummary,
 } from '../session/saves'
-import { getSession, setSession, updateSession } from '../session/store'
+import { syncGameDifficultyFromSession } from '../session/gameDifficulty'
+import { getSession, setSession } from '../session/store'
 import type { GameSession } from '../session/types'
-import {
-  activePlayer,
-  grantBuildArmy,
-  grantBuildBasicBuildings,
-  grantClassAbilitiesAtTier,
-  grantOpenChest,
-  grantUpgradeBuildings,
-  normalizeHeroProgress,
-  restoreAllHeroMovement,
-} from '../session/accessors'
-import {
-  awardHeroXp,
-  levelUpNoticeForAward,
-  type LevelUpNotice,
-} from '../session/xp'
-import {
-  FLAT_HERO_MOVEMENT_STEPS,
-  fetchCatalog,
-  getCachedCatalog,
-  heroResourcePools,
-  refreshCatalogFromDb,
-  reloadReferenceData,
-} from '../town/catalog'
-import { LIBRARY_TIERS } from '../town/libraryRules'
+import { normalizeHeroProgress } from '../session/accessors'
+import { type LevelUpNotice } from '../session/xp'
+import { refreshCatalogFromDb } from '../town/catalog'
 import { NewGameScreen } from './NewGameScreen'
 import type { GameConfig } from './gameConfig'
-import { archName } from '../ai/weights'
 import { getExploredHexes } from '../hex/world'
-import { HEX_SCALES, type HexScaleName } from '../hex/hexScale'
+import type { HexScaleName } from '../hex/hexScale'
 import type { FixedFightKind } from '../session/fixedFight'
+import { GameWindowModal } from '../layout/GameWindowModal'
 
-const STEPS_FLAT = FLAT_HERO_MOVEMENT_STEPS
-
-type Panel = 'new' | 'save' | 'load' | 'quit' | null
+type Panel = 'new' | 'save' | 'load' | 'quit' | 'restart' | null
 
 type OptionsMenuProps = {
   onLoaded: () => void
@@ -57,13 +30,22 @@ type OptionsMenuProps = {
   onCopyDebug: () => void
   onStartGame: (config: GameConfig) => void
   mapGenerating?: boolean
+  /** Clears a stuck "Generating map…" state when reopening New Game. */
+  onPrepareNewGame?: () => void
   onLevelUpNotice: (notice: LevelUpNotice | null) => void
   /** Lift green status into the map HUD gap (between End Turn and Debug). */
   onHudNotice?: (notice: string | null) => void
   /** Debug Fixed Fight scenarios (starts combat). */
   onStartFixedFight?: (kind: FixedFightKind) => void
+  /** Opens map view with full fog lifted (debug). */
+  onSeeWorld?: () => void
   hexScale: HexScaleName
   onHexScale: (name: HexScaleName) => void
+  /** Headless: only save/load/new/quit/restart panels (no flyout). */
+  hideToggle?: boolean
+  /** Parent-driven panel (Main Menu). */
+  flowPanel?: Panel
+  onFlowPanelChange?: (panel: Panel | null) => void
 }
 
 function withCurrentFog(session: GameSession): GameSession {
@@ -213,37 +195,22 @@ function errorMessage(error: unknown, fallback: string): string {
     : fallback
 }
 
-const FALLBACK_AI_ARCHES = [
-  { id: 1, name: 'Build' },
-  { id: 2, name: 'Explore' },
-  { id: 3, name: 'Aggressive' },
-  { id: 4, name: 'Defend' },
-] as const
-
-function aiArchRows() {
-  const rows = getCachedCatalog()?.ai_arch ?? []
-  if (rows.length > 0) {
-    return [...rows].sort((a, b) => a.id - b.id)
-  }
-  return FALLBACK_AI_ARCHES.map((row) => ({ id: row.id, name: row.name }))
-}
-
-function aiPlayerLabel(player: { id: string; arch_id: number }): string {
-  const slot = player.id.replace(/^player-/, '')
-  return `P${slot} (${archName(getCachedCatalog(), player.arch_id)})`
-}
-
 export function OptionsMenu({
   onLoaded,
-  onDataStatus,
-  onCopyDebug,
+  onDataStatus: _onDataStatus,
+  onCopyDebug: _onCopyDebug,
   onStartGame,
   mapGenerating = false,
-  onLevelUpNotice,
+  onPrepareNewGame,
+  onLevelUpNotice: _onLevelUpNotice,
   onHudNotice,
-  onStartFixedFight,
-  hexScale,
-  onHexScale,
+  onStartFixedFight: _onStartFixedFight,
+  onSeeWorld: _onSeeWorld,
+  hexScale: _hexScale,
+  onHexScale: _onHexScale,
+  hideToggle = false,
+  flowPanel,
+  onFlowPanelChange,
 }: OptionsMenuProps) {
   const [expanded, setExpanded] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
@@ -251,10 +218,8 @@ export function OptionsMenu({
   const [saves, setSaves] = useState<SaveSummary[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
-  const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [stepsUnlimited, setStepsUnlimited] = useState(false)
   const saveNameRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -324,16 +289,17 @@ export function OptionsMenu({
     }
     setPanel(null)
     setError(null)
+    onFlowPanelChange?.(null)
   }
 
   const openPanel = (next: Panel) => {
-    if (reloading) {
-      return
-    }
     setExpanded(false)
     setError(null)
     setBusy(false)
     setPanel(next)
+    if (next === 'new') {
+      onPrepareNewGame?.()
+    }
     if (next === 'save') {
       setSaveName(defaultSaveName())
       setSelectedId(null)
@@ -346,6 +312,14 @@ export function OptionsMenu({
       setBusy(true)
     }
   }
+
+  useEffect(() => {
+    if (!flowPanel) {
+      return
+    }
+    openPanel(flowPanel)
+    onFlowPanelChange?.(null)
+  }, [flowPanel, onFlowPanelChange])
 
   useEffect(() => {
     if (panel !== 'load' && panel !== 'save') {
@@ -429,7 +403,9 @@ export function OptionsMenu({
       } catch {
         // Load the save even if the catalog refresh fails.
       }
-      setSession(withExploredDefaults(detail.gameState))
+      const loaded = withExploredDefaults(detail.gameState)
+      setSession(loaded)
+      syncGameDifficultyFromSession(loaded)
       clearCachedGrid()
       setPanel(null)
       onLoaded()
@@ -462,238 +438,33 @@ export function OptionsMenu({
     window.location.reload()
   }
 
-  const onReloadReference = async () => {
-    if (reloading) {
-      return
-    }
-    setExpanded(false)
-    setReloading(true)
-    setNotice(null)
-    try {
-      const status = await reloadReferenceData()
-      onDataStatus(status)
-      await fetchCatalog()
-      setSession(restoreAllHeroMovement(getSession()))
-      const session = getSession()
-      const selectedId = getSelectedMapHeroId()
-      const liveHero =
-        (selectedId
-          ? session.heroes.find((row) => row.id === selectedId)
-          : undefined) ?? session.heroes[0]
-      if (liveHero) {
-        setHeroMovementRemaining(liveHero.movement_remaining)
-      }
-      if (status.ok) {
-        setNotice('Reference data reloaded')
-      }
-    } catch (err: unknown) {
-      onDataStatus({
-        ok: false,
-        tables: [],
-        fetchError: errorMessage(err, 'Reference data reload failed'),
-      })
-    } finally {
-      setReloading(false)
-    }
+  const onRestartYes = () => {
+    window.location.reload()
   }
 
-  const applyStepsMode = (unlimited: boolean) => {
-    setStepsUnlimited(unlimited)
-    if (unlimited) {
-      updateSession((current) => ({
-        ...current,
-        game: {
-          ...current.game,
-          settings: {
-            ...current.game.settings,
-            move_mode: 'flat_100',
-          },
-        },
-        heroes: current.heroes.map((hero) => ({
-          ...hero,
-          movement_remaining: STEPS_FLAT,
-        })),
-      }))
-      setHeroMovementRemaining(STEPS_FLAT)
-    } else {
-      updateSession((current) => ({
-        ...current,
-        game: {
-          ...current.game,
-          settings: {
-            ...current.game.settings,
-            move_mode: 'hero_speed',
-          },
-        },
-      }))
-      setSession(restoreAllHeroMovement(getSession()))
-      const session = getSession()
-      const selected = getSelectedMapHeroId()
-      const liveHero =
-        (selected
-          ? session.heroes.find((row) => row.id === selected)
-          : undefined) ?? session.heroes[0]
-      if (liveHero) {
-        setHeroMovementRemaining(liveHero.movement_remaining)
-      }
-    }
-    setExpanded(false)
-  }
-
-  const toggleSteps = () => {
-    applyStepsMode(!stepsUnlimited)
-  }
-
-  const restoreSelectedHeroPools = () => {
-    const catalog = getCachedCatalog()
-    if (!catalog) {
-      setExpanded(false)
-      setNotice('Catalog not loaded')
-      return
-    }
-    const session = getSession()
-    const selectedId = getSelectedMapHeroId()
-    const selected = selectedId
-      ? session.heroes.find((row) => row.id === selectedId)
-      : undefined
-    const human = session.players.find((player) => !player.is_ai)
-    const hero =
-      selected ??
-      (human
-        ? session.heroes.find((row) => row.player_id === human.id)
-        : undefined) ??
-      session.heroes[0]
-    if (!hero) {
-      setExpanded(false)
-      setNotice('No hero to restore')
-      return
-    }
-    const pools = heroResourcePools(catalog, hero)
-    updateSession((current) => ({
-      ...current,
-      heroes: current.heroes.map((row) =>
-        row.id === hero.id
-          ? {
-              ...row,
-              current_mana: pools.current_mana,
-              current_energy: pools.current_energy,
-            }
-          : row,
-      ),
-    }))
-    setExpanded(false)
-    setNotice(
-      `${hero.name}: Energy ${pools.current_energy}, Mana ${pools.current_mana}`,
-    )
-  }
-
-  const learnAllAbilities = () => {
-    const catalog = getCachedCatalog()
-    if (!catalog) {
-      setExpanded(false)
-      setNotice('Catalog not loaded')
-      return
-    }
-    updateSession((current) => {
-      let next = current
-      for (const tier of LIBRARY_TIERS) {
-        next = grantClassAbilitiesAtTier(next, tier)
-      }
-      return next
-    })
-    setExpanded(false)
-    setNotice('Every hero learned all abilities from their two disciplines')
-  }
-
-  const grantDebugLevelUp = () => {
-    const catalog = getCachedCatalog()
-    if (!catalog) {
-      setExpanded(false)
-      setNotice('Catalog not loaded')
-      return
-    }
-    const session = getSession()
-    const selectedId = getSelectedMapHeroId()
-    const selected = selectedId
-      ? session.heroes.find((row) => row.id === selectedId)
-      : undefined
-    const human = session.players.find((player) => !player.is_ai)
-    const hero =
-      selected ??
-      (human
-        ? session.heroes.find((row) => row.player_id === human.id)
-        : undefined) ??
-      session.heroes[0]
-    if (!hero) {
-      setExpanded(false)
-      setNotice('No hero to level up')
-      return
-    }
-    let notice: LevelUpNotice | null = null
-    updateSession((current) => {
-      const awarded = awardHeroXp(current, catalog, hero.id, 1000)
-      notice = levelUpNoticeForAward(catalog, awarded)
-      return awarded.session
-    })
-    setExpanded(false)
-    if (notice) {
-      onLevelUpNotice(notice)
-    }
-    setNotice(`${hero.name} +1000 XP`)
-  }
-
-  const setAiPlayerArch = (playerId: string, archId: number, name: string) => {
-    updateSession((current) => ({
-      ...current,
-      players: current.players.map((player) =>
-        player.id === playerId && player.is_ai
-          ? { ...player, arch_id: archId }
-          : player,
-      ),
-    }))
-    setExpanded(false)
-    const slot = playerId.replace(/^player-/, '')
-    setNotice(`P${slot} archetype set to ${name}`)
-  }
-
-  const aiPlayers = getSession().players.filter((player) => player.is_ai)
-  const arches = aiArchRows()
-  const seeAiOn =
-    aiPlayers.length > 0 && aiPlayers.every((player) => player.ai_spectator)
-
-  const toggleSeeAi = () => {
-    if (aiPlayers.length === 0) {
-      setExpanded(false)
-      setNotice('No AI players in this game')
-      return
-    }
-    const next = !seeAiOn
-    updateSession((current) => ({
-      ...current,
-      players: current.players.map((player) =>
-        player.is_ai ? { ...player, ai_spectator: next } : player,
-      ),
-    }))
-    const actor = activePlayer(getSession())
-    if (actor?.is_ai) {
-      setMapCameraFollowMoves(next)
-    }
-    setExpanded(false)
-    setNotice(next ? 'See AI: On' : 'See AI: Off')
-  }
+  void _onDataStatus
+  void _onCopyDebug
+  void _onLevelUpNotice
+  void _onStartFixedFight
+  void _onSeeWorld
 
   return (
-    <div className="options-menu" ref={menuRef}>
-      <button
-        type="button"
-        className="options-toggle"
-        aria-expanded={expanded}
-        aria-haspopup="true"
-        onClick={() => setExpanded((open) => !open)}
-      >
-        Options
-      </button>
-      {expanded ? (
+    <div
+      className={`options-menu${hideToggle ? ' options-menu-headless' : ''}`}
+      ref={menuRef}
+    >
+      {hideToggle ? null : (
+        <button
+          type="button"
+          className="options-toggle"
+          aria-expanded={expanded}
+          aria-haspopup="true"
+          onClick={() => setExpanded(!expanded)}
+        >
+          Options
+        </button>
+      )}
+      {!hideToggle && expanded ? (
         <div
           className="options-choices"
           role="menu"
@@ -711,286 +482,32 @@ export function OptionsMenu({
           <button type="button" role="menuitem" onClick={() => openPanel('quit')}>
             Quit
           </button>
-          <div className="options-separator" role="separator" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              updateSession(grantOpenChest)
-              setExpanded(false)
-              setNotice('Opened a chest: 10,000 Gold and 20 of each other resource')
-            }}
-          >
-            Open Chest
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const result = grantBuildArmy(getSession(), 1)
-              setSession(result.session)
-              setExpanded(false)
-              setNotice(result.notice)
-            }}
-          >
-            Build Army 1
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const result = grantBuildArmy(getSession(), 2)
-              setSession(result.session)
-              setExpanded(false)
-              setNotice(result.notice)
-            }}
-          >
-            Build Army 2
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const result = grantBuildBasicBuildings(getSession())
-              setSession(result.session)
-              setExpanded(false)
-              setNotice(result.notice)
-            }}
-          >
-            Build Basic Buildings
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const result = grantUpgradeBuildings(getSession())
-              setSession(result.session)
-              setExpanded(false)
-              setNotice(result.notice)
-            }}
-          >
-            Upgrade Buildings
-          </button>
-          <button type="button" role="menuitem" onClick={learnAllAbilities}>
-            Learn
-          </button>
-          <button type="button" role="menuitem" onClick={grantDebugLevelUp}>
-            Level Up
-          </button>
-          <button type="button" role="menuitem" onClick={toggleSteps}>
-            Steps: {stepsUnlimited ? String(STEPS_FLAT) : 'Hero Speed'}
-          </button>
-          <button type="button" role="menuitem" onClick={restoreSelectedHeroPools}>
-            Restore
-          </button>
-          {onStartFixedFight ? (
-            <div className="options-flyout">
-              <button type="button" role="menuitem" aria-haspopup="true">
-                Fixed Fight
-              </button>
-              <div className="options-submenu" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('pit_fiends')
-                    setExpanded(false)
-                  }}
-                >
-                  Pit Fiends
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('raise_demons')
-                    setExpanded(false)
-                  }}
-                >
-                  Raise Demons
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('holy_wrath')
-                    setExpanded(false)
-                  }}
-                >
-                  Holy Wrath
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('for_the_hoard')
-                    setExpanded(false)
-                  }}
-                >
-                  For the Hoard
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('fight_yourself')
-                    setExpanded(false)
-                  }}
-                >
-                  Fight Yourself
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('boat_vs_boat')
-                    setExpanded(false)
-                  }}
-                >
-                  Boat vs Boat
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('boat_vs_land')
-                    setExpanded(false)
-                  }}
-                >
-                  Boat vs Land
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onStartFixedFight('land_vs_boat')
-                    setExpanded(false)
-                  }}
-                >
-                  Land vs Boat
-                </button>
-              </div>
-            </div>
-          ) : null}
-          <div className="options-separator" role="separator" />
-          <div className="options-flyout">
-            <button type="button" role="menuitem" aria-haspopup="true">
-              Hex Size: {hexScale}
-            </button>
-            <div className="options-submenu" role="menu">
-              {(Object.keys(HEX_SCALES) as HexScaleName[]).map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  role="menuitem"
-                  className={name === hexScale ? 'active' : undefined}
-                  onClick={() => {
-                    onHexScale(name)
-                    setExpanded(false)
-                  }}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="options-separator" role="separator" />
-          <button type="button" role="menuitem" onClick={toggleSeeAi}>
-            See AI: {seeAiOn ? 'On' : 'Off'}
-          </button>
-          <div className="options-flyout">
-            <button type="button" role="menuitem" aria-haspopup="true">
-              Set AI Archetype
-            </button>
-            <div className="options-submenu" role="menu">
-              {aiPlayers.length === 0 ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setExpanded(false)
-                    setNotice('No AI players in this game')
-                  }}
-                >
-                  No AI players
-                </button>
-              ) : aiPlayers.length === 1 ? (
-                arches.map((arch) => (
-                  <button
-                    key={arch.id}
-                    type="button"
-                    role="menuitem"
-                    className={arch.id === aiPlayers[0].arch_id ? 'active' : undefined}
-                    onClick={() =>
-                      setAiPlayerArch(aiPlayers[0].id, arch.id, arch.name)
-                    }
-                  >
-                    {arch.name}
-                  </button>
-                ))
-              ) : (
-                aiPlayers.map((player) => (
-                  <div key={player.id} className="options-flyout">
-                    <button type="button" role="menuitem" aria-haspopup="true">
-                      {aiPlayerLabel(player)}
-                    </button>
-                    <div className="options-submenu" role="menu">
-                      {arches.map((arch) => (
-                        <button
-                          key={arch.id}
-                          type="button"
-                          role="menuitem"
-                          className={
-                            arch.id === player.arch_id ? 'active' : undefined
-                          }
-                          onClick={() =>
-                            setAiPlayerArch(player.id, arch.id, arch.name)
-                          }
-                        >
-                          {arch.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={reloading}
-            onClick={() => void onReloadReference()}
-          >
-            Reload Reference Data
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onCopyDebug()
-              setExpanded(false)
-              setNotice('Debug copied')
-            }}
-          >
-            Copy Debug
-          </button>
         </div>
       ) : null}
 
       {panel === 'new' ? (
-        <NewGameScreen
-          generating={mapGenerating}
-          onClose={closePanel}
-          onStartGame={(config) => {
-            onStartGame(config)
-            closePanel()
-          }}
-        />
+        <div className="game-window-embed">
+          <GameWindowModal
+            aria-labelledby="new-game-title"
+            onBackdropClick={closePanel}
+            className="new-game-modal"
+          >
+            <NewGameScreen
+              embedded
+              generating={mapGenerating}
+              onClose={closePanel}
+              onStartGame={(config) => {
+                onStartGame(config)
+                closePanel()
+              }}
+            />
+          </GameWindowModal>
+        </div>
       ) : null}
 
       {panel === 'save' ? (
-        <div className="options-modal" role="dialog" aria-labelledby="save-title">
+        <div className="game-window-embed">
+        <GameWindowModal aria-labelledby="save-title" onBackdropClick={closePanel}>
           <div className="options-dialog">
             <h2 id="save-title">Save Game</h2>
             <label className="options-field">
@@ -1059,11 +576,13 @@ export function OptionsMenu({
               </button>
             </div>
           </div>
+        </GameWindowModal>
         </div>
       ) : null}
 
       {panel === 'load' ? (
-        <div className="options-modal" role="dialog" aria-labelledby="load-title">
+        <div className="game-window-embed">
+        <GameWindowModal aria-labelledby="load-title" onBackdropClick={closePanel}>
           <div className="options-dialog">
             <h2 id="load-title">Load Game</h2>
             {saves.length === 0 && !busy && !error ? (
@@ -1110,11 +629,13 @@ export function OptionsMenu({
               </button>
             </div>
           </div>
+        </GameWindowModal>
         </div>
       ) : null}
 
       {panel === 'quit' ? (
-        <div className="options-modal" role="dialog" aria-labelledby="quit-title">
+        <div className="game-window-embed">
+        <GameWindowModal aria-labelledby="quit-title" onBackdropClick={closePanel}>
           <div className="options-dialog">
             <h2 id="quit-title">Are you sure?</h2>
             <div className="options-actions">
@@ -1126,6 +647,25 @@ export function OptionsMenu({
               </button>
             </div>
           </div>
+        </GameWindowModal>
+        </div>
+      ) : null}
+
+      {panel === 'restart' ? (
+        <div className="game-window-embed">
+        <GameWindowModal aria-labelledby="restart-title" onBackdropClick={closePanel}>
+          <div className="options-dialog">
+            <h2 id="restart-title">Restart the game?</h2>
+            <div className="options-actions">
+              <button type="button" onClick={onRestartYes}>
+                Yes
+              </button>
+              <button type="button" onClick={closePanel}>
+                No
+              </button>
+            </div>
+          </div>
+        </GameWindowModal>
         </div>
       ) : null}
     </div>

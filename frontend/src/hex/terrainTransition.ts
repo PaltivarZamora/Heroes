@@ -91,6 +91,14 @@ export function hexTransitionMoveCost(
   if (tile?.hasRoad) {
     return roadMoveCost(catalog)
   }
+  // Bridge: deep water that generation marked walkable (BR S9-32).
+  if (
+    tile &&
+    !tile.blocked &&
+    tile.terrain.trim().toLowerCase() === 'water'
+  ) {
+    return 1
+  }
   if (!catalog) {
     return tile?.movementCostMultiplier ?? null
   }

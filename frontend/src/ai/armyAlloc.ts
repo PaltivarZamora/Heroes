@@ -22,6 +22,7 @@ import {
 import { appendAiTrace } from './trace'
 import { ARMY_ALLOC_DECISION, DEFAULT_AI_ARCH_ID } from './types'
 import { archName, blendedArchWeight } from './weights'
+import { handoffItemsBetweenAlliedHeroes } from './itemEquip'
 
 const HERO_SHARE_FACTOR = 'hero_share_pct'
 const SPLIT_TWO_CHANCE = 0.25
@@ -659,8 +660,8 @@ export function decideAndApplyHeroTrade(
     )
   }
 
-  updateSession((current) =>
-    applyPooledArmyAllocation(
+  updateSession((current) => {
+    let next = applyPooledArmyAllocation(
       current,
       [main.id, other.id],
       town?.id ?? null,
@@ -670,8 +671,12 @@ export function decideAndApplyHeroTrade(
       ],
       garrisonSplit.parts,
       unplacedIds,
-    ),
-  )
+    )
+    const liveMain = next.heroes.find((row) => row.id === main.id) ?? main
+    const liveOther = next.heroes.find((row) => row.id === other.id) ?? other
+    next = handoffItemsBetweenAlliedHeroes(next, catalog, liveMain, liveOther)
+    return next
+  })
 
   appendAiTrace(
     [

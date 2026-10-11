@@ -4,11 +4,20 @@ import type { GameSession } from '../session/types'
 import { slotStatesForTown } from '../session/accessors'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
+  getCachedCatalog,
   moveTypeValue,
   retaliationCharges,
   unitAttackShape,
   unitById,
 } from '../town/catalog'
+import {
+  firstUnitWithNamedTag,
+  TAG_SIEGE_DRAWBRIDGE,
+  TAG_SIEGE_ENGINE,
+  TAG_SIEGE_SHOOTER,
+  TAG_SIEGE_WALL,
+  unitHasNamedTag,
+} from '../town/unitTags'
 import { warRoomSiegeMult } from '../town/townUniques'
 import {
   COMBAT_COLUMNS,
@@ -42,22 +51,25 @@ const WALL_KIND_BY_ROW: WallKind[] = [
 
 export const DRAWBRIDGE_ROW_INDEX = WALL_KIND_BY_ROW.indexOf('drawbridge')
 
-function unitNamed(
-  catalog: ReferenceCatalog,
-  name: string,
-): UnitRow | null {
-  const key = name.trim().toLowerCase()
+function siegeCatalog(
+  catalog?: ReferenceCatalog | null,
+): ReferenceCatalog | null {
+  return catalog ?? getCachedCatalog()
+}
+
+export function isWallSegmentUnit(
+  unit: UnitRow | null | undefined,
+  catalog?: ReferenceCatalog | null,
+): boolean {
+  const cat = siegeCatalog(catalog)
+  if (!unit || !cat) {
+    return false
+  }
   return (
-    catalog.unit.find((row) => row.name.trim().toLowerCase() === key) ?? null
+    unitHasNamedTag(cat, unit, TAG_SIEGE_WALL) ||
+    unitHasNamedTag(cat, unit, TAG_SIEGE_SHOOTER) ||
+    unitHasNamedTag(cat, unit, TAG_SIEGE_DRAWBRIDGE)
   )
-}
-
-export function wallSegmentNames(): Set<string> {
-  return new Set(['wall', 'drawbridge', 'shooter'])
-}
-
-export function isWallSegmentUnit(unit: UnitRow | null | undefined): boolean {
-  return wallSegmentNames().has((unit?.name ?? '').trim().toLowerCase())
 }
 
 /**
@@ -75,8 +87,12 @@ export function isTerrainBlockerUnit(unit: UnitRow | null | undefined): boolean 
   return unit.stationary === true && unit.blocks_los === true
 }
 
-export function isDrawbridgeUnit(unit: UnitRow | null | undefined): boolean {
-  return (unit?.name ?? '').trim().toLowerCase() === 'drawbridge'
+export function isDrawbridgeUnit(
+  unit: UnitRow | null | undefined,
+  catalog?: ReferenceCatalog | null,
+): boolean {
+  const cat = siegeCatalog(catalog)
+  return Boolean(unit && cat && unitHasNamedTag(cat, unit, TAG_SIEGE_DRAWBRIDGE))
 }
 
 export function livingDrawbridge(
@@ -318,9 +334,12 @@ export function closedDrawbridgeKeys(
   return keys
 }
 
-export function isSiegeEngineUnit(unit: UnitRow | null | undefined): boolean {
-  const name = (unit?.name ?? '').trim().toLowerCase()
-  return name === 'siege' || name === 'catapult'
+export function isSiegeEngineUnit(
+  unit: UnitRow | null | undefined,
+  catalog?: ReferenceCatalog | null,
+): boolean {
+  const cat = siegeCatalog(catalog)
+  return Boolean(unit && cat && unitHasNamedTag(cat, unit, TAG_SIEGE_ENGINE))
 }
 
 /** Siege/Catapult cannot be chosen or hit as a target. */
@@ -450,14 +469,14 @@ export function townTypeName(
   return catalog.town.find((row) => row.id === townTypeId)?.name ?? 'Necropolis'
 }
 
-function roleName(kind: WallKind): 'Wall' | 'Shooter' | 'Drawbridge' {
+function unitTagForWallKind(kind: WallKind): string {
   if (kind === 'shooter') {
-    return 'Shooter'
+    return TAG_SIEGE_SHOOTER
   }
   if (kind === 'drawbridge') {
-    return 'Drawbridge'
+    return TAG_SIEGE_DRAWBRIDGE
   }
-  return 'Wall'
+  return TAG_SIEGE_WALL
 }
 
 export function siegeDrawbridgeDownArt(townName: string): string {
@@ -559,7 +578,7 @@ export function siegeStructureStacks(
   const stacks: CombatStack[] = []
   for (let i = 0; i < wallHexes.length; i += 1) {
     const kind = WALL_KIND_BY_ROW[i] ?? 'wall'
-    const unit = unitNamed(catalog, roleName(kind))
+    const unit = firstUnitWithNamedTag(catalog, unitTagForWallKind(kind))
     const hex = wallHexes[i]
     if (!unit || !hex) {
       continue
@@ -584,8 +603,7 @@ export function siegeStructureStacks(
       ),
     )
   }
-  const engine =
-    unitNamed(catalog, 'Siege') ?? unitNamed(catalog, 'Catapult')
+  const engine = firstUnitWithNamedTag(catalog, TAG_SIEGE_ENGINE)
   if (engine && catapultHex) {
     stacks.push(
       makeStack(

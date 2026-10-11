@@ -15,36 +15,56 @@ import {
   type CostMap,
   type ReferenceCatalog,
 } from './catalog'
+import { BUILDING_SLOT_TOWN_UNIQUE, buildingInSlot } from './buildingSlots'
+import { TOWN_UNIQUE_KEY, type TownUniqueKey } from './townUniqueKeys'
 import {
   heroHasDiscipline,
   mergeLibraryOffers,
 } from './libraryRules'
 import { recordAbilityLearned } from '../session/quests'
 
-const TOWN_UNIQUE_SLOT = 9
-
 export function isTownUniqueBuilding(building: BuildingRow): boolean {
-  return building.slot_num === TOWN_UNIQUE_SLOT
+  return buildingInSlot(building, BUILDING_SLOT_TOWN_UNIQUE)
 }
 
-function nameKey(name: string): string {
-  return name.trim().toLowerCase()
+function buildingUniqueKey(building: BuildingRow): string | null {
+  const raw = building.payload?.unique_key
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.trim().toLowerCase()
+  }
+  return null
 }
 
-/** True when the named Town Unique is built (level ≥ 1) in this town. */
+export function catalogTownUniqueBuildingIds(
+  catalog: ReferenceCatalog,
+  uniqueKey: TownUniqueKey,
+): number[] {
+  const want = uniqueKey.trim().toLowerCase()
+  return catalog.building
+    .filter(
+      (row) =>
+        buildingInSlot(row, BUILDING_SLOT_TOWN_UNIQUE) &&
+        buildingUniqueKey(row) === want,
+    )
+    .map((row) => row.id)
+}
+
+/** True when the Town Unique (`payload.unique_key`) is built (level ≥ 1) in this town. */
 export function townHasUnique(
   session: GameSession,
   catalog: ReferenceCatalog,
   townId: string,
-  uniqueName: string,
+  uniqueKey: TownUniqueKey,
 ): boolean {
-  const want = nameKey(uniqueName)
+  const ids = new Set(catalogTownUniqueBuildingIds(catalog, uniqueKey))
+  if (ids.size === 0) {
+    return false
+  }
   return session.building_states.some((row) => {
     if (row.town_id !== townId || row.level < 1 || row.building_id == null) {
       return false
     }
-    const building = buildingById(catalog, row.building_id)
-    return building != null && nameKey(building.name) === want
+    return ids.has(row.building_id)
   })
 }
 
@@ -94,7 +114,7 @@ export function townConstructionCost(
   building: BuildingRow,
 ): CostMap {
   const base = constructionCost(catalog, building)
-  if (townHasUnique(session, catalog, townId, 'Whispering Timberworks')) {
+  if (townHasUnique(session, catalog, townId, TOWN_UNIQUE_KEY.whisperingTimberworks)) {
     return scaleConstructionCostTimberworks(base)
   }
   return base
@@ -107,7 +127,7 @@ export function townRecruitUnitCost(
   townId: string,
   unitCostMap: CostMap,
 ): CostMap {
-  if (townHasUnique(session, catalog, townId, 'Union Lodge')) {
+  if (townHasUnique(session, catalog, townId, TOWN_UNIQUE_KEY.unionLodge)) {
     return scaleCostHalfFloor(unitCostMap)
   }
   return unitCostMap
@@ -123,7 +143,7 @@ export function townUnitUpgradeCost(
   townId: string,
   upgradeCostMap: CostMap,
 ): CostMap {
-  if (townHasUnique(session, catalog, townId, 'Reliquary of Elevation')) {
+  if (townHasUnique(session, catalog, townId, TOWN_UNIQUE_KEY.reliquaryOfElevation)) {
     return scaleCostHalfFloor(upgradeCostMap)
   }
   return upgradeCostMap
@@ -468,7 +488,7 @@ export function applyRecruitmentBeaconsBeforeGrowth(
     if (!town.player_id) {
       continue
     }
-    if (!townHasUnique(next, catalog, town.id, 'Recruitment Beacon')) {
+    if (!townHasUnique(next, catalog, town.id, TOWN_UNIQUE_KEY.recruitmentBeacon)) {
       continue
     }
     const result = applyRecruitmentBeacon(next, catalog, town)
@@ -584,7 +604,7 @@ export function applyWeeklyTownUniquesWithReport(
     if (!town.player_id) {
       continue
     }
-    if (townHasUnique(next, catalog, town.id, 'Vault')) {
+    if (townHasUnique(next, catalog, town.id, TOWN_UNIQUE_KEY.vault)) {
       const hallGold = hallsWeeklyGold(next, catalog, town.id)
       if (hallGold >= 100) {
         const bonus = randomInclusive(100, hallGold)
@@ -625,12 +645,12 @@ export function applyWeeklyTownUniquesWithReport(
         )
       }
     }
-    if (townHasUnique(next, catalog, town.id, "Architect's Spire")) {
+    if (townHasUnique(next, catalog, town.id, TOWN_UNIQUE_KEY.architectsSpire)) {
       const spire = applyArchitectSpire(next, catalog, town)
       next = spire.session
       events.push(...spire.events)
     }
-    if (townHasUnique(next, catalog, town.id, 'Bone Nursery')) {
+    if (townHasUnique(next, catalog, town.id, TOWN_UNIQUE_KEY.boneNursery)) {
       const nursery = applyBoneNursery(next, catalog, town)
       next = nursery.session
       events.push(...nursery.events)
@@ -730,14 +750,14 @@ function applyInfernalArchive(
   if (!hero || !visited.player_id || hero.player_id !== visited.player_id) {
     return session
   }
-  if (!townHasUnique(session, catalog, visited.id, 'Infernal Archive')) {
+  if (!townHasUnique(session, catalog, visited.id, TOWN_UNIQUE_KEY.infernalArchive)) {
     return session
   }
   let next = session
   const archiveTowns = next.towns.filter(
     (town) =>
       town.player_id === visited.player_id &&
-      townHasUnique(next, catalog, town.id, 'Infernal Archive'),
+      townHasUnique(next, catalog, town.id, TOWN_UNIQUE_KEY.infernalArchive),
   )
   const learnIds = new Set<number>()
   for (const town of archiveTowns) {
@@ -797,7 +817,7 @@ function applyReliquaryOfElevation(
   catalog: ReferenceCatalog,
   town: Town,
 ): GameSession {
-  if (!townHasUnique(session, catalog, town.id, 'Reliquary of Elevation')) {
+  if (!townHasUnique(session, catalog, town.id, TOWN_UNIQUE_KEY.reliquaryOfElevation)) {
     return session
   }
   const hasAdvancedElsewhere = session.building_states.some((row) => {
@@ -872,7 +892,11 @@ export function maybeApplyInfernalArchiveAfterBuild(
   building: BuildingRow,
   heroId: string | null | undefined,
 ): GameSession {
-  if (!heroId || nameKey(building.name) !== nameKey('Infernal Archive')) {
+  if (
+    !heroId ||
+    !buildingInSlot(building, BUILDING_SLOT_TOWN_UNIQUE) ||
+    buildingUniqueKey(building) !== TOWN_UNIQUE_KEY.infernalArchive
+  ) {
     return session
   }
   return applyInfernalArchive(session, catalog, town, heroId)
@@ -884,5 +908,7 @@ export function warRoomSiegeMult(
   catalog: ReferenceCatalog,
   townId: string,
 ): number {
-  return townHasUnique(session, catalog, townId, 'War Room') ? 4 / 3 : 1
+  return townHasUnique(session, catalog, townId, TOWN_UNIQUE_KEY.warRoom)
+    ? 4 / 3
+    : 1
 }

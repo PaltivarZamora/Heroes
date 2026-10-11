@@ -1,0 +1,19 @@
+---
+description: Start or restart Vite and Spring when the app is unreachable or after backend/frontend changes need a running stack
+alwaysApply: true
+---
+
+# Heroes dev servers (agent-owned)
+
+Rod uses **http://localhost:5173/** (Vite). Spring serves **http://localhost:8080/** (API only; Vite proxies `/api`).
+
+When the site is unreachable, after backend edits, or before manual/browser testing:
+
+1. **Check ports** (Windows): `5173` = Vite, `8080` = Spring.
+2. **Start missing processes** (background, do not ask Rod to start them):
+   - Vite: `cd frontend` → `npm run dev`
+   - Spring: `cd backend` → `.\mvnw.cmd spring-boot:run`
+3. **Restart** when needed: stop the old process on that port if hung, then start again. Prefer restart Spring after Java/reference-data changes; restart Vite after vite config or env changes.
+4. Confirm with a quick listen check or `curl` to `http://localhost:5173/` and `http://localhost:8080/api/system/data-status` (or similar health endpoint).
+
+Do not assume servers are running from a prior chat turn.

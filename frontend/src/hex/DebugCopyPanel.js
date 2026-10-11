@@ -1,0 +1,16 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+export function DebugCopyPanel({ sections, onAddStartingUnits, onAddWorldMobs, navalMaskDebug, terrainWedgesDebug, zonesDebug, wallGapsDebug, roadPlanDebug, worldPerf, hideToggle = false, peekOpen = false, onPeekOpenChange, }) {
+    const hasTools = onAddStartingUnits != null ||
+        onAddWorldMobs != null ||
+        navalMaskDebug != null ||
+        terrainWedgesDebug != null ||
+        zonesDebug != null ||
+        wallGapsDebug != null ||
+        roadPlanDebug != null;
+    const showPeek = peekOpen;
+    return (_jsxs("div", { className: `debug-copy${showPeek ? ' debug-copy-open' : ''}${hideToggle ? ' debug-copy-headless' : ''}`, children: [hideToggle ? null : (_jsx("button", { type: "button", className: "debug-panel-toggle", onClick: () => onPeekOpenChange?.(!peekOpen), children: "Debug" })), _jsxs("div", { className: "debug-peek", children: [hideToggle && onPeekOpenChange ? (_jsx("button", { type: "button", className: "debug-peek-close", onClick: () => onPeekOpenChange(false), children: "Close" })) : null, hasTools ? (_jsxs("div", { className: "debug-tools", children: [onAddStartingUnits ? (_jsx("button", { type: "button", onClick: onAddStartingUnits, children: "Add Starting Units" })) : null, onAddWorldMobs ? (_jsx("button", { type: "button", onClick: onAddWorldMobs, children: "Add World Mobs to Current Map" })) : null, terrainWedgesDebug ? (_jsxs("button", { type: "button", onClick: terrainWedgesDebug.onToggle, children: ["Terrain Wedges: ", terrainWedgesDebug.enabled ? 'On' : 'Off'] })) : null, zonesDebug ? (_jsxs("button", { type: "button", onClick: zonesDebug.onToggle, children: ["Zones: ", zonesDebug.enabled ? 'On' : 'Off'] })) : null, wallGapsDebug ? (_jsxs("button", { type: "button", onClick: wallGapsDebug.onToggle, children: ["Wall gaps: ", wallGapsDebug.enabled ? 'On' : 'Off'] })) : null, roadPlanDebug ? (_jsxs("button", { type: "button", onClick: roadPlanDebug.onToggle, children: ["Road plan: ", roadPlanDebug.enabled ? 'On' : 'Off'] })) : null, navalMaskDebug ? (_jsxs("button", { type: "button", onClick: navalMaskDebug.onToggle, children: ["Naval Mask: ", navalMaskDebug.enabled ? 'On' : 'Off'] })) : null] })) : null, worldPerf ? (_jsx("pre", { className: "debug-perf", children: `FPS: ${worldPerf.fps.toFixed(0)}  frame: ${worldPerf.frameMs.toFixed(1)}ms  avg: ${worldPerf.avgFrameMs.toFixed(1)}ms
+last move-step repaint: ${worldPerf.lastRepaintMs.toFixed(1)}ms
+display objects: ${worldPerf.displayObjectsVisible} visible / ${worldPerf.displayObjectsTotal} total
+props: ${worldPerf.propsVisible} visible / ${worldPerf.propsTotal} total
+explored: ${worldPerf.exploredHexes}  chunks: ${worldPerf.visibleChunks} vis / ${worldPerf.bakedChunks} baked (${worldPerf.chunkSize}×${worldPerf.chunkSize})` })) : null, _jsxs("details", { className: "debug-setup", children: [_jsxs("summary", { children: [_jsx("span", { className: "debug-setup-closed", children: "Game Setup (currently hidden)" }), _jsx("span", { className: "debug-setup-open", children: "Game Setup" })] }), _jsx("pre", { children: sections.gameSetup })] }), sections.rest.trim() ? (_jsx("pre", { className: "debug-peek-body", children: sections.rest })) : null] })] }));
+}

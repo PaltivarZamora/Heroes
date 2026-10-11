@@ -2,13 +2,11 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseE
 import {
   formatAmount,
 } from '../hex/resources'
-import { ResourceBar } from '../hex/ResourceBar'
 import {
   executeMarketMultiSell,
   executeMarketTrade,
   humanPlayer,
   playerMarketplaceCount,
-  walletFromSession,
 } from '../session/accessors'
 import { getSession, subscribe, updateSession } from '../session/store'
 import {
@@ -23,9 +21,9 @@ import {
   resourcesForMarketplace,
   sellQtyFromBuy,
 } from './market'
-
 type MarketplaceProps = {
   onClose: () => void
+  embedded?: boolean
 }
 
 function parseQty(raw: string, max: number): number | null {
@@ -87,7 +85,7 @@ function ResourceRowGrid({
   )
 }
 
-export function Marketplace({ onClose }: MarketplaceProps) {
+export function Marketplace({ onClose, embedded = false }: MarketplaceProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [sellIds, setSellIds] = useState<number[]>([])
@@ -97,7 +95,6 @@ export function Marketplace({ onClose }: MarketplaceProps) {
   const [message, setMessage] = useState<string | null>(null)
   const hadPair = useRef(false)
 
-  const wallet = walletFromSession(session)
   const player = humanPlayer(session)
   const owned: Record<number, number> = player?.resources ?? {}
   const resources = catalog ? resourcesForMarketplace(catalog) : []
@@ -251,21 +248,8 @@ export function Marketplace({ onClose }: MarketplaceProps) {
     setEdited('sell')
   }
 
-  return (
-    <div
-      className="town-management marketplace-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="marketplace-title"
-    >
-      <header className="town-management-bar">
-        <h1 id="marketplace-title">Marketplace</h1>
-        <ResourceBar wallet={wallet} className="town-resource-strip" />
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
-      </header>
-      <div className="marketplace-body">
+  const body = (
+    <div className="marketplace-body town-building-screen-body">
         {!catalog ? (
           <p>Loading…</p>
         ) : rate == null ? (
@@ -333,7 +317,41 @@ export function Marketplace({ onClose }: MarketplaceProps) {
             {message ? <p className="town-building-panel-msg">{message}</p> : null}
           </>
         )}
-      </div>
+    </div>
+  )
+
+  const header = (
+    <header className="town-building-screen-header">
+      <h1 id="marketplace-title">Marketplace</h1>
+      <button type="button" onClick={onClose}>
+        Close
+      </button>
+    </header>
+  )
+
+  if (embedded) {
+    return (
+      <>
+        {header}
+        {body}
+      </>
+    )
+  }
+
+  return (
+    <div
+      className="town-management marketplace-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="marketplace-title"
+    >
+      <header className="town-management-bar">
+        <h1 id="marketplace-title">Marketplace</h1>
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </header>
+      {body}
     </div>
   )
 }

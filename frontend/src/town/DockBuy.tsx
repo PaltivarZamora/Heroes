@@ -13,12 +13,18 @@ type DockBuyProps = {
   featureId: string
   heroId: string
   onClose: () => void
+  embedded?: boolean
 }
 
 /**
  * Dock buy-boat popup (BR S9-8).
  */
-export function DockBuy({ featureId, heroId, onClose }: DockBuyProps) {
+export function DockBuy({
+  featureId,
+  heroId,
+  onClose,
+  embedded = false,
+}: DockBuyProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const dock = findWorldDockById(session, featureId)
@@ -57,9 +63,9 @@ export function DockBuy({ featureId, heroId, onClose }: DockBuyProps) {
       ? `Not enough Gold (need ${formatAmount(cost)}, have ${formatAmount(goldOnHand)})`
       : null
 
-  return (
+  const panel = (
     <div
-      className="date-notice"
+      className={embedded ? 'game-window-modal' : 'date-notice'}
       role="dialog"
       aria-modal="true"
       aria-labelledby="dock-buy-title"
@@ -97,4 +103,5 @@ export function DockBuy({ featureId, heroId, onClose }: DockBuyProps) {
       </div>
     </div>
   )
+  return embedded ? <div className="game-window-embed">{panel}</div> : panel
 }

@@ -1,117 +1,89 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { ResourceBar } from '../hex/ResourceBar'
-import { humanPlayer, walletFromSession } from '../session/accessors'
+import {
+  ENERGY_RESOURCE_ID,
+  MANA_RESOURCE_ID,
+} from '../combat/abilityStatMath'
+import { poolCurrent, poolMax, resourceLabel } from '../combat/heroCast'
+import { GameWindowModal } from '../layout/GameWindowModal'
+import { GameWindowOverlay } from '../layout/GameWindowOverlay'
+import {
+  heroDailyRegenEffective,
+  heroPoolRegenProfile,
+} from '../items/heroRegen'
 import { getSession, subscribe } from '../session/store'
 import {
   getCachedCatalog,
-  heroEffectiveStats,
+  heroEffectiveStatsForHero,
   subscribeCatalog,
-  xpToReachLevel,
 } from './catalog'
 import { classDisciplines } from './libraryRules'
 import { HeroAbilitiesPanel } from './HeroAbilitiesPanel'
-import { ReservedCorner } from './ReservedCorner'
-import { ArmyTransfer } from './ArmyTransfer'
-import {
-  disciplineResourceId,
-  poolCurrent,
-  poolMax,
-  resourceLabel,
-} from '../combat/heroCast'
-import {
-  GENERIC_EMPTY_ART_FILENAME,
-  heroPortraitUrl,
-  itemArtUrl,
-} from './slotArt'
-import { heroAbilitiesHeader } from './heroPassiveDisplay'
-import { HeroTooltip } from './HeroTooltip'
-
-const STAT_CELLS: Array<{ key: keyof ReturnType<typeof heroEffectiveStats>; label: string }> = [
-  { key: 'speed', label: 'Speed' },
-  { key: 'stamina', label: 'Stamina' },
-  { key: 'strength', label: 'Strength' },
-  { key: 'intel', label: 'Intelligence' },
-  { key: 'defense', label: 'Defense' },
-  { key: 'resist', label: 'Resistance' },
-  { key: 'crit_pct', label: 'Crit Chance' },
-  { key: 'crit_amt', label: 'Crit Amount' },
-]
-const PAPERDOLL_FILE = 'paperdoll.png'
-const EQUIP_SLOTS = 6
-const PACK_SLOTS = 15
+import { HeroInventory } from './HeroInventory'
+import { heroAbilitiesHeader, heroPassiveDisplay } from './heroPassiveDisplay'
+import { heroDisplayStats } from './statCatalog'
+import { AbilityTip } from './AbilityTip'
 
 type HeroScreenProps = {
   heroId: string
   onClose: () => void
-  onSelectHero: (heroId: string) => void
-  onOpenHero?: (heroId?: string | null) => void
-  onCycleTown?: () => void
-  onQuests?: () => void
+  embedded?: boolean
 }
 
-function Face({
-  filename,
-  label,
-  large,
+function PoolBar({
+  catalog,
+  hero,
+  resourceId,
+  regenPerDay,
 }: {
-  filename: string | null
-  label: string
-  large?: boolean
+  catalog: ReturnType<typeof getCachedCatalog>
+  hero: import('../session/types').Hero
+  resourceId: number
+  regenPerDay: number
 }) {
-  const [missing, setMissing] = useState(false)
-  useEffect(() => {
-    setMissing(false)
-  }, [filename])
-  if (!filename || missing) {
-    return (
-      <span className="town-building-slot-filename">{filename || label}</span>
-    )
+  if (!catalog) {
+    return null
   }
+  const current = poolCurrent(hero, resourceId)
+  const max = poolMax(catalog, hero, resourceId)
+  const label = resourceLabel(catalog, resourceId)
+  const kind = resourceId === ENERGY_RESOURCE_ID ? 'energy' : 'mana'
   return (
-    <img
-      className={large ? 'hero-screen-portrait-img' : undefined}
-      src={heroPortraitUrl(filename)}
-      alt={label}
-      onError={() => setMissing(true)}
-    />
-  )
-}
-
-function PackSlotFace() {
-  const [missing, setMissing] = useState(false)
-  if (missing) {
-    return (
-      <span className="town-building-slot-filename">
-        {GENERIC_EMPTY_ART_FILENAME}
-      </span>
-    )
-  }
-  return (
-    <img
-      src={itemArtUrl(GENERIC_EMPTY_ART_FILENAME)}
-      alt=""
-      onError={() => setMissing(true)}
-    />
+    <div className="hero-screen-pool-row">
+      <div
+        className="combat-hero-resource hero-screen-pool-bar"
+        data-resource={kind}
+        aria-label={`${label} pool`}
+      >
+        <span
+          className="combat-hero-resource-fill"
+          style={{
+            width: `${
+              max > 0
+                ? Math.min(100, Math.max(0, (current / max) * 100))
+                : 0
+            }%`,
+          }}
+        />
+        <span className="combat-hero-resource-text">
+          {label} ({current} / {max})
+        </span>
+      </div>
+      <span className="hero-screen-pool-regen">+{regenPerDay}/day</span>
+    </div>
   )
 }
 
 export function HeroScreen({
   heroId,
   onClose,
-  onSelectHero,
-  onOpenHero,
-  onCycleTown,
-  onQuests,
+  embedded = true,
 }: HeroScreenProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
-  const wallet = walletFromSession(session)
-  const player = humanPlayer(session)
   const hero = session.heroes.find((row) => row.id === heroId) ?? null
   const disciplines =
     catalog && hero?.class_id != null ? classDisciplines(catalog, hero.class_id) : []
   const [disciplineId, setDisciplineId] = useState<number | null>(null)
-  const [scrollsOpen, setScrollsOpen] = useState(false)
   const learned = hero?.learned_abilities ?? []
 
   useEffect(() => {
@@ -125,119 +97,68 @@ export function HeroScreen({
     setDisciplineId(disciplines[0]?.id ?? null)
   }, [disciplineId, disciplines, heroId])
 
-  useEffect(() => {
-    if (!scrollsOpen) {
-      return
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') {
-        return
-      }
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      setScrollsOpen(false)
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [scrollsOpen])
+  const passive = catalog && hero ? heroPassiveDisplay(catalog, hero) : ''
+  const stats =
+    catalog && hero ? heroEffectiveStatsForHero(catalog, hero) : null
+  const statCells = catalog ? heroDisplayStats(catalog) : []
+  const poolProfile =
+    catalog && hero ? heroPoolRegenProfile(catalog, hero) : null
+  const regen =
+    catalog && hero ? heroDailyRegenEffective(catalog, hero) : null
 
-  const ownedIds = player?.hero_ids ?? []
-  const otherHeroes = ownedIds
-    .filter((id) => id !== heroId)
-    .slice(0, 7)
-    .map((id) => session.heroes.find((row) => row.id === id) ?? null)
-  while (otherHeroes.length < 7) {
-    otherHeroes.push(null)
-  }
-  const abilitiesTitle = catalog
-    ? heroAbilitiesHeader(catalog, hero)
-    : 'Abilities'
-  const level = hero?.current_level ?? 1
-  const xp = hero?.current_xp ?? 0
-  const xpNext = catalog ? xpToReachLevel(catalog, level) : null
-  const xpPct =
-    xpNext != null && xpNext > 0
-      ? Math.min(100, Math.max(0, (xp / xpNext) * 100))
-      : 100
-  const xpFmt = (n: number) => n.toLocaleString('en-US')
-  const xpLabel =
-    xpNext != null
-      ? `${hero?.name ?? 'Hero'} - Lvl ${level} XP (${xpFmt(xp)} / ${xpFmt(xpNext)})`
-      : `${hero?.name ?? 'Hero'} - Lvl ${level} XP (${xpFmt(xp)})`
-  const stats = catalog
-    ? heroEffectiveStats(catalog, hero?.class_id ?? null, level)
-    : null
-  const selectedDiscipline =
-    disciplines.find((row) => row.id === disciplineId) ?? null
-  const resourceId =
-    catalog && disciplineId != null
-      ? disciplineResourceId(catalog, disciplineId)
-      : null
-  const resourceCurrent =
-    hero && resourceId != null ? poolCurrent(hero, resourceId) : 0
-  const resourceMax =
-    catalog && hero && resourceId != null
-      ? poolMax(catalog, hero, resourceId)
-      : 0
-  const resourceBarLabel =
-    selectedDiscipline?.name ??
-    (catalog && resourceId != null ? resourceLabel(catalog, resourceId) : '')
-
-  return (
-    <div
-      className="town-management hero-screen"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="hero-screen-title"
-      data-tip-contain
-    >
-      <header className="town-management-bar">
-        <h1 id="hero-screen-title">Hero</h1>
-        <ResourceBar wallet={wallet} className="town-resource-strip" />
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
-      </header>
-      <div className="hero-screen-body">
-        <section className="hero-screen-panel hero-screen-abilities" aria-label={abilitiesTitle}>
-          <div className="hero-stats-block">
-            <h2>Hero Stats</h2>
-            <div className="hero-stats-grid">
-              {STAT_CELLS.map((cell) => (
-                <div key={cell.key} className="hero-stats-cell">
-                  <span className="hero-stats-label">{cell.label}</span>
+  const body = (
+    <div className="hero-screen-body" data-tip-contain>
+      <section className="hero-screen-left" aria-label="Hero stats and abilities">
+        <div className="hero-screen-left-top">
+          <h2 className="hero-screen-section-title">Stats</h2>
+          <div className="hero-stats-grid">
+            {statCells.map(({ column, stat }) => {
+              const tip = stat.description?.trim() ?? ''
+              const label = (
+                <span className="hero-stats-label">{stat.name}</span>
+              )
+              return (
+                <div key={column} className="hero-stats-cell">
+                  {tip ? (
+                    <AbilityTip description={tip}>{label}</AbilityTip>
+                  ) : (
+                    label
+                  )}
                   <span className="hero-stats-value">
-                    {stats ? stats[cell.key] : '—'}
+                    {stats ? stats[column] : '—'}
                   </span>
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
-          <h2 className="hero-abilities-header">{abilitiesTitle}</h2>
-          {catalog && resourceId != null ? (
-            <div
-              className="combat-hero-resource"
-              data-resource={resourceId === 1 ? 'energy' : 'mana'}
-              aria-label={`${resourceBarLabel} pool`}
-            >
-              <span
-                className="combat-hero-resource-fill"
-                style={{
-                  width: `${
-                    resourceMax > 0
-                      ? Math.min(
-                          100,
-                          Math.max(0, (resourceCurrent / resourceMax) * 100),
-                        )
-                      : 0
-                  }%`,
-                }}
-              />
-              <span className="combat-hero-resource-text">
-                {resourceBarLabel} ({resourceCurrent} / {resourceMax})
-              </span>
+          {passive ? (
+            <p className="hero-screen-passive">{passive}</p>
+          ) : null}
+          {poolProfile && regen ? (
+            <div className="hero-screen-pools">
+              {poolProfile.energy ? (
+                <PoolBar
+                  catalog={catalog}
+                  hero={hero!}
+                  resourceId={ENERGY_RESOURCE_ID}
+                  regenPerDay={regen.energy}
+                />
+              ) : null}
+              {poolProfile.mana ? (
+                <PoolBar
+                  catalog={catalog}
+                  hero={hero!}
+                  resourceId={MANA_RESOURCE_ID}
+                  regenPerDay={regen.mana}
+                />
+              ) : null}
             </div>
           ) : null}
+        </div>
+        <div className="hero-screen-left-bottom">
+          <h2 className="hero-screen-section-title">
+            {catalog ? heroAbilitiesHeader(catalog, hero) : 'Abilities'}
+          </h2>
           {catalog ? (
             <HeroAbilitiesPanel
               catalog={catalog}
@@ -248,128 +169,48 @@ export function HeroScreen({
               hero={hero}
             />
           ) : null}
-        </section>
-        <section className="hero-screen-panel hero-screen-right" aria-label="Hero">
-          <div className="hero-screen-identity">
-            <div
-              className="combat-hero-resource"
-              data-resource="xp"
-              aria-label="Experience"
-            >
-              <span
-                className="combat-hero-resource-fill"
-                style={{ width: `${xpPct}%` }}
-              />
-              <span className="combat-hero-resource-text">{xpLabel}</span>
-            </div>
-          </div>
-          <div className="hero-paperdoll-wrap" aria-hidden="true">
-            <div className="hero-equip-col">
-              {Array.from({ length: EQUIP_SLOTS / 2 }, (_, i) => (
-                <div key={`l${i}`} className="hero-equip-slot" />
-              ))}
-            </div>
-            <div className="hero-paperdoll">
-              {catalog && hero ? (
-                <HeroTooltip catalog={catalog} hero={hero} session={session}>
-                  <span className="hero-paperdoll-tip-anchor">
-                    <Face filename={PAPERDOLL_FILE} label="paperdoll.png" large />
-                  </span>
-                </HeroTooltip>
-              ) : (
-                <Face filename={PAPERDOLL_FILE} label="paperdoll.png" large />
-              )}
-            </div>
-            <div className="hero-equip-col">
-              {Array.from({ length: EQUIP_SLOTS / 2 }, (_, i) => (
-                <div key={`r${i}`} className="hero-equip-slot" />
-              ))}
-            </div>
-          </div>
-          <div className="hero-pack" aria-hidden="true">
-            {Array.from({ length: PACK_SLOTS }, (_, i) => (
-              <div key={i} className="hero-pack-slot">
-                <PackSlotFace />
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-      <div className="town-bottom-dock">
-        <ReservedCorner
-          onHero={() => onOpenHero?.(heroId)}
-          onTown={() => onCycleTown?.()}
-          onQuests={() => onQuests?.()}
-          onScrolls={() => setScrollsOpen(true)}
-        />
-        <ArmyTransfer
-          session={session}
-          townId=""
-          catalog={catalog}
-          leading={
-            <div className="town-army-row" aria-label="Other heroes">
-              {otherHeroes.map((other, col) => {
-                if (!other) {
-                  return (
-                    <div
-                      key={`empty-roster-${col}`}
-                      className="town-army-box town-army-portrait"
-                    />
-                  )
-                }
-                const face = (
-                  <button
-                    type="button"
-                    className="town-army-box town-army-portrait"
-                    aria-label={other.name}
-                    onClick={() => onSelectHero(other.id)}
-                  >
-                    <Face
-                      filename={other.image_path ?? null}
-                      label={other.name}
-                    />
-                  </button>
-                )
-                return catalog ? (
-                  <HeroTooltip
-                    key={other.id}
-                    catalog={catalog}
-                    hero={other}
-                    session={session}
-                  >
-                    {face}
-                  </HeroTooltip>
-                ) : (
-                  <span key={other.id}>{face}</span>
-                )
-              })}
-            </div>
-          }
-          rows={[
-            {
-              row: 'hero',
-              heroId,
-              portraitLabel: hero?.name ?? 'Hero',
-              portraitFilename: hero?.image_path ?? null,
-            },
-          ]}
-        />
-      </div>
-      {scrollsOpen ? (
-        <div
-          className="town-management marketplace-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="hero-scrolls-title"
-        >
-          <header className="town-management-bar">
-            <h1 id="hero-scrolls-title">Scrolls</h1>
-            <button type="button" onClick={() => setScrollsOpen(false)}>
-              Close
-            </button>
-          </header>
         </div>
-      ) : null}
+      </section>
+      <section className="hero-screen-right" aria-label="Inventory">
+        {catalog && hero ? (
+          <HeroInventory catalog={catalog} hero={hero} inCombat={false} />
+        ) : null}
+      </section>
     </div>
+  )
+
+  if (!embedded) {
+    return (
+      <div
+        className="town-management hero-screen"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="hero-screen-title"
+        data-tip-contain
+      >
+        <header className="town-management-bar">
+          <h1 id="hero-screen-title">{hero?.name ?? 'Hero'}</h1>
+          <button type="button" onClick={onClose}>Close</button>
+        </header>
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <GameWindowOverlay className="hero-screen-embedded game-window-overlay-host">
+      <GameWindowModal
+        className="hero-screen-modal"
+        aria-modal="true"
+        aria-labelledby="hero-screen-title"
+        onBackdropClick={onClose}
+        data-tip-contain
+      >
+        <h1 id="hero-screen-title" className="hero-screen-title">
+          {hero?.name ?? 'Hero'}
+        </h1>
+        {body}
+      </GameWindowModal>
+    </GameWindowOverlay>
   )
 }

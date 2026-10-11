@@ -207,6 +207,15 @@ export function isPassable(q: number, r: number): boolean {
   return tile != null && !tile.blocked
 }
 
+/** Walkable river crossing: Water terrain with blocked=false (BR S9-32). */
+export function isBridgeHex(q: number, r: number): boolean {
+  const tile = getTile(q, r)
+  if (!tile || tile.blocked) {
+    return false
+  }
+  return tile.terrain.trim().toLowerCase() === 'water'
+}
+
 export function forEachPassableHex(fn: (q: number, r: number) => void): void {
   for (const tile of tilesByCoord.values()) {
     if (!tile.blocked) {
@@ -280,6 +289,7 @@ export async function fetchTestGrid(
   mapSize?: string | number,
   townTypes?: string,
   signal?: AbortSignal,
+  difficultyId?: number,
 ): Promise<TestGridResponse> {
   try {
     const params = new URLSearchParams()
@@ -296,6 +306,9 @@ export async function fetchTestGrid(
     }
     if (townTypes != null && townTypes.trim()) {
       params.set('townTypes', townTypes.trim())
+    }
+    if (difficultyId != null && difficultyId > 0) {
+      params.set('difficulty', String(difficultyId))
     }
     const query = params.toString() ? `?${params.toString()}` : ''
     const response = await fetch(`/api/map/test-grid${query}`, { signal })
@@ -317,6 +330,9 @@ export async function fetchTestGrid(
     }
     if (!Array.isArray(payload.roads)) {
       payload.roads = []
+    }
+    if (!Array.isArray(payload.mobs)) {
+      payload.mobs = []
     }
     console.log(
       'Fetched test grid:',
@@ -346,6 +362,7 @@ export async function fetchTestGridOnce(
   mapSize?: string | number,
   townTypes?: string,
   signal?: AbortSignal,
+  difficultyId?: number,
 ): Promise<TestGridResponse> {
   activeGridFetch?.abort()
   const own = new AbortController()
@@ -359,7 +376,14 @@ export async function fetchTestGridOnce(
     }
   }
   try {
-    return await fetchTestGrid(seed, players, mapSize, townTypes, own.signal)
+    return await fetchTestGrid(
+      seed,
+      players,
+      mapSize,
+      townTypes,
+      own.signal,
+      difficultyId,
+    )
   } finally {
     if (activeGridFetch === own) {
       activeGridFetch = null

@@ -31,9 +31,13 @@ import {
 } from '../combat/battle'
 import { hexKey, stackOccupyingHex } from '../combat/movement'
 import { isCreatureArmyUnit, isTerrainBlockerUnit, isUntargetableStack, isWallSegmentUnit } from '../combat/siege'
+import {
+  heroStatForAbilityResource,
+  isEnergyAbilityResource,
+} from '../combat/abilityResourcePool'
 import { abilityMeetsCastGate, isSummonStats } from '../combat/summon'
 import {
-  heroEffectiveStats,
+  heroEffectiveStatsForHero,
   minRangePenaltyMult,
   shapePulsesOnMove,
   unitAttackShape,
@@ -201,8 +205,8 @@ function casterStat(
   caster: Hero,
   resourceId: number,
 ): number {
-  const stats = heroEffectiveStats(catalog, caster.class_id, caster.current_level)
-  return resourceId === 1 ? stats.strength : stats.intel
+  const stats = heroEffectiveStatsForHero(catalog, caster)
+  return heroStatForAbilityResource(catalog, stats, resourceId)
 }
 
 function rawAbilityDamage(
@@ -232,8 +236,13 @@ function rawAbilityDamage(
   return null
 }
 
-function abilityKind(ability: AbilityRow): DmgKind {
-  return ability.resource_id === 1 ? 'physical' : 'magic'
+function abilityKind(
+  catalog: ReferenceCatalog,
+  ability: AbilityRow,
+): DmgKind {
+  return isEnergyAbilityResource(catalog, ability.resource_id)
+    ? 'physical'
+    : 'magic'
 }
 
 function classify(
@@ -596,7 +605,7 @@ function expectedDamageTo(
     raw,
     target,
     catalog,
-    abilityKind(ability),
+    abilityKind(catalog, ability),
     heroForSide(target.side, heroes),
   )
   return Math.max(0, mit.damage)
@@ -666,12 +675,12 @@ function impactSummon(
   caster: Hero,
   ability: AbilityRow,
 ): number {
-  const heroStats = heroEffectiveStats(
+  const heroStats = heroEffectiveStatsForHero(catalog, caster)
+  const scale = heroStatForAbilityResource(
     catalog,
-    caster.class_id,
-    caster.current_level,
+    heroStats,
+    ability.resource_id,
   )
-  const scale = ability.resource_id === 1 ? heroStats.strength : heroStats.intel
   const unitId = Math.floor(asFinite(stats.summon_unit_id) ?? 0)
   if (unitId > 0) {
     const count = Math.max(1, Math.floor(asFinite(stats.summon_count) ?? 0))

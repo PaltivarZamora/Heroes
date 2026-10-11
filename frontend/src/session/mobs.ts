@@ -1,25 +1,10 @@
-import { hexDistance } from '../hex/pathfinding'
-import { forEachPassableHex, forEachTile, getTile, isPassable } from '../hex/world'
 import {
-  advancedUnitFor,
   buildingById,
   buildingGrowth,
-  getCachedCatalog,
   isAdvancedUnit,
-  sizeNameFromDims,
   unitById,
-  unitEffectiveTier,
   type ReferenceCatalog,
-  type UnitRow,
 } from '../town/catalog'
-import { chestGuardTiers } from '../hex/townFootprint'
-import {
-  mapMobAdvancedPct,
-  mapMobMinTownDist,
-  mapMobsType,
-  mapRandomMobs,
-  mapRandomMobsTier,
-} from '../ai/weights'
 import {
   ARMY_STACK_SLOTS,
   type GameSession,
@@ -27,21 +12,13 @@ import {
   type UnitStack,
 } from './types'
 
-function posKey(position: { q: number; r: number }): string {
-  return `${position.q},${position.r}`
-}
-
-function u32(n: number): number {
-  return n >>> 0
-}
-
-function mobRand(seed: number, n: number): number {
-  let h = u32(
-    Math.imul(seed, 0x9e3779b1) ^ Math.imul(n + 0x7f4a7c15, 0x85ebca6b),
-  )
-  h = u32((h ^ (h >>> 16)) * 0x7feb352d)
-  h = u32((h ^ (h >>> 15)) * 0x846ca68b)
-  return u32(h ^ (h >>> 16))
+/** One mob from the map response (layer 6). Session ids are assigned here. */
+export type GeneratedMob = {
+  q: number
+  r: number
+  stacks: Array<{ unitId?: number; unit_id?: number; qty: number }>
+  guardsLoot?: boolean
+  guards_loot?: boolean
 }
 
 function padSlots(slots: Array<string | null>): Array<string | null> {
@@ -50,86 +27,6 @@ function padSlots(slots: Array<string | null>): Array<string | null> {
     next.push(null)
   }
   return next
-}
-
-function occupiedKeys(session: GameSession): Set<string> {
-  const keys = new Set<string>()
-  for (const town of session.towns) {
-    keys.add(posKey(town.position))
-  }
-  for (const hero of session.heroes) {
-    keys.add(posKey(hero.position))
-  }
-  for (const node of session.nodes) {
-    if (node.kind === 'pickup' && node.collected) {
-      continue
-    }
-    keys.add(posKey(node.position))
-  }
-  for (const feature of session.features ?? []) {
-    keys.add(posKey(feature.position))
-    if (feature.kind === 'chest' && feature.guard) {
-      keys.add(posKey(feature.guard))
-    }
-  }
-  for (const mob of session.mobs) {
-    keys.add(posKey(mob.position))
-  }
-  return keys
-}
-
-function unitTownTypeId(
-  catalog: ReferenceCatalog,
-  unit: UnitRow,
-): number | null {
-  if (unit.town_id != null && unit.town_id > 0) {
-    return unit.town_id
-  }
-  const building = buildingById(catalog, unit.bldg_id)
-  return building != null && building.town_id > 0 ? building.town_id : null
-}
-
-function eligibleBaseUnits(
-  catalog: ReferenceCatalog,
-  maxTier: number,
-  townTypeId: number,
-): UnitRow[] {
-  return catalog.unit.filter((unit) => {
-    if (!unit.has_abilities || isAdvancedUnit(unit) || (unit.speed ?? 0) <= 0) {
-      return false
-    }
-    if (unitEffectiveTier(catalog, unit) > maxTier) {
-      return false
-    }
-    if (townTypeId > 0 && unitTownTypeId(catalog, unit) !== townTypeId) {
-      return false
-    }
-    return buildingGrowth(buildingById(catalog, unit.bldg_id)) > 0
-  })
-}
-
-function startingQty(catalog: ReferenceCatalog, unit: UnitRow): number {
-  return Math.max(1, buildingGrowth(buildingById(catalog, unit.bldg_id)))
-}
-
-function composition(
-  catalog: ReferenceCatalog,
-  unit: UnitRow,
-  advancedPct: number,
-): Array<{ unitId: number; qty: number }> {
-  const qty = startingQty(catalog, unit)
-  const advanced = advancedUnitFor(catalog, unit)
-  if (!advanced?.has_abilities) {
-    return [{ unitId: unit.id, qty }]
-  }
-  const advQty = Math.min(qty - 1, Math.floor((qty * advancedPct) / 100))
-  if (advQty <= 0) {
-    return [{ unitId: unit.id, qty }]
-  }
-  return [
-    { unitId: unit.id, qty: qty - advQty },
-    { unitId: advanced.id, qty: advQty },
-  ]
 }
 
 function nextMobId(session: GameSession): string {
@@ -171,272 +68,55 @@ function appendStack(
   }
 }
 
-function spawnOne(
+/**
+ * Copy layer-6 mobs into the session. Skips when a save already has heroes
+ * or mobs, so reload does not respawn what was killed or moved.
+ */
+export function hydrateGeneratedMobs(
   session: GameSession,
-  catalog: ReferenceCatalog,
-  position: { q: number; r: number },
-  unit: UnitRow,
-  advancedPct: number,
+  generated: readonly GeneratedMob[] | null | undefined,
 ): GameSession {
-  const mobId = nextMobId(session)
-  const slots = padSlots([])
+  if (session.mobs.length > 0 || session.heroes.length > 0) {
+    return session
+  }
+  if (!generated || generated.length === 0) {
+    return session
+  }
   let next = session
-  let slot = 0
-  for (const part of composition(catalog, unit, advancedPct)) {
-    if (slot >= ARMY_STACK_SLOTS || part.qty <= 0) {
+  for (const row of generated) {
+    if (!Number.isFinite(row.q) || !Number.isFinite(row.r)) {
       continue
     }
-    const added = appendStack(next, mobId, part.unitId, part.qty)
-    next = added.session
-    slots[slot] = added.stackId
-    slot += 1
-  }
-  if (slot === 0) {
-    return session
-  }
-  const mob: Mob = { id: mobId, position: { ...position }, slots_1_to_6: slots }
-  return { ...next, mobs: [...next.mobs, mob] }
-}
-
-function candidatesNearTown(
-  townPos: { q: number; r: number },
-  towns: Array<{ q: number; r: number }>,
-  occupied: Set<string>,
-  minTownDist: number,
-): Array<{ q: number; r: number }> {
-  const found: Array<{ q: number; r: number; dist: number }> = []
-  forEachPassableHex((q, r) => {
-    const hex = { q, r }
-    if (occupied.has(posKey(hex))) {
-      return
-    }
-    if (towns.some((town) => hexDistance(hex, town) < minTownDist)) {
-      return
-    }
-    found.push({ q, r, dist: hexDistance(hex, townPos) })
-  })
-  found.sort((a, b) => a.dist - b.dist || a.q - b.q || a.r - b.r)
-  return found
-}
-
-/**
- * Place `mobs × size_scale` neutrals across the map (per-map total, not
- * per-town) using live config (tier cap, Advanced %, min-distance). Always
- * adds a new batch — existing mobs stay; occupied hexes are skipped.
- * New-game seeding no-ops separately.
- */
-export function addWorldMobs(session: GameSession): GameSession {
-  if (session.towns.length === 0) {
-    return session
-  }
-  const catalog = getCachedCatalog()
-  if (!catalog) {
-    return session
-  }
-  const sizeName = sizeNameFromDims(
-    catalog,
-    session.game.settings.map_width,
-    session.game.settings.map_height,
-    session.game.settings.map_size,
-  )
-  const total = mapRandomMobs(catalog, sizeName)
-  const maxTier = mapRandomMobsTier(catalog, sizeName)
-  const advancedPct = mapMobAdvancedPct(catalog, sizeName)
-  const minTownDist = mapMobMinTownDist(catalog, sizeName)
-  const townTypeId = mapMobsType(catalog, sizeName)
-  let pool = eligibleBaseUnits(catalog, maxTier, townTypeId)
-  // Town filter can empty the pool when that faction's units aren't combat-ready
-  // yet (e.g. Grove missing speed/abilities). Fall back to all towns so the map
-  // still gets mobs.
-  if (pool.length === 0 && townTypeId > 0) {
-    pool = eligibleBaseUnits(catalog, maxTier, 0)
-  }
-  if (total <= 0 || pool.length === 0) {
-    return session
-  }
-  const townPositions = session.towns.map((town) => town.position)
-  const occupied = occupiedKeys(session)
-  const seed = session.game.seed || 1
-  let next = session
-  let n = session.mobs.length
-  // Build a unique near-town candidate pool, then place a map-total count.
-  const seen = new Set<string>()
-  const spots: Array<{ q: number; r: number }> = []
-  for (const town of session.towns) {
-    for (const hex of candidatesNearTown(
-      town.position,
-      townPositions,
-      occupied,
-      minTownDist,
-    )) {
-      const key = posKey(hex)
-      if (seen.has(key)) {
-        continue
-      }
-      seen.add(key)
-      spots.push(hex)
-    }
-  }
-  for (let i = 0; i < total && spots.length > 0; i += 1) {
-    const pick = mobRand(seed, n) % spots.length
-    const hex = spots.splice(pick, 1)[0]!
-    const unit = pool[mobRand(seed, n + 17) % pool.length]!
-    occupied.add(posKey(hex))
-    next = spawnOne(next, catalog, hex, unit, advancedPct)
-    n += 1
-  }
-  return next
-}
-
-/**
- * New-game / new-map only. No-op when mobs already exist (saves).
- */
-export function seedWorldMobs(session: GameSession): GameSession {
-  if (session.mobs.length > 0) {
-    return session
-  }
-  return addWorldMobs(seedIslandGuards(seedPocketGuards(seedChestGuards(session))))
-}
-
-function seedPocketGuards(session: GameSession): GameSession {
-  const catalog = getCachedCatalog()
-  if (!catalog) {
-    return session
-  }
-  const advancedPct = mapMobAdvancedPct(catalog)
-  const townTypeId = mapMobsType(catalog)
-  const occupied = occupiedKeys(session)
-  const seed = session.game.seed || 1
-  let next = session
-  let n = session.mobs.length
-  const entrances: Array<{ q: number; r: number; tier: number }> = []
-  forEachTile((q, r) => {
-    const tile = getTile(q, r)
-    if (!tile?.pocketEntrance || tile.pocketTier == null) {
-      return
-    }
-    entrances.push({ q, r, tier: tile.pocketTier })
-  })
-  for (const entrance of entrances) {
-    const key = posKey(entrance)
-    if (occupied.has(key) || !isPassable(entrance.q, entrance.r)) {
+    const parts = (row.stacks ?? [])
+      .map((stack) => {
+        const unitId = stack.unitId ?? stack.unit_id
+        const qty = Math.floor(Number(stack.qty))
+        return unitId != null && unitId > 0 && qty > 0
+          ? { unitId, qty }
+          : null
+      })
+      .filter((part): part is { unitId: number; qty: number } => part != null)
+      .slice(0, ARMY_STACK_SLOTS)
+    if (parts.length === 0) {
       continue
     }
-    let pool = unitsForTiers(catalog, [entrance.tier], townTypeId)
-    if (pool.length === 0 && townTypeId > 0) {
-      pool = unitsForTiers(catalog, [entrance.tier], 0)
+    const mobId = nextMobId(next)
+    const slots = padSlots([])
+    let slot = 0
+    for (const part of parts) {
+      const added = appendStack(next, mobId, part.unitId, part.qty)
+      next = added.session
+      slots[slot] = added.stackId
+      slot += 1
     }
-    if (pool.length === 0) {
-      continue
+    const guardsLoot = row.guardsLoot === true || row.guards_loot === true
+    const mob: Mob = {
+      id: mobId,
+      position: { q: row.q, r: row.r },
+      slots_1_to_6: slots,
+      guards_loot: guardsLoot ? true : undefined,
     }
-    const unit = pool[mobRand(seed, n + 47) % pool.length]!
-    occupied.add(key)
-    next = spawnOne(next, catalog, entrance, unit, advancedPct)
-    n += 1
-  }
-  return next
-}
-
-function seedIslandGuards(session: GameSession): GameSession {
-  const catalog = getCachedCatalog()
-  if (!catalog) {
-    return session
-  }
-  const advancedPct = mapMobAdvancedPct(catalog)
-  const townTypeId = mapMobsType(catalog)
-  const occupied = occupiedKeys(session)
-  const seed = session.game.seed || 1
-  let next = session
-  let n = session.mobs.length
-  const landings: Array<{ q: number; r: number; tier: number }> = []
-  forEachTile((q, r) => {
-    const tile = getTile(q, r)
-    if (tile?.islandGuardTier == null) {
-      return
-    }
-    landings.push({ q, r, tier: tile.islandGuardTier })
-  })
-  for (const landing of landings) {
-    const key = posKey(landing)
-    if (occupied.has(key) || !isPassable(landing.q, landing.r)) {
-      continue
-    }
-    let pool = unitsForTiers(catalog, [landing.tier], townTypeId)
-    if (pool.length === 0 && townTypeId > 0) {
-      pool = unitsForTiers(catalog, [landing.tier], 0)
-    }
-    if (pool.length === 0) {
-      continue
-    }
-    const unit = pool[mobRand(seed, n + 53) % pool.length]!
-    occupied.add(key)
-    next = spawnOne(next, catalog, landing, unit, advancedPct)
-    n += 1
-  }
-  return next
-}
-
-function unitsForTiers(
-  catalog: ReferenceCatalog,
-  tiers: number[],
-  townTypeId: number,
-): UnitRow[] {
-  const allowed = new Set(tiers)
-  if (allowed.size === 0) {
-    return []
-  }
-  return catalog.unit.filter((unit) => {
-    if (!unit.has_abilities || isAdvancedUnit(unit) || (unit.speed ?? 0) <= 0) {
-      return false
-    }
-    if (!allowed.has(unitEffectiveTier(catalog, unit))) {
-      return false
-    }
-    if (townTypeId > 0 && unitTownTypeId(catalog, unit) !== townTypeId) {
-      return false
-    }
-    return buildingGrowth(buildingById(catalog, unit.bldg_id)) > 0
-  })
-}
-
-/**
- * One guard mob per chest on its reserved adjacent hex (BR S9-3).
- * Tier constrained to the chest row's {@code guard_tiers}.
- */
-export function seedChestGuards(session: GameSession): GameSession {
-  const catalog = getCachedCatalog()
-  if (!catalog) {
-    return session
-  }
-  const advancedPct = mapMobAdvancedPct(catalog)
-  const townTypeId = mapMobsType(catalog)
-  const occupied = occupiedKeys(session)
-  const seed = session.game.seed || 1
-  let next = session
-  let n = session.mobs.length
-  for (const feature of session.features ?? []) {
-    if (feature.kind !== 'chest' || !feature.guard) {
-      continue
-    }
-    const key = posKey(feature.guard)
-    if (occupied.has(key)) {
-      continue
-    }
-    if (!isPassable(feature.guard.q, feature.guard.r)) {
-      continue
-    }
-    const tiers = chestGuardTiers(catalog, feature.level)
-    let pool = unitsForTiers(catalog, tiers, townTypeId)
-    if (pool.length === 0 && townTypeId > 0) {
-      pool = unitsForTiers(catalog, tiers, 0)
-    }
-    if (pool.length === 0) {
-      continue
-    }
-    const unit = pool[mobRand(seed, n + 31) % pool.length]!
-    occupied.add(key)
-    next = spawnOne(next, catalog, feature.guard, unit, advancedPct)
-    n += 1
+    next = { ...next, mobs: [...next.mobs, mob] }
   }
   return next
 }
@@ -462,7 +142,7 @@ function primaryUnitId(
     .filter((row): row is UnitStack => row != null && row.qty > 0)
   const basic = stacks.find((row) => {
     const unit = unitById(catalog, row.unit_id)
-    return unit != null && !isAdvancedUnit(unit)
+    return unit != null && !isAdvancedUnit(catalog, unit)
   })
   return (basic ?? stacks[0])?.unit_id ?? null
 }

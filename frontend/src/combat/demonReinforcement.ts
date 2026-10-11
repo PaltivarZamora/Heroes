@@ -187,7 +187,7 @@ function pickNewDemonUnitId(
   const rows = pool
     .map((id) => unitById(catalog, id))
     .filter((row): row is NonNullable<typeof row> => row != null)
-  const base = rows.find((row) => !isAdvancedUnit(row))
+  const base = rows.find((row) => !isAdvancedUnit(catalog, row))
   return (base ?? rows[0])?.id ?? null
 }
 

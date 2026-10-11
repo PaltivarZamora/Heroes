@@ -7,12 +7,23 @@ import {
   GOLD_RESOURCE_ID,
   resourceById,
 } from '../hex/resources'
+import { canGiveItemToHero, giveItemToHero } from '../items/give'
+import { rolledItemDisplayName } from '../items/display'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
   findChestById,
   openChest,
   removeChest,
+  updateChest,
 } from './accessors'
+import {
+  logChestLeftOpen,
+  logItemPickedUp,
+} from './gameLog'
+import {
+  onScreenBackpackFullChest,
+  onScreenPickedUpMessage,
+} from '../items/itemLogFormat'
 import type { GameSession } from './types'
 import {
   awardHeroXp,
@@ -46,9 +57,74 @@ function formatLootLines(
   return parts
 }
 
+function heroPlayerId(session: GameSession, heroId: string): string | null {
+  return session.heroes.find((row) => row.id === heroId)?.player_id ?? null
+}
+
+function claimChestItemLoot(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  featureId: string,
+  heroId: string,
+  chest: Extract<import('./types').MapFeature, { kind: 'chest' }>,
+): ChestClaimResult {
+  if (!chest.item) {
+    return { session, message: null, messageLines: null, levelUpNotice: null }
+  }
+  const itemName = rolledItemDisplayName(catalog, chest.item)
+  const playerId = heroPlayerId(session, heroId)
+  const given = giveItemToHero(session, catalog, heroId, chest.item)
+  if (given.ok) {
+    let next = removeChest(given.session, featureId)
+    if (playerId) {
+      next = logItemPickedUp(
+        next,
+        playerId,
+        heroId,
+        chest.item.uid,
+        itemName,
+      )
+    }
+    return {
+      session: next,
+      message: onScreenPickedUpMessage(catalog, chest.item),
+      messageLines: null,
+      levelUpNotice: null,
+    }
+  }
+  let next = updateChest(given.session, featureId, (row) => ({ ...row, open: true }))
+  if (playerId) {
+    next = logChestLeftOpen(next, playerId, heroId, itemName)
+  }
+  return {
+    session: next,
+    message: onScreenBackpackFullChest(catalog, chest.item),
+    messageLines: null,
+    levelUpNotice: null,
+  }
+}
+
+/** Open chest still holding an item — retry give only (no XP/Loot prompt). */
+export function tryOpenChestItemGive(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  featureId: string,
+  heroId: string,
+): ChestClaimResult {
+  const chest = findChestById(session, featureId)
+  if (
+    !chest?.item ||
+    !chest.open ||
+    !session.heroes.some((row) => row.id === heroId)
+  ) {
+    return { session, message: null, messageLines: null, levelUpNotice: null }
+  }
+  return claimChestItemLoot(session, catalog, featureId, heroId, chest)
+}
+
 /**
- * Apply XP / Loot / Leave for a chest (BR S9-3). AI and human share this path.
- * Max-level heroes still receive XP via {@link awardHeroXp} (no level gain).
+ * Apply XP / Loot / Leave for a closed chest (BR S9-3 + S9-41).
+ * Loot = item if present, else resources.
  */
 export function claimChest(
   session: GameSession,
@@ -78,7 +154,11 @@ export function claimChest(
     }
   }
 
-  // Loot
+  if (chest.item) {
+    const itemResult = claimChestItemLoot(next, catalog, featureId, heroId, chest)
+    return itemResult
+  }
+
   const gold = chestGold(catalog, chest.level)
   const loot = chest.loot
   const hero = next.heroes.find((row) => row.id === heroId)
@@ -112,28 +192,44 @@ export function claimChest(
   }
 }
 
-/** AI XP vs Loot rule: XP if highest-level hero (and not max level); else Loot. */
+export function chestMapTooltip(
+  catalog: ReferenceCatalog,
+  chest: Extract<
+    import('./types').MapFeature,
+    { kind: 'chest' }
+  >,
+): string {
+  if (chest.open && chest.item) {
+    return `Open Chest: ${rolledItemDisplayName(catalog, chest.item)}`
+  }
+  return chest.name
+}
+
 export function aiChestChoice(
   session: GameSession,
   catalog: ReferenceCatalog,
   playerId: string,
   heroId: string,
-): 'xp' | 'loot' {
+  featureId: string,
+): ChestClaimChoice {
+  const chest = findChestById(session, featureId)
+  if (chest?.item && !chest.open) {
+    if (canGiveItemToHero(session, catalog, heroId, chest.item)) {
+      return 'loot'
+    }
+    return 'xp'
+  }
+  const heroes = session.heroes.filter((row) => row.player_id === playerId)
   const hero = session.heroes.find((row) => row.id === heroId)
-  if (!hero) {
+  if (!hero || heroes.length === 0) {
     return 'loot'
   }
-  const maxLevel = catalog.levels.reduce(
-    (max, row) => (row.id > max ? row.id : max),
-    1,
+  const maxLevel = heroes.reduce(
+    (best, row) => Math.max(best, row.current_level),
+    0,
   )
   if (hero.current_level >= maxLevel) {
-    return 'loot'
+    return 'xp'
   }
-  const own = session.heroes.filter((row) => row.player_id === playerId)
-  const highest = own.reduce(
-    (best, row) => (row.current_level > best.current_level ? row : best),
-    own[0] ?? hero,
-  )
-  return highest.id === hero.id ? 'xp' : 'loot'
+  return 'loot'
 }

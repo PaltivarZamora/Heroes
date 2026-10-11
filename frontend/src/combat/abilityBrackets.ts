@@ -26,7 +26,6 @@ import {
   pushBackDistance,
   raiseFromKillsPct,
   resistibleTooltipClause,
-  resourceStat,
   sapStrengthPct,
   scaledResourceStat,
   seedsOfShadowCount,
@@ -37,6 +36,7 @@ import {
   usesFromStats,
   wildSurgeRollBounds,
 } from './abilityStatMath'
+import { resourceStatForAbilityResource } from './abilityResourcePool'
 
 export type AbilityTooltipHero = Pick<Hero, 'class_id' | 'current_level'>
 
@@ -66,7 +66,12 @@ function abilityResource(
   ability: AbilityRow,
 ): number {
   const pool = heroPool(catalog, hero)
-  return resourceStat(pool.strength, pool.intel, ability.resource_id)
+  return resourceStatForAbilityResource(
+    catalog,
+    pool.strength,
+    pool.intel,
+    ability.resource_id,
+  )
 }
 
 /** Clause inserted for `[persists]` when `persists_on_summon` is true. */

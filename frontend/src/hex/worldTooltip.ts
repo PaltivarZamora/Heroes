@@ -1,6 +1,7 @@
 import { formatAmount, resourceById } from './resources'
 import type { GameSession, Hero, Mob, Node, Town } from '../session/types'
 import { mobLabel } from '../session/mobs'
+import { mobIsAggressive } from './mobAggro'
 import {
   heroTypeName,
   resourceWeeklyNode,
@@ -15,9 +16,12 @@ export function worldHoverTooltipText(
     town?: Town
     hero?: Hero
     mob?: Mob
+    /** Selected hero. Used for the mob aggro hint. */
+    viewer?: Hero | null
     node?: Node
     fountain?: boolean
     chestName?: string | null
+    groundItemName?: string | null
     signText?: string | null
     libraryText?: string | null
     hanger?: boolean
@@ -43,10 +47,20 @@ export function worldHoverTooltipText(
       : label
   }
   if (hit.mob) {
-    return mobLabel(session, catalog, hit.mob)
+    const label = mobLabel(session, catalog, hit.mob)
+    if (
+      hit.viewer &&
+      mobIsAggressive(session, catalog, hit.viewer, hit.mob)
+    ) {
+      return `${label}\nLooks dangerous`
+    }
+    return label
   }
   if (hit.chestName) {
     return hit.chestName
+  }
+  if (hit.groundItemName) {
+    return hit.groundItemName
   }
   if (hit.libraryText) {
     return hit.libraryText

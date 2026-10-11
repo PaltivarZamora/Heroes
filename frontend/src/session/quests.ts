@@ -4,6 +4,7 @@ import { GOLD_RESOURCE_ID, resourceById } from '../hex/resources'
 import { forEachPassableHex, getTile, isPassable } from '../hex/world'
 import { isSiegeEngineUnit } from '../combat/siege'
 import {
+  advancedUnitFor,
   buildingById,
   buildingGrowth,
   isAdvancedUnit,
@@ -27,6 +28,10 @@ import {
 } from './xp'
 import { compassDirection } from './sign'
 import { removeWorldMob } from './mobs'
+import { giveItemToHero } from '../items/give'
+import { rolledItemDisplayName } from '../items/display'
+import { logQuestItemReward } from './gameLog'
+import { QUEST_REWARD_NO_ROOM } from '../items/itemLogFormat'
 import {
   ARMY_STACK_SLOTS,
   type AxialPos,
@@ -566,7 +571,7 @@ function preRollDefeatStacks(
   const stackCount = Math.max(1, tier * stacksPerTier)
   const basePool = catalog.unit.filter(
     (unit) =>
-      !isAdvancedUnit(unit) && isRecruitableExactTier(catalog, unit, tier),
+      !isAdvancedUnit(catalog, unit) && isRecruitableExactTier(catalog, unit, tier),
   )
   if (basePool.length === 0) {
     return []
@@ -580,14 +585,8 @@ function preRollDefeatStacks(
     const wantAdvanced = rng() < 0.5
     let unit = base
     if (wantAdvanced) {
-      const advanced = catalog.unit.find(
-        (row) =>
-          isAdvancedUnit(row) &&
-          isRecruitableExactTier(catalog, row, tier) &&
-          row.name.trim().toLowerCase() ===
-            `advanced ${base.name.trim()}`.toLowerCase(),
-      )
-      if (advanced) {
+      const advanced = advancedUnitFor(catalog, base)
+      if (advanced && isRecruitableExactTier(catalog, advanced, tier)) {
         unit = advanced
       }
     }
@@ -1346,6 +1345,7 @@ export function acceptNoticeBoardQuest(
   featureId: string,
   playerId: string,
   heroId: string,
+  rewardItem?: import('../items/types').RolledItem | null,
 ): { session: GameSession; error: string | null } {
   void catalog
   const board = findNoticeBoardById(session, featureId)
@@ -1376,6 +1376,7 @@ export function acceptNoticeBoardQuest(
       completed: false,
       turned_in: false,
       accepted_on_day: day,
+      ...(rewardItem != null ? { reward_item: rewardItem } : {}),
     }),
   )
   const quest = live.quest
@@ -1720,6 +1721,35 @@ export function collectQuestReward(
     }
     next = spent.session
   }
+  const state = playerQuestState(board, playerId)
+  const rewardItem = state.reward_item
+  if (rewardItem) {
+    const given = giveItemToHero(next, catalog, heroId, rewardItem)
+    if (!given.ok) {
+      return {
+        session: next,
+        error: QUEST_REWARD_NO_ROOM,
+        levelUpNotice: null,
+      }
+    }
+    next = given.session
+    const itemName = rolledItemDisplayName(catalog, rewardItem)
+    next = logQuestItemReward(
+      next,
+      playerId,
+      heroId,
+      rewardItem.uid,
+      itemName,
+    )
+    next = updateBoard(next, featureId, (row) =>
+      setPlayerState(row, playerId, {
+        ...playerQuestState(row, playerId),
+        completed: true,
+        turned_in: true,
+      }),
+    )
+    return { session: next, error: null, levelUpNotice: null }
+  }
   next = grantGold(next, playerId, quest.reward_gold)
   const xp = awardHeroXp(next, catalog, heroId, quest.reward_xp)
   next = xp.session
@@ -1735,6 +1765,31 @@ export function collectQuestReward(
     error: null,
     levelUpNotice: levelUpNoticeForAward(catalog, xp),
   }
+}
+
+export function questRewardLabelForPlayer(
+  session: GameSession,
+  catalog: ReferenceCatalog,
+  featureId: string,
+  playerId: string,
+): string | null {
+  const board = findNoticeBoardById(session, featureId)
+  const quest = board?.quest
+  if (!quest) {
+    return null
+  }
+  const state = board ? playerQuestState(board, playerId) : null
+  if (!state?.accepted) {
+    return null
+  }
+  if (state.reward_item) {
+    return rolledItemDisplayName(catalog, state.reward_item)
+  }
+  const parts = [
+    quest.reward_xp > 0 ? `${quest.reward_xp} XP` : null,
+    quest.reward_gold > 0 ? `${quest.reward_gold} Gold` : null,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' + ') : null
 }
 
 /** Mark Defeat Mob quests completed when the board's target dies. */

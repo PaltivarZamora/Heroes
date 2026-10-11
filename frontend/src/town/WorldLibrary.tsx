@@ -18,12 +18,18 @@ type WorldLibraryProps = {
   featureId: string
   heroId: string
   onClose: () => void
+  embedded?: boolean
 }
 
 /**
  * World-map Library shop (BR S9-5). Compact panel with rolled ability slots.
  */
-export function WorldLibrary({ featureId, heroId, onClose }: WorldLibraryProps) {
+export function WorldLibrary({
+  featureId,
+  heroId,
+  onClose,
+  embedded = false,
+}: WorldLibraryProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const feature = findWorldLibraryById(session, featureId)
@@ -71,9 +77,9 @@ export function WorldLibrary({ featureId, heroId, onClose }: WorldLibraryProps) 
     setMessage(error)
   }
 
-  return (
+  const panel = (
     <div
-      className="date-notice"
+      className={embedded ? 'game-window-modal' : 'date-notice'}
       role="dialog"
       aria-modal="true"
       aria-labelledby="world-library-title"
@@ -139,6 +145,7 @@ export function WorldLibrary({ featureId, heroId, onClose }: WorldLibraryProps) 
       </div>
     </div>
   )
+  return embedded ? <div className="game-window-embed">{panel}</div> : panel
 }
 
 /** Mark visit when the panel opens (for map tooltip). */

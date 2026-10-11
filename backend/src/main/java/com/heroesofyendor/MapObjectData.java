@@ -34,11 +34,26 @@ public record MapObjectData(
         /** Notice Board linked town axial q (permanent). */
         Integer linkedTownQ,
         /** Notice Board linked town axial r (permanent). */
-        Integer linkedTownR) {
+        Integer linkedTownR,
+        /** Rolled equipment reward (BR S9-41); null when none. */
+        ChestRolledItem chestItem) {
 
     /** One rolled resource pick inside a chest. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record LootEntry(int resourceId, int qty) {}
+
+    /** Rolled item stored on a chest at world generation. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ChestRolledItem(
+            int itemId,
+            int rarityId,
+            Integer adjId,
+            int variation,
+            List<ItemStatLine> stats) {
+
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public record ItemStatLine(int statId, int amt) {}
+    }
 
     /** Convenience for objects that do not use chest/sign/library/dock fields. */
     public static MapObjectData basic(
@@ -53,7 +68,7 @@ public record MapObjectData(
             Integer qty) {
         return new MapObjectData(
                 q, r, kind, resourceId, marker, name, townTypeId, flipped, qty,
-                null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
     }
 
     /** Notice Board linked to a town entry hex. */
@@ -82,6 +97,7 @@ public record MapObjectData(
                 null,
                 null,
                 linkedTownQ,
-                linkedTownR);
+                linkedTownR,
+                null);
     }
 }

@@ -1,6 +1,7 @@
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById, unitHasTag } from '../town/catalog'
+import { TAG_FACTION_CITADEL, unitHasNamedTag } from '../town/unitTags'
 import {
   missingPassiveStatKey,
   passiveStatNumber,
@@ -78,10 +79,7 @@ export function isCitadelUnit(
   if (!unit?.town_id) {
     return false
   }
-  const citadelId = catalog.town.find(
-    (row) => row.name.trim().toLowerCase() === 'citadel',
-  )?.id
-  return citadelId != null && unit.town_id === citadelId
+  return unitHasNamedTag(catalog, unit, TAG_FACTION_CITADEL)
 }
 
 function tagIdByFilterName(

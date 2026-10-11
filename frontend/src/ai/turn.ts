@@ -5,10 +5,10 @@ import {
   activePlayer,
   findChestById,
   launchHeroFlight,
-  openChest,
   syncHero,
 } from '../session/accessors'
-import { aiChestChoice, claimChest } from '../session/chest'
+import { aiChestChoice, claimChest, tryOpenChestItemGive } from '../session/chest'
+import { rollSessionItemReward } from '../items/rewardRoll'
 import { seedStartingVision } from '../session/create'
 import {
   boardBoat,
@@ -29,9 +29,12 @@ import { readSign } from '../session/sign'
 import { getSession, updateSession } from '../session/store'
 import { getCachedCatalog } from '../town/catalog'
 import { decideAndApplyArmyAlloc, decideAndApplyHeroTrade } from './armyAlloc'
+import { equipBestItemsForHero } from './itemEquip'
+import { tryPickupGroundItemAtHex } from '../session/groundItem'
 import { decideAndApplyLibraryLearn, decideAndApplyWorldLibraryLearn, ensurePlayerLibraryOffers } from './libraryLearn'
 import { questVisitFeatureIds } from './noticeBoard'
 import { appendAiTrace } from './trace'
+import { logEnemyHeroMoved } from '../session/gameLog'
 import { decideAndApplyTownBuild } from './townBuild'
 import { decideWorldMove, worldAttackPos, type WorldAttackTarget } from './worldMove'
 
@@ -56,14 +59,38 @@ function samePos(
   return a.q === b.q && a.r === b.r
 }
 
-function applyNoticeBoardArrival(
+async function aiRequestMapMove(
+  aiPlayerId: string,
+  heroId: string,
+  dest: { q: number; r: number },
+  walkOnto?: { q: number; r: number } | null,
+): Promise<boolean> {
+  const moved = await requestMapMove(dest, walkOnto ?? null)
+  if (moved) {
+    const live = getSession().heroes.find((row) => row.id === heroId)
+    if (live) {
+      updateSession((session) =>
+        logEnemyHeroMoved(
+          session,
+          aiPlayerId,
+          heroId,
+          live.position.q,
+          live.position.r,
+        ),
+      )
+    }
+  }
+  return moved
+}
+
+async function applyNoticeBoardArrival(
   playerId: string,
   heroId: string,
   intent: {
     featureId: string
     purpose: 'scout_accept' | 'collect'
   },
-): void {
+): Promise<void> {
   const session = getSession()
   const catalog = getCachedCatalog()
   const board = findNoticeBoardById(session, intent.featureId)
@@ -85,7 +112,10 @@ function applyNoticeBoardArrival(
         heroId,
       )
       error = result.error
-      return result.error ? current : result.session
+      if (result.error) {
+        return current
+      }
+      return equipBestItemsForHero(result.session, catalog, heroId)
     })
     appendAiTrace(
       error
@@ -94,19 +124,30 @@ function applyNoticeBoardArrival(
     )
     return
   }
-  // Always accept; never decline (BR S9-11).
+  const questTier = board.quest?.tier ?? 1
   let error: string | null = null
-  updateSession((current) => {
-    const result = acceptNoticeBoardQuest(
-      current,
+  try {
+    const rolled = await rollSessionItemReward(
+      getSession(),
       catalog,
-      intent.featureId,
-      playerId,
-      heroId,
+      'quest_item_rarity',
+      questTier,
     )
-    error = result.error
-    return result.error ? current : result.session
-  })
+    updateSession((current) => {
+      const result = acceptNoticeBoardQuest(
+        rolled.session,
+        catalog,
+        intent.featureId,
+        playerId,
+        heroId,
+        rolled.item,
+      )
+      error = result.error
+      return result.error ? current : result.session
+    })
+  } catch (err) {
+    error = err instanceof Error ? err.message : 'Quest reward roll failed'
+  }
   appendAiTrace(
     error
       ? `AI world_move — ${hero.name} accept notice board ${intent.featureId} failed: ${error}`
@@ -236,7 +277,18 @@ export async function runAiTurn(
           break
         }
         const actor = activePlayer(getSession()) ?? player
-        const intent = decideWorldMove(getSession(), actor, live)
+        const decision = decideWorldMove(getSession(), actor, live)
+        if (decision.routeCommit !== undefined) {
+          updateSession((current) => ({
+            ...current,
+            heroes: current.heroes.map((row) =>
+              row.id === live.id
+                ? { ...row, ai_route_commit: decision.routeCommit }
+                : row,
+            ),
+          }))
+        }
+        const intent = decision.intent
         if (!intent) {
           break
         }
@@ -297,7 +349,7 @@ export async function runAiTurn(
             }
           }
           if (intent.kind === 'seek_notice_board') {
-            applyNoticeBoardArrival(player.id, live.id, intent)
+            await applyNoticeBoardArrival(player.id, live.id, intent)
           }
           if (intent.kind === 'board_boat') {
             updateSession((current) =>
@@ -316,13 +368,27 @@ export async function runAiTurn(
           updateSession((current) =>
             disembarkBoat(current, live.id, intent.dest).session,
           )
+          updateSession((current) => ({
+            ...current,
+            heroes: current.heroes.map((row) =>
+              row.id === live.id && row.ai_route_commit?.mode === 'boat'
+                ? {
+                    ...row,
+                    ai_route_commit: {
+                      ...row.ai_route_commit,
+                      mode: 'walk',
+                    },
+                  }
+                : row,
+            ),
+          }))
           appendAiTrace(
             `AI world_move — ${live.name} disembarks at ${intent.dest.q},${intent.dest.r}`,
           )
           break
         }
         if (intent.kind === 'sail') {
-          const moved = await requestMapMove(intent.dest, null)
+          const moved = await aiRequestMapMove(player.id, live.id,intent.dest, null)
           if (!moved) {
             appendAiTrace(
               `AI world_move — ${live.name} sail to ${intent.dest.q},${intent.dest.r} did not run`,
@@ -334,7 +400,7 @@ export async function runAiTurn(
         }
         if (intent.kind === 'board_boat') {
           if (!samePos(live.position, intent.dest)) {
-            const moved = await requestMapMove(intent.dest, intent.dest)
+            const moved = await aiRequestMapMove(player.id, live.id,intent.dest, intent.dest)
             if (!moved) {
               appendAiTrace(
                 `AI world_move — ${live.name} approach boat did not run`,
@@ -360,7 +426,7 @@ export async function runAiTurn(
         }
         if (intent.kind === 'seek_dock') {
           if (!samePos(live.position, intent.dest)) {
-            const moved = await requestMapMove(intent.dest, null)
+            const moved = await aiRequestMapMove(player.id, live.id,intent.dest, null)
             if (!moved) {
               appendAiTrace(
                 `AI world_move — ${live.name} approach dock did not run`,
@@ -388,7 +454,7 @@ export async function runAiTurn(
         }
         if (intent.kind === 'seek_recruits') {
           if (!samePos(live.position, intent.dest)) {
-            const moved = await requestMapMove(intent.dest, null)
+            const moved = await aiRequestMapMove(player.id, live.id,intent.dest, null)
             if (!moved) {
               appendAiTrace(
                 `AI world_move — ${live.name} approach recruits did not run`,
@@ -433,7 +499,7 @@ export async function runAiTurn(
         }
         if (intent.kind === 'seek_notice_board') {
           if (!samePos(live.position, intent.dest)) {
-            const moved = await requestMapMove(intent.dest, null)
+            const moved = await aiRequestMapMove(player.id, live.id,intent.dest, null)
             if (!moved) {
               appendAiTrace(
                 `AI world_move — ${live.name} approach notice board did not run`,
@@ -444,7 +510,7 @@ export async function runAiTurn(
           const afterBoard =
             getSession().heroes.find((row) => row.id === hero.id) ?? null
           if (afterBoard) {
-            applyNoticeBoardArrival(player.id, afterBoard.id, intent)
+            await applyNoticeBoardArrival(player.id, afterBoard.id, intent)
           }
           tryAiHeroTrade(player, hero.id, traded)
           continue
@@ -476,7 +542,7 @@ export async function runAiTurn(
         }
         if (intent.kind === 'attack') {
           if (!samePos(live.position, intent.dest)) {
-            const moved = await requestMapMove(intent.dest, intent.dest)
+            const moved = await aiRequestMapMove(player.id, live.id,intent.dest, intent.dest)
             if (!moved) {
               appendAiTrace(
                 `AI world_move — ${live.name} move to ${intent.dest.q},${intent.dest.r} did not run (map busy or no path)`,
@@ -514,9 +580,57 @@ export async function runAiTurn(
           }
           continue
         }
+        if (intent.kind === 'ground_item') {
+          const moved = await aiRequestMapMove(
+            player.id,
+            live.id,
+            intent.dest,
+            intent.dest,
+          )
+          if (!moved) {
+            appendAiTrace(
+              `AI world_move — ${live.name} could not reach ground item ${intent.featureId}`,
+            )
+            break
+          }
+          const catalog = getCachedCatalog()
+          const after = getSession().heroes.find((row) => row.id === hero.id)
+          if (after && catalog) {
+            updateSession((current) => {
+              let next = tryPickupGroundItemAtHex(
+                current,
+                catalog,
+                after.position.q,
+                after.position.r,
+                after.id,
+              ).session
+              next = equipBestItemsForHero(next, catalog, after.id)
+              return next
+            })
+          }
+          appendAiTrace(`AI world_move — ${live.name} picked up ground item`)
+          tryAiHeroTrade(player, hero.id, traded)
+          continue
+        }
+        if (intent.kind === 'meet_ally') {
+          const moved = await aiRequestMapMove(
+            player.id,
+            live.id,
+            intent.dest,
+            null,
+          )
+          if (!moved) {
+            appendAiTrace(
+              `AI world_move — ${live.name} could not reach ally ${intent.allyHeroId}`,
+            )
+            break
+          }
+          tryAiHeroTrade(player, hero.id, traded)
+          continue
+        }
         if (intent.kind === 'chest') {
           if (!samePos(live.position, intent.dest)) {
-            const moved = await requestMapMove(intent.dest, null)
+            const moved = await aiRequestMapMove(player.id, live.id,intent.dest, null)
             if (!moved) {
               appendAiTrace(
                 `AI world_move — ${live.name} approach chest did not run`,
@@ -533,19 +647,43 @@ export async function runAiTurn(
             catalog &&
             hexDistance(after.position, chest.position) <= 1
           ) {
-            updateSession((current) => openChest(current, chest.id))
-            const choice = aiChestChoice(
-              getSession(),
-              catalog,
-              player.id,
-              after.id,
-            )
-            updateSession((current) =>
-              claimChest(current, catalog, chest.id, after.id, choice).session,
-            )
-            appendAiTrace(
-              `AI world_move — ${after.name} takes chest ${chest.name} (${choice})`,
-            )
+            if (chest.open && chest.item) {
+              updateSession((current) => {
+                let next = tryOpenChestItemGive(
+                  current,
+                  catalog,
+                  chest.id,
+                  after.id,
+                ).session
+                next = equipBestItemsForHero(next, catalog, after.id)
+                return next
+              })
+              appendAiTrace(
+                `AI world_move — ${after.name} retries open chest ${chest.name}`,
+              )
+            } else {
+              const choice = aiChestChoice(
+                getSession(),
+                catalog,
+                player.id,
+                after.id,
+                chest.id,
+              )
+              updateSession((current) => {
+                let next = claimChest(
+                  current,
+                  catalog,
+                  chest.id,
+                  after.id,
+                  choice,
+                ).session
+                next = equipBestItemsForHero(next, catalog, after.id)
+                return next
+              })
+              appendAiTrace(
+                `AI world_move — ${after.name} takes chest ${chest.name} (${choice})`,
+              )
+            }
           } else {
             appendAiTrace(
               `AI world_move — ${live.name} could not reach chest ${intent.featureId}`,
@@ -555,7 +693,7 @@ export async function runAiTurn(
           continue
         }
         const walkOnto = intent.kind === 'explore' ? null : intent.dest
-        const moved = await requestMapMove(intent.dest, walkOnto)
+        const moved = await aiRequestMapMove(player.id, live.id,intent.dest, walkOnto)
         if (!moved) {
           appendAiTrace(
             `AI world_move — ${live.name} move to ${intent.dest.q},${intent.dest.r} did not run (map busy or no path)`,

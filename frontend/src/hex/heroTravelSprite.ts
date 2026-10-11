@@ -2,27 +2,22 @@ import { Assets, Texture } from 'pixi.js'
 import type { AxialPos, GameSession, Hero } from '../session/types'
 import { getCachedCatalog, heroTypeName, type ReferenceCatalog } from '../town/catalog'
 import { boatOccupiedByHero } from './boat'
+import {
+  flightTransportSpriteFile,
+  TRANSPORT_BOAT_FILE,
+} from './flightTransport'
 
 /**
- * World-map hero travel sprites (BR S9-7).
- * Files live beside feature art under:
- *   `frontend/public/assets/heroes/sprites/`
- *   → served as `/assets/heroes/sprites/{Horse|Balloon|Boat}.png`
+ * World-map hero travel sprites (BR S9-7 / S9-27).
+ * Files live under `frontend/public/assets/heroes/sprites/`.
  */
 
 export const HERO_TRAVEL_SPRITE_DIR = '/assets/heroes/sprites'
 
-type TravelArt = {
-  file: string
-  /** Which way the raw PNG faces before any mirror. */
-  artFaces: HeroTravelFacing
-}
-
 const TRAVEL_ART = {
-  balloon: { file: 'Balloon.png', artFaces: 'right' },
-  boat: { file: 'Boat.png', artFaces: 'right' },
-  mount: { artFaces: 'left' },
-} as const satisfies Record<string, TravelArt | { artFaces: HeroTravelFacing }>
+  transport: { artFaces: 'left' as HeroTravelFacing },
+  mount: { artFaces: 'left' as HeroTravelFacing },
+} as const
 
 /** Land mount filename from hero_type.name (spaces → underscores). */
 export function mountSpriteFile(className: string): string {
@@ -42,10 +37,9 @@ export function mountSpriteFileForHero(
   return mountSpriteFile(name)
 }
 
-/** Filenames only (preload / boat markers). */
+/** Filenames only (preload). */
 export const HERO_TRAVEL_FILES = {
-  balloon: TRAVEL_ART.balloon.file,
-  boat: TRAVEL_ART.boat.file,
+  boat: TRANSPORT_BOAT_FILE,
 } as const
 
 export type HeroTravelFacing = 'left' | 'right'
@@ -58,31 +52,29 @@ export type HeroTravelSprite = {
 }
 
 /**
- * Pick travel art from hero state. One place for Dock (Boat) / flight / land.
+ * Pick travel art from hero state. One place for boat / flight / land.
  * Missing files → loader returns null → HexMap keeps circle + name fallback.
  */
 export function heroTravelSprite(
   hero: Hero,
   session?: GameSession | null,
 ): HeroTravelSprite {
+  const facing = hero.travel_facing ?? 'right'
   const boarded =
     session != null && boatOccupiedByHero(session, hero.id) != null
   if (boarded) {
-    const facing = hero.travel_facing ?? 'right'
     return {
-      file: TRAVEL_ART.boat.file,
-      flipX: facing !== TRAVEL_ART.boat.artFaces,
+      file: TRANSPORT_BOAT_FILE,
+      flipX: facing !== TRAVEL_ART.transport.artFaces,
     }
   }
   if (hero.flight) {
-    const facing = hero.travel_facing ?? 'right'
     return {
-      file: TRAVEL_ART.balloon.file,
-      flipX: facing !== TRAVEL_ART.balloon.artFaces,
+      file: flightTransportSpriteFile(hero.flight),
+      flipX: facing !== TRAVEL_ART.transport.artFaces,
     }
   }
   const file = mountSpriteFileForHero(hero)
-  const facing = hero.travel_facing ?? 'right'
   return {
     file,
     flipX: facing !== TRAVEL_ART.mount.artFaces,
@@ -92,7 +84,6 @@ export function heroTravelSprite(
 /**
  * Screen left/right for a pointy-top axial step.
  * W / SW / NW → left; E / NE / SE → right. Null when not moving.
- * Persists on the hero via `travel_facing` so idle markers keep last direction.
  */
 export function facingFromMove(
   from: AxialPos,
@@ -122,7 +113,6 @@ function travelUrls(fileName: string): string[] {
   return [
     trimmed.startsWith('/') ? trimmed : `${HERO_TRAVEL_SPRITE_DIR}/${bare}`,
     `${HERO_TRAVEL_SPRITE_DIR}/${base}.png`,
-    // Legacy / mistaken drop paths from earlier passes.
     `/assets/travel/${base}.png`,
     `/assets/features/${base}.png`,
   ]
@@ -179,12 +169,19 @@ export async function loadTravelTexture(
   }
 }
 
-/** Warm Balloon / Boat and all class mounts once with other map art. */
+/** Warm transport boat, world, town types, and class mounts. */
 export function preloadHeroTravelSprites(catalog?: ReferenceCatalog | null): void {
-  void loadTravelTexture(HERO_TRAVEL_FILES.balloon)
-  void loadTravelTexture(HERO_TRAVEL_FILES.boat)
+  void loadTravelTexture(TRANSPORT_BOAT_FILE)
+  void loadTravelTexture('Transport_World.png')
   const ref = catalog ?? getCachedCatalog()
   if (ref) {
+    for (const row of ref.town) {
+      if (row.name?.trim()) {
+        void loadTravelTexture(
+          `Transport_${row.name.trim().replace(/\s+/g, '_')}.png`,
+        )
+      }
+    }
     for (const row of ref.hero_type) {
       if (row.name?.trim()) {
         void loadTravelTexture(mountSpriteFile(row.name))

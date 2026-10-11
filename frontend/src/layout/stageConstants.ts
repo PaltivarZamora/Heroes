@@ -1,0 +1,24 @@
+/** Fixed layout stage (BR S9-34). All in stage pixels. */
+export const STAGE_WIDTH = 1920
+export const STAGE_HEIGHT = 1080
+export const STAGE_PAD = 10
+
+export const LEFT_PANEL_WIDTH = 617
+export const LEFT_PANEL_HEIGHT = 1060
+export const LEFT_PANEL_X = STAGE_PAD
+export const LEFT_PANEL_Y = STAGE_PAD
+
+export const BANNER_WIDTH = 1273
+export const BANNER_HEIGHT = 210
+export const BANNER_X = 637
+export const BANNER_Y = STAGE_PAD
+
+export const GAME_WINDOW_WIDTH = 1273
+export const GAME_WINDOW_HEIGHT = 840
+export const GAME_WINDOW_X = 637
+export const GAME_WINDOW_Y = 230
+
+export const PANEL_SQUARE = 125
+export const PANEL_GAP = 8
+export const PANEL_COLS = 4
+export const PANEL_ROWS = 8

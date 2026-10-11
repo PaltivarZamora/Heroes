@@ -8,7 +8,9 @@ import {
   findNoticeBoardById,
   playerQuestState,
   turnedInThankYouMessage,
+  questRewardLabelForPlayer,
 } from '../session/quests'
+import { rollSessionItemReward } from '../items/rewardRoll'
 import type { LevelUpNotice } from '../session/xp'
 import { getSession, subscribe, updateSession } from '../session/store'
 import { getCachedCatalog, subscribeCatalog } from './catalog'
@@ -17,6 +19,7 @@ type WorldNoticeBoardProps = {
   featureId: string
   heroId: string
   onClose: () => void
+  embedded?: boolean
   /** Shown after Decline (App date-notice). */
   onDeclineMessage?: (message: string) => void
   /** Level-up popup after Collect Reward XP. */
@@ -30,6 +33,7 @@ export function WorldNoticeBoard({
   featureId,
   heroId,
   onClose,
+  embedded = false,
   onDeclineMessage,
   onLevelUpNotice,
 }: WorldNoticeBoardProps) {
@@ -53,22 +57,33 @@ export function WorldNoticeBoard({
         )
       : false
 
-  const accept = () => {
+  const accept = async () => {
     if (!catalog || !hero || !board || !quest) {
       return
     }
     let acceptError: string | null = null
-    updateSession((current) => {
-      const result = acceptNoticeBoardQuest(
-        current,
+    try {
+      const rolled = await rollSessionItemReward(
+        getSession(),
         catalog,
-        featureId,
-        hero.player_id,
-        hero.id,
+        'quest_item_rarity',
+        quest.tier,
       )
-      acceptError = result.error
-      return result.error ? current : result.session
-    })
+      updateSession((current) => {
+        const result = acceptNoticeBoardQuest(
+          rolled.session,
+          catalog,
+          featureId,
+          hero.player_id,
+          hero.id,
+          rolled.item,
+        )
+        acceptError = result.error
+        return result.error ? current : result.session
+      })
+    } catch (err) {
+      acceptError = err instanceof Error ? err.message : 'Could not roll quest reward'
+    }
     if (acceptError) {
       setError(acceptError)
     }
@@ -106,25 +121,32 @@ export function WorldNoticeBoard({
     }
   }
 
-  const rewardLine = quest
-    ? [
-        quest.reward_xp > 0 ? `${quest.reward_xp} XP` : null,
-        quest.reward_gold > 0
-          ? `${formatAmount(quest.reward_gold)} Gold`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(' + ') || 'None'
-    : ''
-  // Hide until goal met / Collect active / turned in (S9-10 addendum).
+  const acceptedReward =
+    hero && board
+      ? questRewardLabelForPlayer(session, catalog!, featureId, hero.player_id)
+      : null
+  const rewardLine =
+    state?.accepted && acceptedReward != null
+      ? acceptedReward
+      : quest
+        ? [
+            quest.reward_xp > 0 ? `${quest.reward_xp} XP` : null,
+            quest.reward_gold > 0
+              ? `${formatAmount(quest.reward_gold)} Gold`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' + ') || 'None'
+        : ''
   const showReward =
+    Boolean(state?.accepted) ||
     Boolean(state?.turned_in) ||
     Boolean(state?.completed) ||
     canCollect
 
-  return (
+  const panel = (
     <div
-      className="date-notice"
+      className={embedded ? 'game-window-modal' : 'date-notice'}
       role="dialog"
       aria-modal="true"
       aria-labelledby="world-notice-board-title"
@@ -201,4 +223,5 @@ export function WorldNoticeBoard({
       </div>
     </div>
   )
+  return embedded ? <div className="game-window-embed">{panel}</div> : panel
 }

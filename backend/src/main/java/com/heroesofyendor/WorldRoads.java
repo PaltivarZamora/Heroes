@@ -716,6 +716,9 @@ final class WorldRoads {
         if (terrain == null) {
             return true;
         }
+        if (ctx.river != null && ctx.river[row][col]) {
+            return ctx.bridgeSpot == null || !ctx.bridgeSpot[row][col];
+        }
         if (noTerrain.contains(terrain.id())) {
             return false;
         }

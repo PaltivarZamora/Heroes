@@ -50,6 +50,24 @@ export function slotArtUrl(filename: string): string {
   return `/assets/towns/${filename}`
 }
 
+/** Building stills live under `public/assets/towns/{TownType}/`. */
+export function townBuildingArtUrl(
+  filename: string,
+  townTypeName = 'Necropolis',
+): string {
+  if (filename.startsWith('/')) {
+    return filename
+  }
+  const trimmed = filename
+    .replace(/^assets\/towns\//, '')
+    .replace(/^\//, '')
+  if (trimmed.includes('/')) {
+    return `/assets/towns/${trimmed}`
+  }
+  const town = townTypeName.trim() || 'Necropolis'
+  return `/assets/towns/${town}/${trimmed}`
+}
+
 /** Hero (and Garrison) stills under public/assets/heroes/portraits/. */
 export function heroPortraitUrl(filename: string): string {
   if (filename.startsWith('/')) {

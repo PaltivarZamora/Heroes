@@ -1,5 +1,7 @@
 import { type Grid, type Hex } from 'honeycomb-grid'
-import { findPathOnBoard, findPathToward } from './pathfinding'
+import { findPathOnBoard, findPathToward, hexDistance } from './pathfinding'
+import { mobPathRingKeys } from './mobAggro'
+import { getSession } from '../session/store'
 import { getTile, isPassable } from './world'
 import { hexTransitionMoveCost } from './terrainTransition'
 import { getCachedCatalog, heroInteractCost } from '../town/catalog'
@@ -87,20 +89,11 @@ export function findPassableStart(grid: Grid<Hex>): Axial {
  * A* path to the clicked hex, then walk as far as remaining movement allows.
  * Stops before an unaffordable hex (no partial entry).
  */
-export function movementSteps(
+function stepsAlong(
   grid: Grid<Hex>,
-  from: Axial,
-  to: Axial,
+  path: Axial[],
   remaining: number,
-  blocked?: ReadonlySet<string>,
 ): Hex[] {
-  if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
-    return []
-  }
-  const path = findPathToward(from, to, blocked)
-  if (!path || path.length <= 1) {
-    return []
-  }
   const steps: Hex[] = []
   let mp = remaining
   for (let i = 1; i < path.length; i++) {
@@ -120,6 +113,56 @@ export function movementSteps(
     mp = spendMovement(mp, cost)
   }
   return steps
+}
+
+function ringBlocked(blocked: ReadonlySet<string> | undefined, from: Axial, to: Axial): Set<string> {
+  const merged = new Set(blocked)
+  const dest = `${to.q},${to.r}`
+  const start = `${from.q},${from.r}`
+  for (const hexKey of mobPathRingKeys(getSession())) {
+    if (hexKey !== dest && hexKey !== start) {
+      merged.add(hexKey)
+    }
+  }
+  return merged
+}
+
+/**
+ * Walk as far as movement allows. Prefers a route that stays outside every
+ * mob's 1-hex ring. If the only way forward enters a ring, that route is used.
+ */
+export function planMovementSteps(
+  grid: Grid<Hex>,
+  from: Axial,
+  to: Axial,
+  remaining: number,
+  blocked?: ReadonlySet<string>,
+): { steps: Hex[]; risky: boolean } {
+  if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
+    return { steps: [], risky: false }
+  }
+  const open = findPathToward(from, to, blocked)
+  const safe = findPathToward(from, to, ringBlocked(blocked, from, to))
+  if (!open || open.length <= 1) {
+    return { steps: [], risky: false }
+  }
+  const openEnd = open[open.length - 1]!
+  const safeEnd = safe && safe.length > 1 ? safe[safe.length - 1]! : null
+  const openDist = hexDistance(openEnd, to)
+  const safeDist = safeEnd ? hexDistance(safeEnd, to) : Infinity
+  const path = safeEnd && safeDist <= openDist ? safe! : open
+  const risky = !(safeEnd && safeDist <= openDist)
+  return { steps: stepsAlong(grid, path, remaining), risky }
+}
+
+export function movementSteps(
+  grid: Grid<Hex>,
+  from: Axial,
+  to: Axial,
+  remaining: number,
+  blocked?: ReadonlySet<string>,
+): Hex[] {
+  return planMovementSteps(grid, from, to, remaining, blocked).steps
 }
 
 /**

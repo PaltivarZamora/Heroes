@@ -1,6 +1,8 @@
 import { isPassable, isWalkable } from './world'
 import { getCachedCatalog } from '../town/catalog'
 import { hexTransitionMoveCost } from './terrainTransition'
+import { mobPathRingKeys } from './mobAggro'
+import { getSession } from '../session/store'
 import type { Axial } from './hero'
 
 const AXIAL_NEIGHBORS: Axial[] = [
@@ -83,6 +85,42 @@ function pathEnterCost(path: Axial[]): number {
  * Cheapest walkable hex next to `target` (never `target` itself).
  * The mover's current hex is allowed even if it would otherwise look blocked.
  */
+function withMobRings(
+  blocked: ReadonlySet<string> | undefined,
+  dest: Axial,
+  from: Axial,
+): Set<string> {
+  const merged = new Set(blocked)
+  const destKey = key(dest.q, dest.r)
+  const startKey = key(from.q, from.r)
+  for (const hexKey of mobPathRingKeys(getSession())) {
+    if (hexKey === destKey || hexKey === startKey) {
+      continue
+    }
+    merged.add(hexKey)
+  }
+  return merged
+}
+
+/**
+ * Prefer a path that stays out of every mob's 1-hex ring. The destination
+ * itself is allowed (attacking that mob, or a click inside the ring).
+ * If the only route enters a ring, that path is returned and `risky` is set.
+ */
+export function findPathAvoidingMobRings(
+  from: Axial,
+  to: Axial,
+  blocked?: ReadonlySet<string>,
+  ignoreFog = false,
+): { path: Axial[]; risky: boolean } | null {
+  const safe = findPath(from, to, withMobRings(blocked, to, from), ignoreFog)
+  if (safe) {
+    return { path: safe, risky: false }
+  }
+  const path = findPath(from, to, blocked, ignoreFog)
+  return path ? { path, risky: true } : null
+}
+
 export function approachHex(
   from: Axial,
   target: Axial,
@@ -91,6 +129,7 @@ export function approachHex(
   let best: Axial | null = null
   let bestCost = Infinity
   let bestDist = Infinity
+  let bestRisky = true
   for (const next of neighborHexes(target)) {
     const here = next.q === from.q && next.r === from.r
     if (!here && !isPathHexOpen(next.q, next.r, blocked)) {
@@ -99,15 +138,21 @@ export function approachHex(
     if (here) {
       return next
     }
-    const path = findPath(from, next, blocked)
-    if (!path) {
+    const planned = findPathAvoidingMobRings(from, next, blocked)
+    if (!planned) {
       continue
     }
-    const cost = pathEnterCost(path)
+    const cost = pathEnterCost(planned.path)
     const dist = hexDistance(from, next)
-    if (cost + 1e-9 < bestCost || (Math.abs(cost - bestCost) < 1e-9 && dist < bestDist)) {
+    const better =
+      (bestRisky && !planned.risky) ||
+      (bestRisky === planned.risky &&
+        (cost + 1e-9 < bestCost ||
+          (Math.abs(cost - bestCost) < 1e-9 && dist < bestDist)))
+    if (better) {
       bestCost = cost
       bestDist = dist
+      bestRisky = planned.risky
       best = next
     }
   }

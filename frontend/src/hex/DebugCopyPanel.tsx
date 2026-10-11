@@ -30,6 +30,9 @@ type DebugCopyPanelProps = {
   }
   /** World map render perf (BR S9-16). */
   worldPerf?: WorldRenderStats | null
+  hideToggle?: boolean
+  peekOpen?: boolean
+  onPeekOpenChange?: (open: boolean) => void
 }
 
 export function DebugCopyPanel({
@@ -42,6 +45,9 @@ export function DebugCopyPanel({
   wallGapsDebug,
   roadPlanDebug,
   worldPerf,
+  hideToggle = false,
+  peekOpen = false,
+  onPeekOpenChange,
 }: DebugCopyPanelProps) {
   const hasTools =
     onAddStartingUnits != null ||
@@ -51,12 +57,30 @@ export function DebugCopyPanel({
     zonesDebug != null ||
     wallGapsDebug != null ||
     roadPlanDebug != null
+  const showPeek = peekOpen
   return (
-    <div className="debug-copy">
-      <button type="button" className="debug-panel-toggle">
-        Debug
-      </button>
+    <div
+      className={`debug-copy${showPeek ? ' debug-copy-open' : ''}${hideToggle ? ' debug-copy-headless' : ''}`}
+    >
+      {hideToggle ? null : (
+        <button
+          type="button"
+          className="debug-panel-toggle"
+          onClick={() => onPeekOpenChange?.(!peekOpen)}
+        >
+          Debug
+        </button>
+      )}
       <div className="debug-peek">
+        {hideToggle && onPeekOpenChange ? (
+          <button
+            type="button"
+            className="debug-peek-close"
+            onClick={() => onPeekOpenChange(false)}
+          >
+            Close
+          </button>
+        ) : null}
         {hasTools ? (
           <div className="debug-tools">
             {onAddStartingUnits ? (
@@ -101,6 +125,7 @@ export function DebugCopyPanel({
             {`FPS: ${worldPerf.fps.toFixed(0)}  frame: ${worldPerf.frameMs.toFixed(1)}ms  avg: ${worldPerf.avgFrameMs.toFixed(1)}ms
 last move-step repaint: ${worldPerf.lastRepaintMs.toFixed(1)}ms
 display objects: ${worldPerf.displayObjectsVisible} visible / ${worldPerf.displayObjectsTotal} total
+props: ${worldPerf.propsVisible} visible / ${worldPerf.propsTotal} total
 explored: ${worldPerf.exploredHexes}  chunks: ${worldPerf.visibleChunks} vis / ${worldPerf.bakedChunks} baked (${worldPerf.chunkSize}×${worldPerf.chunkSize})`}
           </pre>
         ) : null}

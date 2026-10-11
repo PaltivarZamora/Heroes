@@ -4,7 +4,8 @@ import { RESOURCES } from '../hex/resources'
 import { HERO_MARKER_LABEL } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { forEachPassableHex, forEachTile, getTile, isPassable } from '../hex/world'
-import { getCachedCatalog, heroMovementPoints, heroResourcePools, sizeDim, startingStockpileFor, visionRange } from '../town/catalog'
+import { mobAggroRange } from '../hex/mobAggro'
+import { getBaselineCatalog, getCachedCatalog, heroMovementPoints, heroResourcePools, sizeDim, startingStockpileFor, visionRange } from '../town/catalog'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
   defaultGameConfig,
@@ -13,6 +14,7 @@ import {
 import {
   mapObjectAbilityIds,
   mapObjectChestLevel,
+  mapObjectChestItem,
   mapObjectChestLoot,
   mapObjectGuard,
   mapObjectLaunch,
@@ -22,7 +24,12 @@ import {
   mapObjectTownTypeId,
   type MapObjectData,
 } from '../hex/types'
+import { apiItemToRolled } from '../items/api'
+import { rolledItemDisplayName } from '../items/display'
+import { allocateItemUid } from '../items/state'
 import { assignHeroesFromPool, grantHeroStartingArmy, heroIdsInOwnedTown, progressForHeroName, withNamedProgress } from './accessors'
+import { difficultyIdFromSettings } from './gameDifficulty'
+import { getSession } from './store'
 import { seedNeutralTownBuildings } from './neutralTowns'
 import { rollRecruitsOffer } from './recruits'
 import { rollAllNoticeBoardQuests } from './quests'
@@ -42,16 +49,26 @@ import {
   type Player,
   type Town,
 } from './types'
+import { emptyPlayerGameLog } from './gameLog'
+import { emptyHeroInventory } from '../items/state'
 
 function emptyStackSlots(): Array<string | null> {
   return Array.from({ length: ARMY_STACK_SLOTS }, () => null)
 }
 
-export function startingResources(difficultyId?: number | null): Record<number, number> {
-  const catalog = getCachedCatalog()
+export function startingResources(
+  difficultyId?: number | null,
+  forAi = false,
+): Record<number, number> {
+  const catalog = getBaselineCatalog() ?? getCachedCatalog()
   const resources: Record<number, number> = {}
   for (const resource of RESOURCES) {
-    resources[resource.id] = startingStockpileFor(catalog, resource, difficultyId)
+    resources[resource.id] = startingStockpileFor(
+      catalog,
+      resource,
+      difficultyId,
+      forAi,
+    )
   }
   return resources
 }
@@ -70,10 +87,14 @@ export function createSessionFromConfig(config: GameConfig): GameSession {
     ai_spectator: slot.controller === 'ai_spectator',
     arch_id: slot.archId ?? DEFAULT_AI_ARCH_ID,
     eliminated: false,
-    resources: startingResources(config.difficultyId),
+    resources: startingResources(
+      config.difficultyId,
+      slot.controller !== 'human',
+    ),
     hero_ids: [],
     town_ids: [],
     explored: [],
+    game_log: emptyPlayerGameLog(),
   }))
   return {
     game: {
@@ -105,6 +126,7 @@ export function createSessionFromConfig(config: GameConfig): GameSession {
     features: [],
     boats: [],
     mobs: [],
+    next_item_no: 1,
   }
 }
 
@@ -115,7 +137,10 @@ export function addHumanPlayer(session: GameSession): GameSession {
     ai_spectator: false,
     arch_id: DEFAULT_AI_ARCH_ID,
     eliminated: false,
-    resources: startingResources(),
+    resources: startingResources(
+      difficultyIdFromSettings(getSession().game.settings),
+      false,
+    ),
     hero_ids: [],
     town_ids: [],
     explored: [],
@@ -201,6 +226,7 @@ export function hydrateMapObjects(
   session: GameSession,
   objects: MapObjectData[],
 ): GameSession {
+  let nextSession = session
   const towns: Town[] = [...session.towns]
   const nodes: Node[] = [...session.nodes]
   const features: MapFeature[] = [...(session.features ?? [])]
@@ -252,6 +278,22 @@ export function hydrateMapObjects(
       }
       featureIndex += 1
       const guard = mapObjectGuard(obj)
+      let item = null
+      const rolled = mapObjectChestItem(obj)
+      if (rolled) {
+        const allocated = allocateItemUid(nextSession)
+        nextSession = allocated.session
+        item = apiItemToRolled(
+          {
+            itemId: rolled.itemId,
+            rarityId: rolled.rarityId,
+            adjId: rolled.adjId ?? null,
+            variation: rolled.variation,
+            stats: rolled.stats,
+          },
+          allocated.uid,
+        )
+      }
       features.push({
         id: `feature-${featureIndex}`,
         kind: 'chest',
@@ -260,7 +302,52 @@ export function hydrateMapObjects(
         name: obj.name?.trim() || `Chest`,
         open: false,
         loot: mapObjectChestLoot(obj),
+        item,
         guard,
+      })
+    } else if (obj.kind === 'ground_item') {
+      if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
+        continue
+      }
+      const rolled = mapObjectChestItem(obj)
+      if (!rolled) {
+        continue
+      }
+      featureIndex += 1
+      const allocated = allocateItemUid(nextSession)
+      nextSession = allocated.session
+      const item = apiItemToRolled(
+        {
+          itemId: rolled.itemId,
+          rarityId: rolled.rarityId,
+          adjId: rolled.adjId ?? null,
+          variation: rolled.variation,
+          stats: rolled.stats,
+        },
+        allocated.uid,
+      )
+      const catalog = getCachedCatalog()
+      const name = catalog
+        ? rolledItemDisplayName(catalog, item)
+        : 'Item'
+      const guard = mapObjectGuard(obj)
+      const pocketId =
+        typeof obj.level === 'number' && obj.level > 0 ? obj.level : null
+      const tier =
+        typeof obj.resourceId === 'number' ? obj.resourceId : null
+      const standalone = (obj.marker ?? '').startsWith('S')
+      features.push({
+        id: `feature-${featureIndex}`,
+        kind: 'ground_item',
+        position: { q: obj.q, r: obj.r },
+        name,
+        item,
+        flipped: obj.flipped === true,
+        pocket_id: pocketId,
+        pocket_tier: pocketId != null ? tier : null,
+        guard: standalone ? guard : null,
+        guard_tier: standalone ? tier : null,
+        origin: 'world',
       })
     } else if (obj.kind === 'sign') {
       if (features.some((row) => samePos(row.position, obj.q, obj.r))) {
@@ -396,7 +483,7 @@ export function hydrateMapObjects(
   // Trust backend townTypeId from test-grid (own-type + mixed neutrals). Do not
   // overwrite all towns from player hero picks (BR S9-17).
   const seeded = seedNeutralTownBuildings({
-    ...session,
+    ...nextSession,
     towns,
     nodes,
     features,
@@ -449,7 +536,9 @@ export function addHumanHero(
     ...heroResourcePools(getCachedCatalog(), {
       class_id: null,
       current_level: 1,
+      ...emptyHeroInventory(),
     }),
+    ...emptyHeroInventory(),
   }
   const withHero: GameSession = {
     ...session,
@@ -543,7 +632,9 @@ function spawnPlayerHero(
     ...heroResourcePools(getCachedCatalog(), {
       class_id: classId,
       current_level: live.current_level,
+      ...emptyHeroInventory(),
     }),
+    ...emptyHeroInventory(),
   }
   const withHero: GameSession = withNamedProgress(
     {
@@ -621,6 +712,96 @@ function isMapEdgeHex(q: number, r: number): boolean {
     }
   }
   return false
+}
+
+function featureAt(session: GameSession, q: number, r: number): boolean {
+  return (session.features ?? []).some(
+    (row) => row.position.q === q && row.position.r === r,
+  )
+}
+
+function outsideMobRings(
+  session: GameSession,
+  hex: { q: number; r: number },
+): boolean {
+  const range = mobAggroRange(getCachedCatalog())
+  if (range <= 0) {
+    return true
+  }
+  return session.mobs.every(
+    (mob) => hexDistance(hex, mob.position) > range,
+  )
+}
+
+function spawnHexFree(
+  session: GameSession,
+  hex: { q: number; r: number },
+  occupied: Set<string>,
+): boolean {
+  return (
+    isPassable(hex.q, hex.r) &&
+    !occupied.has(posKey(hex)) &&
+    !isMapEdgeHex(hex.q, hex.r) &&
+    !featureAt(session, hex.q, hex.r) &&
+    outsideMobRings(session, hex)
+  )
+}
+
+/** Road hexes straight out from the drawbridge. Unflipped spur goes +q. */
+function townRoadSpur(town: Town): Array<{ q: number; r: number }> {
+  const dir = town.flipped ? -1 : 1
+  const hexes: Array<{ q: number; r: number }> = []
+  let q = town.position.q
+  const r = town.position.r
+  for (let step = 0; step < 12; step += 1) {
+    q += dir
+    const tile = getTile(q, r)
+    if (!tile?.hasRoad) {
+      break
+    }
+    hexes.push({ q, r })
+  }
+  return hexes
+}
+
+/**
+ * 3–4 hexes out along the town road spur, on walkable land, off features,
+ * and outside every mob aggro ring. A short spur uses the nearest free
+ * walkable hex at that distance.
+ */
+function findSpawnOnSpur(
+  session: GameSession,
+  town: Town,
+  occupied: Set<string>,
+): { q: number; r: number } | null {
+  const spur = townRoadSpur(town)
+  for (const dist of [4, 3]) {
+    const onSpur = spur[dist - 1]
+    if (onSpur && spawnHexFree(session, onSpur, occupied)) {
+      return onSpur
+    }
+  }
+  const dir = town.flipped ? -1 : 1
+  for (const dist of [4, 3]) {
+    const ideal = { q: town.position.q + dir * dist, r: town.position.r }
+    let best: { q: number; r: number } | null = null
+    let bestDist = Infinity
+    forEachPassableHex((q, r) => {
+      const hex = { q, r }
+      if (hexDistance(town.position, hex) !== dist || !spawnHexFree(session, hex, occupied)) {
+        return
+      }
+      const score = hexDistance(hex, ideal)
+      if (score < bestDist) {
+        bestDist = score
+        best = hex
+      }
+    })
+    if (best) {
+      return best
+    }
+  }
+  return null
 }
 
 /**
@@ -754,7 +935,8 @@ export function ensureStartingHeroes(
       others.push(liveTown.position)
     }
     const nearTown = liveTown
-      ? findSpawnNearTown(liveTown.position, occupied)
+      ? findSpawnOnSpur(next, liveTown, occupied) ??
+        findSpawnNearTown(liveTown.position, occupied)
       : null
     const position =
       nearTown ??

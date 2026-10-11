@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { Application, Container, Graphics, Sprite } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
+import { clientPointInElement } from '../layout/clientPointer'
 import {
   ATTACKER_COL,
   ATTACKER_HERO_COL,
@@ -18,6 +19,7 @@ import {
   DEFENDER_HERO_COL,
   HERO_ROW,
   armySlotRow,
+  combatGridRow,
   combatEncounterSeed,
   combatTilesFromHexField,
   createCombatHexGrid,
@@ -50,6 +52,7 @@ import { addFootprintPropSprite, loadPropTexture } from '../hex/propTextures'
 import { parseCssHexColor, wedgesForHex } from '../hex/terrainTransition'
 import { terrainFillColor } from '../hex/world'
 import { DebugCopyPanel } from '../hex/DebugCopyPanel'
+import { setNavalMaskDebugState } from './navalMaskDebugBridge'
 import type { DebugSections } from '../hex/debug'
 import { formatMp, MOVE_STEP_MS } from '../hex/hero'
 import { axialNeighborDirs } from '../hex/pathfinding'
@@ -65,13 +68,16 @@ import {
   unitIsStationary,
   unitTakesTurns,
   unitAutoTarget,
-  combatEndTimerSeconds,
-  combatLogTimerSeconds,
   mapShowHexesBattle,
   mapUseTerrainImages,
   hexTerrainByName,
   type AbilityRow,
 } from '../town/catalog'
+import {
+  effectiveCombatEndTimerSec,
+  effectiveCombatLogTimerSec,
+} from '../settings/playerSettings'
+import { setCombatKeyBridge } from '../input/combatKeyBridge'
 import { heroPortraitUrl, terrainArtUrl, unitPortraitUrl } from '../town/slotArt'
 import {
   TOMBSTONE_ART,
@@ -196,13 +202,34 @@ import {
 } from './heroCast'
 import { abilityMeetsCastGate, applyShamanBattleStartTotems } from './summon'
 import {
+  commitCombatEscape,
   commitCombatOutcome,
   defeatedSide,
   snapshotOpening,
   type CombatSummary,
   type OpeningStack,
 } from './resolve'
+import { syncRuntimeGroundItems } from '../hex/HexMap'
+import {
+  applyMobKillItemReward,
+  captureMobKillSnapshotIfLive,
+} from '../session/mobKillRewards'
+import {
+  aiAcceptsSurrenderOffer,
+  aiPrefersSurrenderOverFlee,
+  aiShouldTryCombatEscape,
+  applyFleeLossesToBattle,
+  baseSurrenderOfferGold,
+  canAffordCost,
+  cappedSurrenderGold,
+  escalateSurrenderOffer,
+  isSiegeDefenceSide,
+  playerOwnsFriendlyTown,
+  surrenderCostMap,
+} from './escape'
 import type { LevelUpNotice } from '../session/xp'
+import type { CombatLogExitPayload } from '../session/gameLog'
+import { GameWindowModal } from '../layout/GameWindowModal'
 import {
   DRAWBRIDGE_ROW_INDEX,
   isDrawbridgeOpen,
@@ -285,7 +312,11 @@ type CombatScreenProps = {
   /** Naval battlefield variant (world boat fight or Fixed Fight). */
   navalLayout?: NavalLayoutKind | null
   debugSections: DebugSections
-  onExit: (levelUp?: LevelUpNotice | null) => void
+  onLiveLogLines?: (lines: string[]) => void
+  onExit: (
+    levelUp?: LevelUpNotice | null,
+    archive?: CombatLogExitPayload,
+  ) => void
 }
 
 type StackMarker = {
@@ -583,6 +614,7 @@ export function CombatScreen({
   defenderMobId,
   navalLayout = null,
   debugSections,
+  onLiveLogLines,
   onExit,
 }: CombatScreenProps) {
   const session = useSyncExternalStore(subscribe, getSession)
@@ -665,6 +697,12 @@ export function CombatScreen({
   const tryAiHeroAbilityRef = useRef<() => boolean>(() => false)
   const dismissLogRef = useRef<() => void>(() => {})
   const queueBattleLogRef = useRef<(payload: BattleLog) => void>(() => {})
+  const combatTranscriptRef = useRef<string[]>([])
+  const escapeMetaRef = useRef<{
+    kind: 'flee' | 'surrender'
+    heroId: string
+    gold?: number
+  } | null>(null)
   const moatStartKeyRef = useRef<string | null>(null)
   const splitStartKeyRef = useRef<string | null>(null)
   const [field, setField] = useState<FieldView | null>(null)
@@ -688,7 +726,21 @@ export function CombatScreen({
   const [opening, setOpening] = useState<OpeningStack[]>([])
   const [summary, setSummary] = useState<CombatSummary | null>(null)
   const pendingSummaryRef = useRef<CombatSummary | null>(null)
-  const appliedRef = useRef(false)
+  const [surrenderConfirm, setSurrenderConfirm] = useState<{
+    side: CombatSide
+    gold: number
+  } | null>(null)
+  const [fleeConfirmSide, setFleeConfirmSide] = useState<CombatSide | null>(null)
+  const [incomingSurrender, setIncomingSurrender] = useState<{
+    escapingSide: CombatSide
+    heroName: string
+    gold: number
+  } | null>(null)
+  const [surrenderOfferedRound, setSurrenderOfferedRound] = useState<
+    number | null
+  >(null)
+  const lastSurrenderOfferRef = useRef<number | null>(null)
+  const aiEscapeCheckedKeyRef = useRef<string | null>(null)
   const openingRef = useRef<OpeningStack[]>([])
   battleRef.current = battle
   catalogRef.current = catalog
@@ -1227,11 +1279,92 @@ export function CombatScreen({
     }
   }
 
+  const buildCombatArchive = (): CombatLogExitPayload | undefined => {
+    const pending = pendingSummaryRef.current ?? summary
+    if (!pending) {
+      return undefined
+    }
+    const meta = escapeMetaRef.current
+    return {
+      summary: pending,
+      lines: [...combatTranscriptRef.current],
+      escapeKind: meta?.kind,
+      surrenderGold: meta?.gold,
+      escapingHeroId: meta?.heroId,
+    }
+  }
+
+  const exitCombat = (levelUp?: LevelUpNotice | null) => {
+    onExit(levelUp ?? null, buildCombatArchive())
+  }
+
+  const presentPendingCombatSummary = () => {
+    const pending = pendingSummaryRef.current
+    if (!pending) {
+      return
+    }
+    setHoverTarget(null)
+    setLog(null)
+    const endSecs = effectiveCombatEndTimerSec()
+    if (endSecs === 0) {
+      exitCombat(pending.levelUpNotice ?? null)
+      return
+    }
+    setSummary(pending)
+  }
+
+  const mobKillWinnerHeroId = (battle: CombatBattle): string | null => {
+    if (!catalog) {
+      return null
+    }
+    const loserSide = defeatedSide(battle, catalog)
+    if (!loserSide) {
+      return null
+    }
+    const winnerSide: CombatSide = loserSide === 'atk' ? 'def' : 'atk'
+    return winnerSide === 'atk' ? attackerHeroId : defenderHeroId ?? null
+  }
+
+  const queueMobKillItemDrop = (
+    killSnap: import('../session/mobKillRewards').MobKillRewardSnapshot,
+    winnerHeroId: string,
+  ) => {
+    if (!catalog) {
+      presentPendingCombatSummary()
+      return
+    }
+    void applyMobKillItemReward(
+      getSession(),
+      catalog,
+      winnerHeroId,
+      killSnap,
+    ).then(({ session, lines }) => {
+      if (lines.length > 0) {
+        updateSession(() => session)
+        syncRuntimeGroundItems()
+        const base = pendingSummaryRef.current
+        if (base) {
+          pendingSummaryRef.current = {
+            ...base,
+            rewardLines: [...(base.rewardLines ?? []), ...lines],
+          }
+        }
+      }
+      presentPendingCombatSummary()
+    })
+  }
+
   const finishCombat = (current: CombatBattle) => {
     if (!catalog || !defeatedSide(current, catalog)) {
       return false
     }
-    if (!appliedRef.current && catalog) {
+    if (!pendingSummaryRef.current && catalog) {
+      const killSnap = captureMobKillSnapshotIfLive(
+        getSession(),
+        catalog,
+        defenderMobId,
+        openingRef.current,
+      )
       const result = commitCombatOutcome(
         catalog,
         attackerHeroId,
@@ -1242,23 +1375,186 @@ export function CombatScreen({
         defenderMobId,
       )
       if (result) {
-        appliedRef.current = true
         pendingSummaryRef.current = result
+        if (killSnap && defenderMobId) {
+          const winnerId = mobKillWinnerHeroId(current)
+          if (winnerId) {
+            queueMobKillItemDrop(killSnap, winnerId)
+            return true
+          }
+        }
       }
     }
     const pending = pendingSummaryRef.current
     if (!pending) {
       return false
     }
-    setHoverTarget(null)
-    setLog(null)
-    const endSecs = combatEndTimerSeconds(catalogRef.current)
-    if (endSecs === 0) {
-      onExit(pending.levelUpNotice ?? null)
-      return true
-    }
-    setSummary(pending)
+    presentPendingCombatSummary()
     return true
+  }
+
+  const presentEscapeOutcome = (result: CombatSummary) => {
+    pendingSummaryRef.current = result
+    setHoverTarget(null)
+    setHeroCast(null)
+    setInspectStackId(null)
+    setLog(null)
+    setSurrenderConfirm(null)
+    setFleeConfirmSide(null)
+    setIncomingSurrender(null)
+    const newLines = result.xpLines.filter((line) => line.trim().length > 0)
+    if (newLines.length > 0) {
+      combatTranscriptRef.current.push(...newLines)
+      onLiveLogLines?.([...combatTranscriptRef.current])
+    }
+    const endSecs = effectiveCombatEndTimerSec()
+    if (endSecs === 0) {
+      exitCombat(result.levelUpNotice ?? null)
+      return
+    }
+    setSummary(result)
+  }
+
+  const nextSurrenderGold = (side: CombatSide): number => {
+    if (!catalog || !battle) {
+      return 0
+    }
+    const playerId =
+      side === 'atk' ? attacker?.player_id : defender?.player_id
+    if (!playerId) {
+      return 0
+    }
+    const base =
+      lastSurrenderOfferRef.current ??
+      baseSurrenderOfferGold(battle, catalog, side)
+    const offer =
+      lastSurrenderOfferRef.current == null
+        ? base
+        : escalateSurrenderOffer(catalog, lastSurrenderOfferRef.current, Math.random)
+    return cappedSurrenderGold(session, playerId, offer)
+  }
+
+  const completeSurrender = (
+    escapingSide: CombatSide,
+    gold: number,
+  ) => {
+    if (!catalog || !battle) {
+      return
+    }
+    const cost = surrenderCostMap(gold)
+    const escapingHeroId =
+      escapingSide === 'atk' ? attackerHeroId : defenderHeroId ?? attackerHeroId
+    escapeMetaRef.current = { kind: 'surrender', heroId: escapingHeroId, gold }
+    const battleAfter = battle
+    const result = commitCombatEscape(
+      catalog,
+      attackerHeroId,
+      defenderHeroId,
+      battleAfter,
+      openingRef.current,
+      escapingSide,
+      'surrender',
+      siegeTownId,
+      defenderMobId,
+      cost,
+    )
+    if (result) {
+      lastSurrenderOfferRef.current = gold
+      presentEscapeOutcome(result)
+    } else {
+      escapeMetaRef.current = null
+    }
+  }
+
+  const sendSurrenderOffer = (escapingSide: CombatSide, gold: number) => {
+    if (!catalog || !battle) {
+      return
+    }
+    setSurrenderConfirm(null)
+    setFleeConfirmSide(null)
+    setSurrenderOfferedRound(battle.round)
+    lastSurrenderOfferRef.current = gold
+    const winnerSide: CombatSide = escapingSide === 'atk' ? 'def' : 'atk'
+    const offeringHero =
+      escapingSide === 'atk' ? attacker : defender
+    if (!offeringHero) {
+      return
+    }
+    if (defenderMobId) {
+      completeSurrender(escapingSide, gold)
+      return
+    }
+    const winnerStack =
+      battle.stacks.find((row) => row.side === winnerSide) ?? null
+    const winnerOwner = winnerStack
+      ? combatOwnerPlayer(
+          winnerStack,
+          session,
+          attacker,
+          defender,
+          siegeTown,
+          defenderMobId,
+        )
+      : null
+    const winnerHero = winnerSide === 'atk' ? attacker : defender
+    if (winnerOwner?.is_ai) {
+      const accept = aiAcceptsSurrenderOffer(
+        catalog,
+        battle,
+        winnerSide,
+        gold,
+      )
+      if (accept) {
+        completeSurrender(escapingSide, gold)
+      } else {
+        queueBattleLogRef.current({
+          lines: [`${winnerHero?.name ?? 'Enemy'} declines the surrender offer.`],
+          holdTurn: true,
+        })
+      }
+      return
+    }
+    setIncomingSurrender({
+      escapingSide,
+      heroName: offeringHero.name,
+      gold,
+    })
+  }
+
+  const runFlee = (escapingSide: CombatSide) => {
+    if (!catalog || !battle) {
+      return
+    }
+    setHeroCast(null)
+    const escapingHeroId =
+      escapingSide === 'atk' ? attackerHeroId : defenderHeroId ?? attackerHeroId
+    escapeMetaRef.current = { kind: 'flee', heroId: escapingHeroId }
+    const battleAfter = applyFleeLossesToBattle(
+      battle,
+      catalog,
+      escapingSide,
+      Math.random,
+    )
+    const result = commitCombatEscape(
+      catalog,
+      attackerHeroId,
+      defenderHeroId,
+      battleAfter,
+      openingRef.current,
+      escapingSide,
+      'flee',
+      siegeTownId,
+      defenderMobId,
+    )
+    if (result) {
+      presentEscapeOutcome(result)
+    } else {
+      escapeMetaRef.current = null
+      queueBattleLogRef.current({
+        lines: ['Flee failed — could not leave the battle.'],
+        holdTurn: true,
+      })
+    }
   }
 
   const presentRoundAdvance = (advanced: CombatBattle) => {
@@ -1313,9 +1609,13 @@ export function CombatScreen({
   }
   /** Show battle log, or skip entirely when combat_log_timer is 0. */
   const queueBattleLog = (payload: BattleLog) => {
+    if (payload.lines.length > 0) {
+      combatTranscriptRef.current.push(...payload.lines)
+      onLiveLogLines?.([...combatTranscriptRef.current])
+    }
     const skipPopup =
       payload.lines.length === 0 ||
-      combatLogTimerSeconds(catalogRef.current) === 0
+      effectiveCombatLogTimerSec() === 0
     if (skipPopup) {
       if (payload.lines.length === 0 && payload.holdTurn === true) {
         return
@@ -1344,9 +1644,15 @@ export function CombatScreen({
   dismissLogRef.current = dismissLog
 
   const applyOutcomeIfOver = (current: CombatBattle) => {
-    if (appliedRef.current || !catalog || !defeatedSide(current, catalog)) {
+    if (pendingSummaryRef.current || !catalog || !defeatedSide(current, catalog)) {
       return
     }
+    const killSnap = captureMobKillSnapshotIfLive(
+      getSession(),
+      catalog,
+      defenderMobId,
+      openingRef.current,
+    )
     const result = commitCombatOutcome(
       catalog,
       attackerHeroId,
@@ -1359,8 +1665,15 @@ export function CombatScreen({
     if (!result) {
       return
     }
-    appliedRef.current = true
     pendingSummaryRef.current = result
+    if (killSnap && defenderMobId) {
+      const winnerId = mobKillWinnerHeroId(current)
+      if (winnerId) {
+        queueMobKillItemDrop(killSnap, winnerId)
+        return
+      }
+    }
+    finishCombat(current)
   }
 
   const finishHeroCast = (
@@ -1789,7 +2102,7 @@ export function CombatScreen({
     if (!log || summary) {
       return
     }
-    const secs = combatLogTimerSeconds(catalog)
+    const secs = effectiveCombatLogTimerSec()
     if (secs === 0) {
       dismissLogRef.current()
       return
@@ -1807,31 +2120,38 @@ export function CombatScreen({
     if (!summary) {
       return
     }
-    const secs = combatEndTimerSeconds(catalog)
+    const secs = effectiveCombatEndTimerSec()
     if (secs === 0) {
-      onExit(summary.levelUpNotice ?? null)
+      exitCombat(summary.levelUpNotice ?? null)
       return
     }
     if (secs >= POPUP_NO_AUTO_SECS) {
       return
     }
     const timer = window.setTimeout(() => {
-      onExit(summary.levelUpNotice ?? null)
+      exitCombat(summary.levelUpNotice ?? null)
     }, secs * 1000)
     return () => window.clearTimeout(timer)
   }, [summary, catalog, onExit])
 
   // Space / Esc: dismiss post-turn log or post-combat summary immediately.
   useEffect(() => {
-    if (!log && !summary) {
+    if (
+      !log &&
+      !summary &&
+      surrenderConfirm == null &&
+      fleeConfirmSide == null &&
+      !incomingSurrender
+    ) {
       return
     }
     const onKey = (event: KeyboardEvent) => {
-      if (
-        event.key !== 'Escape' &&
-        event.key !== ' ' &&
-        event.code !== 'Space'
-      ) {
+      const confirmKey =
+        event.key === 'Enter' ||
+        event.key === ' ' ||
+        event.code === 'Space'
+      const cancelKey = event.key === 'Escape'
+      if (!confirmKey && !cancelKey) {
         return
       }
       if (event.repeat) {
@@ -1848,15 +2168,52 @@ export function CombatScreen({
       }
       event.preventDefault()
       event.stopImmediatePropagation()
-      if (summary) {
-        onExit(summary.levelUpNotice ?? null)
+      if (fleeConfirmSide != null) {
+        if (confirmKey) {
+          const side = fleeConfirmSide
+          setFleeConfirmSide(null)
+          runFlee(side)
+        } else {
+          setFleeConfirmSide(null)
+        }
         return
       }
-      dismissLogRef.current()
+      if (surrenderConfirm != null) {
+        if (confirmKey) {
+          const prompt = surrenderConfirm
+          setSurrenderConfirm(null)
+          sendSurrenderOffer(prompt.side, prompt.gold)
+        } else {
+          setSurrenderConfirm(null)
+        }
+        return
+      }
+      if (incomingSurrender) {
+        if (confirmKey) {
+          completeSurrender(
+            incomingSurrender.escapingSide,
+            incomingSurrender.gold,
+          )
+        } else {
+          setIncomingSurrender(null)
+          queueBattleLogRef.current({
+            lines: ['You decline the surrender offer.'],
+            holdTurn: true,
+          })
+        }
+        return
+      }
+      if (summary && (confirmKey || cancelKey)) {
+        exitCombat(summary.levelUpNotice ?? null)
+        return
+      }
+      if (log && (confirmKey || cancelKey)) {
+        dismissLogRef.current()
+      }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [log, summary, onExit])
+  }, [log, summary, surrenderConfirm, fleeConfirmSide, incomingSurrender, onExit])
 
   useEffect(() => {
     if (!battle || !catalog || !field) {
@@ -1983,6 +2340,9 @@ export function CombatScreen({
         used_abilities_this_battle: [],
       })),
     }))
+    combatTranscriptRef.current = []
+    escapeMetaRef.current = null
+    onLiveLogLines?.([])
     setBattle(created)
     setOpening(snap)
     openingRef.current = snap
@@ -1993,7 +2353,6 @@ export function CombatScreen({
       setLog(null)
     }
     setSummary(null)
-    appliedRef.current = false
     pendingSummaryRef.current = null
     moatStartKeyRef.current = null
     splitStartKeyRef.current = null
@@ -2043,24 +2402,8 @@ export function CombatScreen({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [waypointPlan])
 
-  // Space: Pass the active unit's turn (same as clicking its own hex).
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== ' ' && event.code !== 'Space') {
-        return
-      }
-      if (event.repeat) {
-        return
-      }
-      const target = event.target
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
+    const skipUnitTurn = () => {
       if (
         !battle ||
         !catalog ||
@@ -2099,8 +2442,6 @@ export function CombatScreen({
       if (!owner || owner.is_ai) {
         return
       }
-      event.preventDefault()
-      event.stopImmediatePropagation()
       setWaypointPlan(null)
       setHoverTarget(null)
       reachApiRef.current?.draw([])
@@ -2108,8 +2449,38 @@ export function CombatScreen({
         movementLogLine(stack, catalog, 0),
       ])
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    const confirmModal = (): boolean => {
+      if (fleeConfirmSide != null) {
+        const side = fleeConfirmSide
+        setFleeConfirmSide(null)
+        runFlee(side)
+        return true
+      }
+      if (surrenderConfirm != null) {
+        const prompt = surrenderConfirm
+        setSurrenderConfirm(null)
+        sendSurrenderOffer(prompt.side, prompt.gold)
+        return true
+      }
+      if (incomingSurrender) {
+        completeSurrender(
+          incomingSurrender.escapingSide,
+          incomingSurrender.gold,
+        )
+        return true
+      }
+      if (summary) {
+        exitCombat(summary.levelUpNotice ?? null)
+        return true
+      }
+      if (log) {
+        dismissLogRef.current()
+        return true
+      }
+      return false
+    }
+    setCombatKeyBridge({ skipUnitTurn, confirmModal })
+    return () => setCombatKeyBridge({})
   }, [
     battle,
     catalog,
@@ -2122,6 +2493,9 @@ export function CombatScreen({
     defender,
     siegeTown,
     defenderMobId,
+    fleeConfirmSide,
+    surrenderConfirm,
+    incomingSurrender,
   ])
 
   useEffect(() => {
@@ -2264,7 +2638,17 @@ export function CombatScreen({
   }, [battle, catalog, field?.tiles, heroCast])
 
   useEffect(() => {
-    if (!battle || !catalog || !field || log || moving || summary) {
+    if (
+      !battle ||
+      !catalog ||
+      !field ||
+      log ||
+      moving ||
+      summary ||
+      surrenderConfirm != null ||
+      fleeConfirmSide != null ||
+      incomingSurrender
+    ) {
       return
     }
     if (defeatedSide(battle, catalog)) {
@@ -2313,10 +2697,30 @@ export function CombatScreen({
       lines,
       holdTurn: still != null && still.qty > 0,
     })
-  }, [battle, catalog, field, log, moving, summary])
+  }, [
+    battle,
+    catalog,
+    field,
+    log,
+    moving,
+    summary,
+    surrenderConfirm,
+    fleeConfirmSide,
+    incomingSurrender,
+  ])
 
   useEffect(() => {
-    if (!battle || !catalog || !field || log || moving || summary) {
+    if (
+      !battle ||
+      !catalog ||
+      !field ||
+      log ||
+      moving ||
+      summary ||
+      surrenderConfirm != null ||
+      fleeConfirmSide != null ||
+      incomingSurrender
+    ) {
       return
     }
     if (defeatedSide(battle, catalog)) {
@@ -2339,10 +2743,32 @@ export function CombatScreen({
     if (split.lines.length > 0) {
       queueBattleLog({ lines: split.lines, holdTurn: true })
     }
-  }, [battle, catalog, field, log, moving, summary])
+  }, [
+    battle,
+    catalog,
+    field,
+    log,
+    moving,
+    summary,
+    surrenderConfirm,
+    fleeConfirmSide,
+    incomingSurrender,
+  ])
 
   useEffect(() => {
-    if (!battle || !catalog || !field || log || moving || summary || heroCast || inspectStackId) {
+    if (
+      !battle ||
+      !catalog ||
+      !field ||
+      log ||
+      moving ||
+      summary ||
+      heroCast ||
+      inspectStackId ||
+      surrenderConfirm != null ||
+      fleeConfirmSide != null ||
+      incomingSurrender
+    ) {
       return
     }
     if (defeatedSide(battle, catalog)) {
@@ -2894,10 +3320,34 @@ export function CombatScreen({
       ])
     }, AUTO_ACT_MS)
     return () => window.clearTimeout(timer)
-  }, [battle, catalog, field, log, moving, summary, heroCast, inspectStackId])
+  }, [
+    battle,
+    catalog,
+    field,
+    log,
+    moving,
+    summary,
+    heroCast,
+    inspectStackId,
+    surrenderConfirm,
+    fleeConfirmSide,
+    incomingSurrender,
+  ])
 
   useEffect(() => {
-    if (!battle || !catalog || !field || log || moving || summary || heroCast || inspectStackId) {
+    if (
+      !battle ||
+      !catalog ||
+      !field ||
+      log ||
+      moving ||
+      summary ||
+      heroCast ||
+      inspectStackId ||
+      surrenderConfirm != null ||
+      fleeConfirmSide != null ||
+      incomingSurrender
+    ) {
       return
     }
     if (defeatedSide(battle, catalog)) {
@@ -2917,6 +3367,42 @@ export function CombatScreen({
     )
     if (!owner?.is_ai) {
       return
+    }
+    const side = stack.side
+    const escapingHero = side === 'atk' ? attacker : defender
+    if (
+      escapingHero &&
+      !isSiegeDefenceSide(side, siegeTownId) &&
+      playerOwnsFriendlyTown(session, owner.id)
+    ) {
+      const escapeKey = `${battle.round}:${side}`
+      if (aiEscapeCheckedKeyRef.current !== escapeKey) {
+        aiEscapeCheckedKeyRef.current = escapeKey
+        if (aiShouldTryCombatEscape(catalog, battle, side)) {
+          const timer = window.setTimeout(() => {
+            if (aiPrefersSurrenderOverFlee(escapingHero)) {
+              const gold = cappedSurrenderGold(
+                session,
+                owner.id,
+                lastSurrenderOfferRef.current == null
+                  ? baseSurrenderOfferGold(battle, catalog, side)
+                  : escalateSurrenderOffer(
+                      catalog,
+                      lastSurrenderOfferRef.current,
+                      Math.random,
+                    ),
+              )
+              const cost = surrenderCostMap(gold)
+              if (gold > 0 && canAffordCost(session, owner.id, cost)) {
+                sendSurrenderOffer(side, gold)
+                return
+              }
+            }
+            runFlee(side)
+          }, AUTO_ACT_MS)
+          return () => window.clearTimeout(timer)
+        }
+      }
     }
     const unit = unitById(catalog, stack.unitId)
     const speed = stackCombatSpeed(stack, catalog) ?? 0
@@ -2990,6 +3476,9 @@ export function CombatScreen({
     defender,
     siegeTown,
     defenderMobId,
+    surrenderConfirm,
+    fleeConfirmSide,
+    incomingSurrender,
   ])
 
   useEffect(() => {
@@ -3045,12 +3534,16 @@ export function CombatScreen({
     }
     const catapult = siegeCatapultHex(byOffset)
     const wallHexes = siege ? siegeWallHexes(byOffset) : []
-    const drawbridgeRow = DRAWBRIDGE_ROW_INDEX
-    const drawbridge = wallHexes[drawbridgeRow] ?? null
+    const drawbridgeGridRow =
+      DRAWBRIDGE_ROW_INDEX >= 0
+        ? combatGridRow(DRAWBRIDGE_ROW_INDEX)
+        : -1
+    const drawbridge =
+      drawbridgeGridRow >= 0 ? (wallHexes[drawbridgeGridRow] ?? null) : null
     const moatHex =
-      drawbridgeRow >= 0
+      drawbridgeGridRow >= 0
         ? (byOffset.get(
-            `${siegeMoatColForRow(drawbridgeRow)},${drawbridgeRow}`,
+            `${siegeMoatColForRow(drawbridgeGridRow)},${drawbridgeGridRow}`,
           ) ?? null)
         : null
     const siegeLayout: SiegeSetup | null = siege
@@ -3762,17 +4255,17 @@ export function CombatScreen({
       const canvas = instance.canvas
       canvas.style.cursor = 'pointer'
       const hexFromPointer = (event: PointerEvent) => {
-        const bounds = canvas.getBoundingClientRect()
+        const local = clientPointInElement(canvas, event.clientX, event.clientY)
         return grid.pointToHex(
           {
-            x: event.clientX - bounds.left - offsetX,
-            y: event.clientY - bounds.top - offsetY,
+            x: local.x - offsetX,
+            y: local.y - offsetY,
           },
           { allowOutside: false },
         )
       }
       const zoneAt = (event: PointerEvent, hex: Hex): HexZone => {
-        const bounds = canvas.getBoundingClientRect()
+        const local = clientPointInElement(canvas, event.clientX, event.clientY)
         const corners = hex.corners
         let cx = 0
         let cy = 0
@@ -3782,8 +4275,8 @@ export function CombatScreen({
         }
         const n = Math.max(1, corners.length)
         return pointerHexZone(
-          event.clientX - bounds.left - offsetX - cx / n,
-          event.clientY - bounds.top - offsetY - cy / n,
+          local.x - offsetX - cx / n,
+          local.y - offsetY - cy / n,
           COMBAT_HEX_SIZE,
         )
       }
@@ -4141,9 +4634,103 @@ export function CombatScreen({
     navalMaskApiRef.current?.setVisible(navalMaskDebug)
   }, [navalMaskDebug])
 
+  useEffect(() => {
+    if (!navalLayout) {
+      setNavalMaskDebugState(null)
+      return () => setNavalMaskDebugState(null)
+    }
+    setNavalMaskDebugState({
+      available: true,
+      enabled: navalMaskDebug,
+      onToggle: () => setNavalMaskDebug((on) => !on),
+    })
+    return () => setNavalMaskDebugState(null)
+  }, [navalLayout, navalMaskDebug])
+
+  const escapeFooterForSide = (side: CombatSide) => {
+    if (!catalog || !battle || summary || log) {
+      return null
+    }
+    const sample = battle.stacks.find((row) => row.side === side) ?? null
+    if (!sample) {
+      return null
+    }
+    const owner = combatOwnerPlayer(
+      sample,
+      session,
+      attacker,
+      defender,
+      siegeTown,
+      defenderMobId,
+    )
+    if (!owner || owner.is_ai) {
+      return null
+    }
+    const sideHero = side === 'atk' ? attacker : defender
+    const siegeDef = isSiegeDefenceSide(side, siegeTownId)
+    const hasTown = playerOwnsFriendlyTown(session, owner.id)
+    const offeredThisRound = surrenderOfferedRound === battle.round
+    const goldOffer = nextSurrenderGold(side)
+    const cost = surrenderCostMap(goldOffer)
+    const canPay = canAffordCost(session, owner.id, cost)
+    const fleeTip = !sideHero
+      ? 'No hero in this army'
+      : siegeDef
+        ? "Can't flee while defending a siege"
+        : !hasTown
+          ? 'No friendly town to flee to'
+          : ''
+    const surrenderTip = !sideHero
+      ? 'No hero in this army'
+      : siegeDef
+        ? "Can't surrender while defending a siege"
+        : !hasTown
+          ? 'No friendly town to flee to'
+          : offeredThisRound
+            ? 'Already offered this round'
+            : !canPay
+              ? 'Not enough gold'
+              : ''
+    const fleeEnabled =
+      Boolean(sideHero) && hasTown && !siegeDef && !incomingSurrender
+    const surrenderEnabled = fleeEnabled && canPay && !offeredThisRound
+    return (
+      <div className="combat-escape-controls combat-escape-controls-footer">
+        <button
+          type="button"
+          disabled={!fleeEnabled}
+          title={fleeTip || undefined}
+          onClick={() => {
+            if (!fleeEnabled) {
+              return
+            }
+            setHeroCast(null)
+            setFleeConfirmSide(side)
+          }}
+        >
+          Flee
+        </button>
+        <button
+          type="button"
+          disabled={!surrenderEnabled}
+          title={surrenderTip || undefined}
+          onClick={() => {
+            if (!surrenderEnabled) {
+              return
+            }
+            setHeroCast(null)
+            setSurrenderConfirm({ side, gold: goldOffer })
+          }}
+        >
+          Surrender
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div
-      className="town-management combat-screen"
+      className="town-management combat-screen game-window-embed"
       data-hero-cast={heroCast ? 'true' : undefined}
       role="dialog"
       aria-modal="true"
@@ -4167,13 +4754,13 @@ export function CombatScreen({
             type="button"
             onClick={() => {
               if (summary) {
-                onExit(summary.levelUpNotice ?? null)
+                exitCombat(summary.levelUpNotice ?? null)
                 return
               }
               if (battle && finishCombat(battleRef.current ?? battle)) {
                 return
               }
-              onExit(null)
+              exitCombat(null)
             }}
           >
             Exit
@@ -4572,57 +5159,165 @@ export function CombatScreen({
           </div>
         </div>
       </div>
-      {log && !summary ? (
-        <div
-          className="date-notice"
-          role="dialog"
-          aria-label="Battle log"
-          onClick={() => dismissLogRef.current()}
-        >
-          <div className="date-notice-card">
-            {log.lines.map((line, index) => (
-              <p key={index}>{line}</p>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {summary ? (
-        <div
-          className="date-notice"
-          role="dialog"
-          aria-label="Combat summary"
-          onClick={() => onExit(summary.levelUpNotice ?? null)}
-        >
-          <div className="date-notice-card combat-summary-card">
-            <div className="combat-summary-side">
-              <h2>
-                Player {summary.loserPlayer} - {summary.loserHeroName} LOST
-              </h2>
-              {summary.loserLosses.map((line, index) => (
-                <p key={`lose-${index}`}>
-                  Lost {line.qty} {line.unitName}
-                </p>
+      {fleeConfirmSide != null ||
+      surrenderConfirm != null ||
+      incomingSurrender ||
+      (log && !summary) ||
+      summary ? (
+        <div className="combat-modal-stack">
+          {fleeConfirmSide != null ? (
+            <GameWindowModal
+              aria-labelledby="combat-flee-confirm-title"
+              onBackdropClick={() => setFleeConfirmSide(null)}
+            >
+              <h1 id="combat-flee-confirm-title">Flee</h1>
+              <p>Flee the battle? You may lose troops.</p>
+              <p className="surrender-prompt-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const side = fleeConfirmSide
+                    setFleeConfirmSide(null)
+                    runFlee(side)
+                  }}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFleeConfirmSide(null)}
+                >
+                  No
+                </button>
+              </p>
+            </GameWindowModal>
+          ) : null}
+          {surrenderConfirm != null ? (
+            <GameWindowModal
+              aria-labelledby="combat-surrender-confirm-title"
+              onBackdropClick={() => setSurrenderConfirm(null)}
+            >
+              <h1 id="combat-surrender-confirm-title">Surrender</h1>
+              <p>
+                Offer {formatAmount(surrenderConfirm.gold)} gold and surrender?
+              </p>
+              <p className="surrender-prompt-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prompt = surrenderConfirm
+                    setSurrenderConfirm(null)
+                    sendSurrenderOffer(prompt.side, prompt.gold)
+                  }}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSurrenderConfirm(null)}
+                >
+                  No
+                </button>
+              </p>
+            </GameWindowModal>
+          ) : null}
+          {incomingSurrender ? (
+            <GameWindowModal
+              aria-labelledby="combat-surrender-incoming-title"
+              onBackdropClick={() => {
+                setIncomingSurrender(null)
+                queueBattleLogRef.current({
+                  lines: ['You decline the surrender offer.'],
+                  holdTurn: true,
+                })
+              }}
+            >
+              <h1 id="combat-surrender-incoming-title">Surrender offer</h1>
+              <p>
+                {incomingSurrender.heroName} offers{' '}
+                {formatAmount(incomingSurrender.gold)} gold to surrender.
+              </p>
+              <p className="surrender-prompt-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    completeSurrender(
+                      incomingSurrender.escapingSide,
+                      incomingSurrender.gold,
+                    )
+                  }}
+                >
+                  Accept
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncomingSurrender(null)
+                    queueBattleLogRef.current({
+                      lines: ['You decline the surrender offer.'],
+                      holdTurn: true,
+                    })
+                  }}
+                >
+                  Decline
+                </button>
+              </p>
+            </GameWindowModal>
+          ) : null}
+          {log && !summary ? (
+            <GameWindowModal
+              aria-label="Battle log"
+              onBackdropClick={() => dismissLogRef.current()}
+            >
+              {log.lines.map((line, index) => (
+                <p key={index}>{line}</p>
               ))}
-            </div>
-            <div className="combat-summary-side">
-              <h2>
-                Player {summary.winnerPlayer} - {summary.winnerHeroName} WON
-              </h2>
-              {summary.winnerLosses.map((line, index) => (
-                <p key={`win-${index}`}>
-                  Lost {line.qty} {line.unitName}
-                </p>
-              ))}
-              {summary.winnerGains.map((line, index) => (
-                <p key={`gain-${index}`}>
-                  Gained {line.qty} {line.unitName}
-                </p>
-              ))}
-              {summary.xpLines.map((line, index) => (
-                <p key={`xp-${index}`}>{line}</p>
-              ))}
-            </div>
-          </div>
+            </GameWindowModal>
+          ) : null}
+          {summary ? (
+            <GameWindowModal
+              aria-label="Combat summary"
+              className="combat-summary-modal"
+              onBackdropClick={() => exitCombat(summary.levelUpNotice ?? null)}
+            >
+              <div className="combat-summary-card">
+                <div className="combat-summary-side">
+                  <h2>
+                    Player {summary.loserPlayer} - {summary.loserHeroName} LOST
+                  </h2>
+                  {summary.loserLosses.map((line, index) => (
+                    <p key={`lose-${index}`}>
+                      Lost {line.qty} {line.unitName}
+                    </p>
+                  ))}
+                </div>
+                <div className="combat-summary-side">
+                  <h2>
+                    Player {summary.winnerPlayer} - {summary.winnerHeroName} WON
+                  </h2>
+                  {summary.winnerLosses.map((line, index) => (
+                    <p key={`win-${index}`}>
+                      Lost {line.qty} {line.unitName}
+                    </p>
+                  ))}
+                  {summary.winnerGains.map((line, index) => (
+                    <p key={`gain-${index}`}>
+                      Gained {line.qty} {line.unitName}
+                    </p>
+                  ))}
+                  {(summary.itemsTakenLines ?? []).map((line, index) => (
+                    <p key={`items-${index}`}>{line}</p>
+                  ))}
+                  {(summary.rewardLines ?? []).map((line, index) => (
+                    <p key={`reward-${index}`}>{line}</p>
+                  ))}
+                  {summary.xpLines.map((line, index) => (
+                    <p key={`xp-${index}`}>{line}</p>
+                  ))}
+                </div>
+              </div>
+            </GameWindowModal>
+          ) : null}
         </div>
       ) : null}
       {catalog && battle && heroCast && heroCast.abilityId == null
@@ -4642,6 +5337,7 @@ export function CombatScreen({
                 canCast={!stack.hasActedThisRound}
                 battle={battle}
                 casterSide={stack.side}
+                footer={escapeFooterForSide(stack.side)}
                 onCancel={() => {
                   setHeroCast(null)
                   setHoverTarget(null)

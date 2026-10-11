@@ -18,6 +18,7 @@ type WorldHangerFlightProps = {
   heroId: string
   onClose: () => void
   onFlyLaunched: (heroId: string) => void
+  embedded?: boolean
 }
 
 /**
@@ -28,6 +29,7 @@ export function WorldHangerFlight({
   heroId,
   onClose,
   onFlyLaunched,
+  embedded = false,
 }: WorldHangerFlightProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
@@ -72,9 +74,9 @@ export function WorldHangerFlight({
     onFlyLaunched(hero.id)
   }
 
-  return (
+  const panel = (
     <div
-      className="date-notice"
+      className={embedded ? 'game-window-modal' : 'date-notice'}
       role="dialog"
       aria-modal="true"
       aria-labelledby="world-hanger-title"
@@ -141,4 +143,5 @@ export function WorldHangerFlight({
       </div>
     </div>
   )
+  return embedded ? <div className="game-window-embed">{panel}</div> : panel
 }

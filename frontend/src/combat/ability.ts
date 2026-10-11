@@ -8,7 +8,7 @@ import type {
 import {
   DEFAULT_UNIT_ABILITIES,
   conditionName,
-  heroEffectiveStats,
+  heroEffectiveStatsForHero,
   parseAttackShape,
   unitAttackShape,
   unitById,
@@ -35,6 +35,12 @@ import {
 } from './battle'
 import {
   ENERGY_RESOURCE_ID,
+} from './abilityStatMath'
+import {
+  heroStatForAbilityResource,
+  isEnergyAbilityResource,
+} from './abilityResourcePool'
+import {
   MANA_RESOURCE_ID,
   STR_OVER_BASE,
   barrageSecondAttackPct,
@@ -221,16 +227,17 @@ function casterStat(
   caster: Hero,
   resourceId: number,
 ): number {
-  const stats = heroEffectiveStats(
-    catalog,
-    caster.class_id,
-    caster.current_level,
-  )
-  return resourceId === ENERGY_RESOURCE_ID ? stats.strength : stats.intel
+  const stats = heroEffectiveStatsForHero(catalog, caster)
+  return heroStatForAbilityResource(catalog, stats, resourceId)
 }
 
-function abilityKind(ability: AbilityRow): DmgKind {
-  return ability.resource_id === ENERGY_RESOURCE_ID ? 'physical' : 'magic'
+function abilityKind(
+  catalog: ReferenceCatalog,
+  ability: AbilityRow,
+): DmgKind {
+  return isEnergyAbilityResource(catalog, ability.resource_id)
+    ? 'physical'
+    : 'magic'
 }
 
 export function parseTarget(
@@ -1670,7 +1677,7 @@ function applyPrecisionTraits(
   }
   const chancePct =
     fervorChainChancePct(
-      heroEffectiveStats(catalog, caster.class_id, caster.current_level)
+      heroEffectiveStatsForHero(catalog, caster)
         .strength,
       stats,
     ) ?? 0
@@ -1757,11 +1764,7 @@ function applyPrecisionTraits(
   }
   const speedFlatStat = asFinite(stats.speed_buff_flat_stat)
   if (speedFlatStat != null && speedFlatStat !== 0) {
-    const heroSpeed = heroEffectiveStats(
-      catalog,
-      caster.class_id,
-      caster.current_level,
-    ).speed
+    const heroSpeed = heroEffectiveStatsForHero(catalog, caster).speed
     const amount = Math.max(0, Math.floor(heroSpeed * speedFlatStat))
     const rounds = Math.max(1, Math.floor(asFinite(stats.duration) ?? 1))
     if (amount > 0) {
@@ -1913,11 +1916,7 @@ function applyStrengthSwing(
   if (dmgStat == null && defStat == null && defDivisor == null) {
     return { stack: target, notes: [] }
   }
-  const strength = heroEffectiveStats(
-    catalog,
-    caster.class_id,
-    caster.current_level,
-  ).strength
+  const strength = heroEffectiveStatsForHero(catalog, caster).strength
   const over = Math.max(0, strength - STR_OVER_BASE)
   const durationDiv = statDiv(stats, 'duration_stat_div')
   const rounds =
@@ -2433,7 +2432,7 @@ const hitOne = (target: CombatStack, raw: number) => {
       )
       return ''
     }
-    const kind = abilityKind(ability)
+    const kind = abilityKind(catalog, ability)
     // Spell Reflect: Magic abilities redirect to a random enemy before damage.
     if (
       kind === 'magic' &&
@@ -3428,11 +3427,7 @@ const hitOne = (target: CombatStack, raw: number) => {
       secondaryDiv != null &&
       stats.secondary_pool === 'friend_with_negative_condition'
     ) {
-      const intel = heroEffectiveStats(
-        catalog,
-        caster.class_id,
-        caster.current_level,
-      ).intel
+      const intel = heroEffectiveStatsForHero(catalog, caster).intel
       const want = Math.max(0, Math.floor(intel / secondaryDiv))
       if (want > 0) {
         const pool = stacks.filter(

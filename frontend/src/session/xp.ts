@@ -2,14 +2,17 @@ import { unitArmyValue } from '../ai/armyAlloc'
 import { appendAiTrace } from '../ai/trace'
 import { xpHpMult } from '../ai/weights'
 import {
-  HERO_STAT_KEYS,
   heroResourcePools,
   xpToReachLevel,
   unitById,
-  type HeroStatKey,
   type ReferenceCatalog,
 } from '../town/catalog'
-import { setNamedProgress } from './accessors'
+import {
+  heroDisplayStats,
+  statNameForHeroStatKey,
+} from '../town/statCatalog'
+import { setPoolProgress } from './accessors'
+import { heroPoolId } from './heroPoolKeys'
 import { slotFromPlayerId, type GameSession } from './types'
 
 export type XpKillPart = {
@@ -43,17 +46,6 @@ export type LevelUpNotice = {
   bumps: string[]
 }
 
-const STAT_BUMP_LABEL: Record<HeroStatKey, string> = {
-  speed: 'Speed',
-  stamina: 'Stamina',
-  strength: 'Strength',
-  intel: 'Intelligence',
-  defense: 'Defense',
-  resist: 'Resistance',
-  crit_pct: 'Crit %',
-  crit_amt: 'Crit Amount',
-}
-
 function emptyAward(session: GameSession): AwardHeroXpResult {
   return {
     session,
@@ -84,7 +76,7 @@ export function accumulateStatBumpLines(
   if (classId == null || levels.length === 0) {
     return []
   }
-  const totals: Partial<Record<HeroStatKey, number>> = {}
+  const totals = new Map<string, number>()
   for (const levelId of levels) {
     const row = catalog.hero_levels.find(
       (entry) => entry.hero_type_id === classId && entry.level_id === levelId,
@@ -92,21 +84,23 @@ export function accumulateStatBumpLines(
     if (!row) {
       continue
     }
-    for (const key of HERO_STAT_KEYS) {
-      const bump = row.stat_bumps[key]
+    for (const { column } of heroDisplayStats(catalog)) {
+      const bump = row.stat_bumps[column]
       if (typeof bump !== 'number' || !Number.isFinite(bump) || bump === 0) {
         continue
       }
-      totals[key] = (totals[key] ?? 0) + bump
+      totals.set(column, (totals.get(column) ?? 0) + bump)
     }
   }
   const lines: string[] = []
-  for (const key of HERO_STAT_KEYS) {
-    const amount = totals[key]
+  for (const { column } of heroDisplayStats(catalog)) {
+    const amount = totals.get(column)
     if (amount == null || amount === 0) {
       continue
     }
-    lines.push(`${formatBumpAmount(amount)} ${STAT_BUMP_LABEL[key]}`)
+    lines.push(
+      `${formatBumpAmount(amount)} ${statNameForHeroStatKey(catalog, column)}`,
+    )
   }
   return lines
 }
@@ -315,11 +309,14 @@ export function awardHeroXp(
       current_energy: pools.current_energy,
     }
   })
-  const next = setNamedProgress(
-    { ...session, heroes },
-    hero.name,
-    { current_level: level, current_xp: xp },
-  )
+  const poolId = heroPoolId(catalog, hero)
+  let next = { ...session, heroes }
+  if (poolId != null) {
+    next = setPoolProgress(next, poolId, {
+      current_level: level,
+      current_xp: xp,
+    })
+  }
   return {
     session: next,
     awarded,

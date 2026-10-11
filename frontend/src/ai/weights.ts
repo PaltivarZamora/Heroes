@@ -1,6 +1,6 @@
 import {
   aiCfgNumber,
-  appConfigNumber,
+  combatConfigNumber,
   getCachedCatalog,
   mapCfgNumber,
   scaledMapCount,
@@ -251,7 +251,7 @@ export function mapMobsType(
 export function mobSurrenderRatio(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'mob_surrender_ratio', 0.2))
+  return Math.max(0, combatConfigNumber(catalog, 'mob_surrender_ratio', 0.2))
 }
 
 export function mobSurrenderVsFleePct(
@@ -259,14 +259,20 @@ export function mobSurrenderVsFleePct(
 ): number {
   return Math.max(
     0,
-    Math.min(100, appConfigNumber(catalog, 'mob_surrender_vs_flee_pct', 50)),
+    Math.min(100, combatConfigNumber(catalog, 'mob_surrender_vs_flee_pct', 50)),
   )
 }
 
 export function xpHpMult(
   catalog: ReferenceCatalog | null | undefined,
 ): number {
-  return Math.max(0, appConfigNumber(catalog, 'xp_hp_mult', 1))
+  return Math.max(0, combatConfigNumber(catalog, 'xp_hp_mult', 1))
+}
+
+export function aiFleeRatio(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(0, aiCfgNumber(catalog, 'ai_flee_ratio', 0.5))
 }
 
 const FALLBACK_HIRE_CHANCE: Record<number, number> = {

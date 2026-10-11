@@ -4,7 +4,7 @@ import type { Hero } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
   commandingHeroStats,
-  heroEffectiveStats,
+  heroEffectiveStatsForHero,
   minRangePenaltyMult,
   shapeIsUntargeted,
   shapePulsesOnMove,
@@ -208,11 +208,7 @@ export function mitigateIncoming(
     opts?.ignoreArmor === true ? Math.max(0, raw) : Math.max(floor, raw - soak)
   let blocked = Math.max(0, raw - dealt)
   if (defenderHero) {
-    const stats = heroEffectiveStats(
-      catalog,
-      defenderHero.class_id,
-      defenderHero.current_level,
-    )
+    const stats = heroEffectiveStatsForHero(catalog, defenderHero)
     const heroPct = kind === 'magic' ? stats.resist : stats.defense
     const afterHero = reduceByPct(dealt, heroPct)
     blocked += dealt - afterHero

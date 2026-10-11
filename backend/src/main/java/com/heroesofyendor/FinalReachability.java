@@ -251,8 +251,11 @@ final class FinalReachability {
         if (col < 0 || row < 0 || col >= ctx.width || row >= ctx.height) {
             return false;
         }
+        if (Rivers.isBridge(ctx, col, row)) {
+            return ctx.propBlocked == null || !ctx.propBlocked[row][col];
+        }
         HexTerrain t = ctx.cells[row][col];
-        if (!t.isPassable() || t.movementCost() == null) {
+        if (t == null || !t.isPassable() || t.movementCost() == null) {
             return false;
         }
         if (ctx.propBlocked != null && ctx.propBlocked[row][col]) {
@@ -269,8 +272,11 @@ final class FinalReachability {
         if (col < 0 || row < 0 || col >= ctx.width || row >= ctx.height) {
             return false;
         }
+        if (Rivers.isBridge(ctx, col, row)) {
+            return true;
+        }
         HexTerrain t = ctx.cells[row][col];
-        if (!t.isPassable() || t.movementCost() == null) {
+        if (t == null || !t.isPassable() || t.movementCost() == null) {
             return false;
         }
         if (ctx.pocketRing != null && ctx.pocketRing[row][col]) {
@@ -951,7 +957,8 @@ final class FinalReachability {
                 }
                 Integer guardQ = null;
                 Integer guardR = null;
-                if ("chest".equals(obj.kind()) && obj.guardQ() != null) {
+                if (("chest".equals(obj.kind()) || "ground_item".equals(obj.kind()))
+                        && obj.guardQ() != null) {
                     int[] guard = guardHex(ctx, others, col, row);
                     if (guard == null) {
                         continue;
@@ -981,7 +988,8 @@ final class FinalReachability {
                                 obj.launchQ(),
                                 obj.launchR(),
                                 obj.linkedTownQ(),
-                                obj.linkedTownR()));
+                                obj.linkedTownR(),
+                                obj.chestItem()));
                 rebuildFeatureIndex(ctx);
                 return true;
             }
@@ -1040,6 +1048,9 @@ final class FinalReachability {
     private static boolean passable(MapGenContext ctx, int col, int row) {
         if (col < 0 || row < 0 || col >= ctx.width || row >= ctx.height) {
             return false;
+        }
+        if (Rivers.isBridge(ctx, col, row)) {
+            return true;
         }
         HexTerrain terrain = ctx.cells[row][col];
         return terrain != null && terrain.isPassable() && terrain.movementCost() != null && !terrain.blocked();

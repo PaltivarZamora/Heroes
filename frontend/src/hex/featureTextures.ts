@@ -58,6 +58,17 @@ async function tryLoad(url: string): Promise<Texture | null> {
  * Load under `/assets/features/`. Tries `image_path` as-is, then bare / variant
  * names (prop-style fallback; features currently have one file per row).
  */
+/** Load a texture from a full URL (e.g. rolled item art under `/assets/items/`). */
+export async function loadAbsoluteTexture(
+  url: string | null | undefined,
+): Promise<Texture | null> {
+  const trimmed = url?.trim()
+  if (!trimmed) {
+    return null
+  }
+  return tryLoad(trimmed)
+}
+
 export async function loadFeatureTexture(
   fileName: string | null | undefined,
   variant: number | null | undefined = 1,

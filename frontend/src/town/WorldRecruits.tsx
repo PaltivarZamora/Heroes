@@ -27,6 +27,7 @@ type WorldRecruitsProps = {
   featureId: string
   heroId: string
   onClose: () => void
+  embedded?: boolean
 }
 
 /**
@@ -37,6 +38,7 @@ export function WorldRecruits({
   featureId,
   heroId,
   onClose,
+  embedded = false,
 }: WorldRecruitsProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
@@ -112,9 +114,9 @@ export function WorldRecruits({
     }
   }
 
-  return (
+  const panel = (
     <div
-      className="date-notice"
+      className={embedded ? 'game-window-modal' : 'date-notice'}
       role="dialog"
       aria-modal="true"
       aria-labelledby="world-recruits-title"
@@ -183,4 +185,5 @@ export function WorldRecruits({
       </div>
     </div>
   )
+  return embedded ? <div className="game-window-embed">{panel}</div> : panel
 }

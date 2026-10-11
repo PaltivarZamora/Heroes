@@ -1,4 +1,5 @@
 import { canAfford, GOLD_RESOURCE_ID, formatAmount } from '../hex/resources'
+import { BUILDING_SLOT_HANGER } from '../town/buildingSlots'
 import {
   armyBuildOptions,
   buildingById,
@@ -10,8 +11,10 @@ import {
   heroTypeName,
   isArmySlot,
   isEmptyPlaceholderSlot,
+  isHallBuilding,
   isLibraryBuilding,
   isMarketplaceBuilding,
+  isHangerBuilding,
   isTavernBuilding,
   isUndesignedSlot,
   hireHeroGoldCost,
@@ -58,6 +61,7 @@ import {
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { isPassable } from '../hex/world'
 import { appendAiTrace } from './trace'
+import { runAiItemMaintenanceForPlayer } from './itemEquip'
 import {
   TOWN_BUILD_DECISION,
   TOWN_BUILD_FACTORS,
@@ -116,6 +120,7 @@ type UpgradeUnitIntent = {
   townId: string
   townName: string
   slot: ArmySlotRef
+  unitId: number
   unitName: string
   advancedName: string
   qty: number
@@ -223,7 +228,6 @@ function empireTownsAreSpread(
   return false
 }
 
-const HANGER_SLOT = 8
 /** Slot-8 / Hanger hero_value when empire is spread (was ~1.0–1.15 fallback). */
 const HANGER_SPREAD_HERO_VALUE = 2.25
 
@@ -239,9 +243,8 @@ function factorForBuilding(
     const army = armyValueFromGrowthTier(catalog, building)
     return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
-  const name = building.name.trim().toLowerCase()
   const isHanger =
-    slotNum === HANGER_SLOT || name.includes('hanger') || name.includes('zeppelin')
+    slotNum === BUILDING_SLOT_HANGER || isHangerBuilding(building)
   if (
     isHanger &&
     session &&
@@ -262,8 +265,7 @@ function factorForBuilding(
     buildingHasProduces(building) ||
     effect === 'resource_yield' ||
     effect === 'gold_income' ||
-    name.includes('market') ||
-    name.includes('hall')
+    isHallBuilding(building)
   if (economy) {
     return { economy_value: 1, army_value: 0, defense_value: 0, hero_value: 0 }
   }
@@ -289,9 +291,7 @@ function factorForAction(
     return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
   if (action.kind === 'upgrade_unit') {
-    const base = catalog.unit.find(
-      (row) => row.name.trim().toLowerCase() === action.unitName.trim().toLowerCase(),
-    )
+    const base = unitById(catalog, action.unitId)
     const army = armyValueFromUnitTier(base?.tier)
     return { economy_value: 0, army_value: army, defense_value: 0, hero_value: 0 }
   }
@@ -586,6 +586,7 @@ function collectUpgradeActions(
       townId: town.id,
       townName: town.name,
       slot,
+      unitId: stack.unit_id,
       unitName: unit?.name ?? `#${stack.unit_id}`,
       advancedName: offer.advanced.name,
       qty: stack.qty,
@@ -874,7 +875,14 @@ function executeHire(
     if (!error && spawnAt) {
       hired += ` at ${spawnAt.q},${spawnAt.r}`
     }
-    return result.error ? current : result.session
+    if (result.error) {
+      return current
+    }
+    return runAiItemMaintenanceForPlayer(
+      result.session,
+      catalog,
+      playerId,
+    )
   })
   return {
     error,

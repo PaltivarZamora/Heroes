@@ -56,10 +56,19 @@ export type MapObjectKind =
   | 'dock'
   | 'recruits'
   | 'notice_board'
+  | 'ground_item'
 
 export type MapObjectLoot = {
   resourceId: number
   qty: number
+}
+
+export type ApiMapChestItem = {
+  itemId: number
+  rarityId: number
+  adjId?: number | null
+  variation: number
+  stats: Array<{ statId: number; amt: number }>
 }
 
 export type MapObjectData = {
@@ -96,6 +105,9 @@ export type MapObjectData = {
   /** Notice Board permanent town link (entry hex). */
   linkedTownQ?: number | null
   linkedTownR?: number | null
+  /** Rolled item on chest (BR S9-41). */
+  chestItem?: ApiMapChestItem | null
+  chest_item?: ApiMapChestItem | null
   /** Frontend-only: mine or town claimed by the hero. */
   claimed?: boolean
   /** Frontend-only: pickup already collected. */
@@ -154,6 +166,40 @@ export function mapObjectTownTypeId(obj: MapObjectData): number | undefined {
 export function mapObjectChestLevel(obj: MapObjectData): number | undefined {
   const extra = obj as MapObjectData & { Level?: unknown }
   return numericId(obj.level) ?? numericId(extra.Level)
+}
+
+export function mapObjectChestItem(obj: MapObjectData): ApiMapChestItem | null {
+  const raw =
+    obj.chestItem ??
+    (obj as MapObjectData & { chest_item?: ApiMapChestItem }).chest_item
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  const itemId = numericId((raw as ApiMapChestItem).itemId)
+  const rarityId = numericId((raw as ApiMapChestItem).rarityId)
+  const variation = numericId((raw as ApiMapChestItem).variation) ?? 1
+  if (itemId == null || rarityId == null) {
+    return null
+  }
+  const stats: Array<{ statId: number; amt: number }> = []
+  const statsRaw = (raw as ApiMapChestItem).stats
+  if (Array.isArray(statsRaw)) {
+    for (const line of statsRaw) {
+      const statId = numericId(line?.statId)
+      const amt = numericId(line?.amt)
+      if (statId != null && amt != null) {
+        stats.push({ statId, amt })
+      }
+    }
+  }
+  const adjId = numericId((raw as ApiMapChestItem).adjId) ?? null
+  return {
+    itemId,
+    rarityId,
+    adjId,
+    variation,
+    stats,
+  }
 }
 
 export function mapObjectChestLoot(
@@ -236,6 +282,14 @@ export function mapObjectLinkedTown(
   return { q, r }
 }
 
+export type GeneratedMapMob = {
+  q: number
+  r: number
+  stacks: Array<{ unitId?: number; unit_id?: number; qty: number }>
+  guardsLoot?: boolean
+  guards_loot?: boolean
+}
+
 export type TestGridResponse = {
   seed: number
   tiles: TileData[]
@@ -244,6 +298,8 @@ export type TestGridResponse = {
   roads?: Array<Array<{ q: number; r: number }>>
   /** Planned chain before washout and orphan trim. Display only. */
   roadPlan?: RoadPlan | null
+  /** Layer-6 world mobs. Hydrated once into the session. */
+  mobs?: GeneratedMapMob[]
 }
 
 export type RoadPlanLink = {

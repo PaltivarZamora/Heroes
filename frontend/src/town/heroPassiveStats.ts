@@ -1,6 +1,6 @@
 import type { Hero } from '../session/types'
 import type { HeroStats, ReferenceCatalog } from './catalog'
-import { heroEffectiveStats, heroTypeName } from './catalog'
+import { heroEffectiveStatsForHero, heroTypeName } from './catalog'
 
 export type PassiveStats = Record<string, unknown>
 
@@ -107,11 +107,7 @@ export function passiveStatSourceValue(
   hero: Hero,
   source: string | null | undefined,
 ): number {
-  const stats = heroEffectiveStats(
-    catalog,
-    hero.class_id,
-    hero.current_level ?? 1,
-  )
+  const stats = heroEffectiveStatsForHero(catalog, hero)
   return pickHeroStat(stats, source)
 }
 

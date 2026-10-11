@@ -23,6 +23,10 @@ public final class MapConfig {
         if (data == null || key == null) {
             return null;
         }
+        Map<String, Object> difficulty = DifficultyConfig.mapOverrides();
+        if (difficulty.containsKey(key)) {
+            return difficulty.get(key);
+        }
         for (Map<String, Object> row : data.rows("map_config")) {
             if (key.equals(stringVal(row, "key"))) {
                 return decodeJsonb(row.get("value"));

@@ -2,13 +2,11 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   formatAmount,
 } from '../hex/resources'
-import { ResourceBar } from '../hex/ResourceBar'
 import {
   ensureLibraryOffers,
   findTownById,
   learnLibraryAbility,
   visitingHeroId,
-  walletFromSession,
 } from '../session/accessors'
 import { getSession, subscribe, updateSession } from '../session/store'
 import { getCachedCatalog, libraryGoldCost, subscribeCatalog } from './catalog'
@@ -27,9 +25,15 @@ type LibraryProps = {
   townId: string
   slotNum: number
   onClose: () => void
+  embedded?: boolean
 }
 
-export function Library({ townId, slotNum, onClose }: LibraryProps) {
+export function Library({
+  townId,
+  slotNum,
+  onClose,
+  embedded = false,
+}: LibraryProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const town = findTownById(session, townId)
@@ -63,7 +67,6 @@ export function Library({ townId, slotNum, onClose }: LibraryProps) {
     )
   }, [catalog, town, townId, townTypeId, slotNum])
 
-  const wallet = walletFromSession(session)
   const building = session.building_states.find(
     (row) => row.town_id === townId && row.slot_num === slotNum,
   )
@@ -103,21 +106,8 @@ export function Library({ townId, slotNum, onClose }: LibraryProps) {
     setMessage(error)
   }
 
-  return (
-    <div
-      className="town-management library-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="library-title"
-    >
-      <header className="town-management-bar">
-        <h1 id="library-title">Library</h1>
-        <ResourceBar wallet={wallet} className="town-resource-strip" />
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
-      </header>
-      <div className="library-body">
+  const body = (
+    <div className="library-body town-building-screen-body">
         {!catalog ? (
           <p>Loading…</p>
         ) : (
@@ -221,7 +211,41 @@ export function Library({ townId, slotNum, onClose }: LibraryProps) {
             {message ? <p className="town-building-panel-msg">{message}</p> : null}
           </>
         )}
-      </div>
+    </div>
+  )
+
+  const header = (
+    <header className="town-building-screen-header">
+      <h1 id="library-title">Library</h1>
+      <button type="button" onClick={onClose}>
+        Close
+      </button>
+    </header>
+  )
+
+  if (embedded) {
+    return (
+      <>
+        {header}
+        {body}
+      </>
+    )
+  }
+
+  return (
+    <div
+      className="town-management library-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="library-title"
+    >
+      <header className="town-management-bar">
+        <h1 id="library-title">Library</h1>
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </header>
+      {body}
     </div>
   )
 }

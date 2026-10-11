@@ -48,6 +48,8 @@ export type WorldRenderStats = {
   lastRepaintMs: number
   displayObjectsTotal: number
   displayObjectsVisible: number
+  propsTotal: number
+  propsVisible: number
   exploredHexes: number
   bakedChunks: number
   visibleChunks: number
@@ -615,12 +617,8 @@ export class WorldChunkRenderer {
           return
         }
         const center = hexCenter(job.hex, this.offsetX, this.offsetY)
-        const tile = getTile(job.q, job.r)
         const row = propRowById(this.getCatalog(), job.propId)
-        const renderScale =
-          tile?.propRenderScale ??
-          row?.render_scale ??
-          1
+        const renderScale = row?.render_scale ?? 1
         const isBlocker = row?.is_blocker === true
         const sprite = new Sprite()
         const layer = isBlocker ? this.blockingPropLayer : this.groundPropLayer
@@ -762,6 +760,38 @@ export class WorldChunkRenderer {
     this.propBlockerByHex.clear()
   }
 
+  /** Re-layout existing props after catalog `render_scale` changes (Reload Reference Data). */
+  async refreshPropScalesFromCatalog(
+    loadProp: (
+      file: string,
+      variant: number,
+    ) => Promise<Texture | null>,
+  ) {
+    const hexes: Axial[] = []
+    for (const key of this.propByHex.keys()) {
+      const parts = key.split(',')
+      if (parts.length !== 2) {
+        continue
+      }
+      const q = Number(parts[0])
+      const r = Number(parts[1])
+      if (!Number.isFinite(q) || !Number.isFinite(r)) {
+        continue
+      }
+      hexes.push({ q, r })
+      const sprite = this.propByHex.get(key)
+      sprite?.parent?.removeChild(sprite)
+      sprite?.destroy()
+      this.propByHex.delete(key)
+      this.propCullByHex.delete(key)
+      this.propBlockerByHex.delete(key)
+    }
+    if (hexes.length === 0) {
+      return
+    }
+    await this.addPropsForHexes(hexes, loadProp, () => new Sprite())
+  }
+
   /** Full prop resync (hotseat / remount). */
   async rebuildAllProps(
     loadProp: (
@@ -858,8 +888,24 @@ export class WorldChunkRenderer {
     this.fps = deltaMS > 0 ? 1000 / this.avgFrameMs : 0
   }
 
+  propCullCounts(): { total: number; visible: number } {
+    let total = 0
+    let visible = 0
+    for (const sprite of this.propByHex.values()) {
+      if (sprite.destroyed) {
+        continue
+      }
+      total += 1
+      if (sprite.visible && sprite.renderable) {
+        visible += 1
+      }
+    }
+    return { total, visible }
+  }
+
   stats(worldRoot: Container): WorldRenderStats {
     const counts = countDisplayTree(worldRoot)
+    const props = this.propCullCounts()
     let baked = 0
     let visibleChunks = 0
     for (const bucket of this.buckets.values()) {
@@ -877,6 +923,8 @@ export class WorldChunkRenderer {
       lastRepaintMs: this.lastRepaintMs,
       displayObjectsTotal: counts.total,
       displayObjectsVisible: counts.visible,
+      propsTotal: props.total,
+      propsVisible: props.visible,
       exploredHexes: this.exploredCount,
       bakedChunks: baked,
       visibleChunks,

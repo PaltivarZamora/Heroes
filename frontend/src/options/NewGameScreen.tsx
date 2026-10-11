@@ -30,6 +30,8 @@ type NewGameScreenProps = {
   onClose: () => void
   onStartGame: (config: GameConfig) => void
   generating?: boolean
+  /** Render body only (inside GameWindowModal). */
+  embedded?: boolean
 }
 
 function heroLabel(
@@ -59,6 +61,7 @@ export function NewGameScreen({
   onClose,
   onStartGame,
   generating = false,
+  embedded = false,
 }: NewGameScreenProps) {
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const bootDefaults = defaultGameConfig(catalog)
@@ -176,9 +179,8 @@ export function NewGameScreen({
   // Library tabs use hero_type.sort_order instead — do not unify these.
   const heroTypes = [...(catalog?.hero_type ?? [])].sort((a, b) => a.id - b.id)
 
-  return (
-    <div className="options-modal" role="dialog" aria-labelledby="new-game-title">
-      <div className="options-dialog new-game-dialog">
+  const body = (
+      <div className={`options-dialog new-game-dialog${embedded ? ' new-game-dialog-embedded' : ''}`}>
         <h2 id="new-game-title">New Game</h2>
         <div className="new-game-fields">
           <label className="options-field options-field-row">
@@ -323,6 +325,15 @@ export function NewGameScreen({
           </button>
         </div>
       </div>
+  )
+
+  if (embedded) {
+    return body
+  }
+
+  return (
+    <div className="options-modal" role="dialog" aria-labelledby="new-game-title">
+      {body}
     </div>
   )
 }

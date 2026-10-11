@@ -367,6 +367,7 @@ final class WaterTerrain {
                             site[2],
                             site[3],
                             null,
+                            null,
                             null));
             lake.hasDock = true;
         }
@@ -722,45 +723,91 @@ final class WaterTerrain {
             boolean changed = false;
             for (int row = 0; row < ctx.height; row++) {
                 for (int col = 0; col < ctx.width; col++) {
-                    if (locked[row][col] || ctx.cells[row][col] == null) {
-                        continue;
+                    if (absorbHex(ctx, rules, locked, col, row)) {
+                        changed = true;
                     }
-                    HexTerrain self = ctx.cells[row][col];
-                    Map<Integer, Integer> tallies = new HashMap<>();
-                    int q = HexCoords.qOf(col, row);
-                    for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
-                        int nr = row + d[1];
-                        int ncol = HexCoords.colOf(q + d[0], nr);
-                        if (inside(ctx, ncol, nr) && ctx.cells[nr][ncol] != null) {
-                            tallies.merge(ctx.cells[nr][ncol].id(), 1, Integer::sum);
-                        }
-                    }
-                    int same = tallies.getOrDefault(self.id(), 0);
-                    int foreign = 0;
-                    for (Map.Entry<Integer, Integer> e : tallies.entrySet()) {
-                        if (e.getKey() != self.id()) {
-                            foreign = Math.max(foreign, e.getValue());
-                        }
-                    }
-                    if (same > 2 || (same > 0 && foreign < 3)) {
-                        continue;
-                    }
-                    HexTerrain next = allowedPlurality(ctx, rules, col, row, self.id());
-                    if (next == null || next.id() == self.id()) {
-                        continue;
-                    }
-                    ctx.cells[row][col] = next;
-                    int[] donor = neighborOfTerrain(ctx, col, row, next.id());
-                    if (donor != null) {
-                        ctx.chunkIds[row][col] = ctx.chunkIds[donor[1]][donor[0]];
-                    }
-                    changed = true;
                 }
             }
             if (!changed) {
                 break;
             }
         }
+        int leftover = countAbsorbLeftovers(ctx, rules, locked);
+        log.info("L1 water absorb: orphan leftovers after 64-pass cap = {}", leftover);
+    }
+
+    private static boolean absorbHex(
+            MapGenContext ctx, Rules rules, boolean[][] locked, int col, int row) {
+        if (locked[row][col] || ctx.cells[row][col] == null) {
+            return false;
+        }
+        HexTerrain self = ctx.cells[row][col];
+        Map<Integer, Integer> tallies = new HashMap<>();
+        int q = HexCoords.qOf(col, row);
+        for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+            int nr = row + d[1];
+            int ncol = HexCoords.colOf(q + d[0], nr);
+            if (inside(ctx, ncol, nr) && ctx.cells[nr][ncol] != null) {
+                tallies.merge(ctx.cells[nr][ncol].id(), 1, Integer::sum);
+            }
+        }
+        int same = tallies.getOrDefault(self.id(), 0);
+        int foreign = 0;
+        for (Map.Entry<Integer, Integer> e : tallies.entrySet()) {
+            if (e.getKey() != self.id()) {
+                foreign = Math.max(foreign, e.getValue());
+            }
+        }
+        if (same > 2 || (same > 0 && foreign < 3)) {
+            return false;
+        }
+        HexTerrain next = allowedPlurality(ctx, rules, col, row, self.id());
+        if (next == null || next.id() == self.id()) {
+            return false;
+        }
+        ctx.cells[row][col] = next;
+        int[] donor = neighborOfTerrain(ctx, col, row, next.id());
+        if (donor != null) {
+            ctx.chunkIds[row][col] = ctx.chunkIds[donor[1]][donor[0]];
+        }
+        return true;
+    }
+
+    private static int countAbsorbLeftovers(
+            MapGenContext ctx, Rules rules, boolean[][] locked) {
+        int n = 0;
+        for (int row = 0; row < ctx.height; row++) {
+            for (int col = 0; col < ctx.width; col++) {
+                if (locked[row][col] || ctx.cells[row][col] == null) {
+                    continue;
+                }
+                HexTerrain self = ctx.cells[row][col];
+                Map<Integer, Integer> tallies = new HashMap<>();
+                int q = HexCoords.qOf(col, row);
+                for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
+                    int nr = row + d[1];
+                    int ncol = HexCoords.colOf(q + d[0], nr);
+                    if (inside(ctx, ncol, nr) && ctx.cells[nr][ncol] != null) {
+                        tallies.merge(ctx.cells[nr][ncol].id(), 1, Integer::sum);
+                    }
+                }
+                int same = tallies.getOrDefault(self.id(), 0);
+                int foreign = 0;
+                for (Map.Entry<Integer, Integer> e : tallies.entrySet()) {
+                    if (e.getKey() != self.id()) {
+                        foreign = Math.max(foreign, e.getValue());
+                    }
+                }
+                if (same > 2 || (same > 0 && foreign < 3)) {
+                    continue;
+                }
+                HexTerrain next = allowedPlurality(ctx, rules, col, row, self.id());
+                if (next != null && next.id() != self.id()) {
+                    n++;
+                }
+            }
+        }
+        return n;
     }
 
     /**

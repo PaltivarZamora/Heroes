@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { AbilityRow, ReferenceCatalog } from '../town/catalog'
 import { xpToReachLevel } from '../town/catalog'
 import { classDisciplines } from '../town/libraryRules'
@@ -26,6 +26,8 @@ type HeroAbilityPopupProps = {
   casterSide: CombatSide
   onCancel: () => void
   onChoose: (ability: AbilityRow) => void
+  /** Battle-only actions (Flee / Surrender, BR S9-34). */
+  footer?: ReactNode
 }
 
 export function HeroAbilityPopup({
@@ -37,6 +39,7 @@ export function HeroAbilityPopup({
   casterSide,
   onCancel,
   onChoose,
+  footer,
 }: HeroAbilityPopupProps) {
   const disciplines = classDisciplines(catalog, hero.class_id ?? -1)
   const [disciplineId, setDisciplineId] = useState<number | null>(
@@ -139,6 +142,9 @@ export function HeroAbilityPopup({
           }
           unavailableMessage={(ability) => abilityCooldownMessage(hero, ability)}
         />
+        {footer ? (
+          <div className="combat-hero-popup-footer">{footer}</div>
+        ) : null}
       </div>
     </div>
   )

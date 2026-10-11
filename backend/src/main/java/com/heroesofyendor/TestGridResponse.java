@@ -9,7 +9,9 @@ public record TestGridResponse(
         /** Each entry is one town→endpoint branch as axial hex centers, for continuous stroke. */
         List<List<RoadPoint>> roads,
         /** Debug overlay of the planned chain before washout and orphan trim. Null when roads are off. */
-        RoadPlan roadPlan) {
+        RoadPlan roadPlan,
+        /** Layer-6 world mobs. Frontend hydrates these into the session. */
+        List<MapMobData> mobs) {
 
     public record RoadPoint(int q, int r) {}
 
@@ -20,12 +22,21 @@ public record TestGridResponse(
     public record RoadPlan(List<RoadLink> links, List<RoadPoint> washed, List<RoadPoint> orphans) {}
 
     public TestGridResponse(
+            int seed,
+            List<TileData> tiles,
+            List<MapObjectData> objects,
+            List<List<RoadPoint>> roads,
+            RoadPlan roadPlan) {
+        this(seed, tiles, objects, roads, roadPlan, List.of());
+    }
+
+    public TestGridResponse(
             int seed, List<TileData> tiles, List<MapObjectData> objects, List<List<RoadPoint>> roads) {
-        this(seed, tiles, objects, roads, null);
+        this(seed, tiles, objects, roads, null, List.of());
     }
 
     /** Back-compat: empty road polylines. */
     public TestGridResponse(int seed, List<TileData> tiles, List<MapObjectData> objects) {
-        this(seed, tiles, objects, List.of(), null);
+        this(seed, tiles, objects, List.of(), null, List.of());
     }
 }

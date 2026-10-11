@@ -27,7 +27,8 @@ public class MapController {
             @RequestParam(required = false) Integer players,
             @RequestParam(required = false) Integer size,
             @RequestParam(required = false) String mapSize,
-            @RequestParam(required = false) String townTypes) {
+            @RequestParam(required = false) String townTypes,
+            @RequestParam(required = false) Integer difficulty) {
         MapSize resolved =
                 size != null
                         ? MapSize.fromNewMapSize(referenceData, size)
@@ -35,9 +36,15 @@ public class MapController {
         int[] playerTownTypes = parseTownTypes(townTypes);
         TestGridResponse body =
                 seed == null
-                        ? TestGrid.generate(referenceData, players, resolved, playerTownTypes)
+                        ? TestGrid.generate(
+                                referenceData, players, resolved, playerTownTypes, difficulty)
                         : TestGrid.generate(
-                                seed, referenceData, players, resolved, playerTownTypes);
+                                seed,
+                                referenceData,
+                                players,
+                                resolved,
+                                playerTownTypes,
+                                difficulty);
         String timing = TestGrid.consumeServerTiming();
         ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
         if (timing != null && !timing.isEmpty()) {

@@ -3,7 +3,7 @@ import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
 import type { AbilityRow, ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
-  heroEffectiveStats,
+  heroEffectiveStatsForHero,
   retaliationCharges,
   unitById,
   unitFootprint,
@@ -35,6 +35,7 @@ import {
   permanentBlockKeys,
 } from './battleProps'
 import { mirrorImageTopHealth } from './abilityStatMath'
+import { heroStatForAbilityResource } from './abilityResourcePool'
 import {
   isNatureTotemStack,
   isShamanTotemStack,
@@ -68,7 +69,6 @@ import {
 import { tombstoneOccupancyBodies } from './tombstone'
 
 const PERM_SLOTS = ARMY_STACK_SLOTS
-const ENERGY_RESOURCE_ID = 1
 
 export function isSummonStats(stats: Record<string, unknown>): boolean {
   // Ice Shards / Earth Spikes: damage (and optional knockback) plus terrain drops —
@@ -733,16 +733,13 @@ export function applySummonFromStats(
 ): SummonResolve {
   const persists = stats.persists_on_summon === true
   const insertQueue = stats.insert_into_current_round_queue === true
-  const heroStats = heroEffectiveStats(
-    catalog,
-    caster.class_id,
-    caster.current_level,
-  )
+  const heroStats = heroEffectiveStatsForHero(catalog, caster)
   const intel = heroStats.intel
-  const scaleStat =
-    ability.resource_id === ENERGY_RESOURCE_ID
-      ? heroStats.strength
-      : intel
+  const scaleStat = heroStatForAbilityResource(
+    catalog,
+    heroStats,
+    ability.resource_id,
+  )
   const unitId = Math.floor(asFinite(stats.summon_unit_id) ?? 0)
   if (unitId > 0) {
     const unit = unitById(catalog, unitId)
@@ -1041,11 +1038,7 @@ export function applyMirrorImage(
       flashes: [],
     }
   }
-  const heroStats = heroEffectiveStats(
-    catalog,
-    caster.class_id,
-    caster.current_level,
-  )
+  const heroStats = heroEffectiveStatsForHero(catalog, caster)
   const maxHp = stackMaxHealth(target, catalog)
   const topHealth =
     mirrorImageTopHealth(heroStats.intel, stats, maxHp) ??
@@ -1320,11 +1313,7 @@ export function applyShamanBattleStartTotems(
     if (pool.length === 0) {
       continue
     }
-    const intel = heroEffectiveStats(
-      catalog,
-      hero.class_id,
-      hero.current_level ?? 1,
-    ).intel
+    const intel = heroEffectiveStatsForHero(catalog, hero).intel
     const units = pickTotemUnitsForSpawn(pool, toSpawn, random, fillToCap)
     let spawned = 0
     for (const unit of units) {

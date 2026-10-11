@@ -1,5 +1,6 @@
 import { calendarDayNumber, advanceDay, isWeekRollover } from '../hex/calendar'
 import { advanceAlongHexLine, nextTownCircleHex, townCircleLapSteps } from '../hex/flight'
+import { transportSpriteForDeparture } from '../hex/flightTransport'
 import { facingFromMove } from '../hex/heroTravelSprite'
 import { hexDistance } from '../hex/pathfinding'
 import {
@@ -14,6 +15,27 @@ import {
   type ResourceWallet,
 } from '../hex/resources'
 import type { SlotState } from '../town/townSlots'
+import {
+  logCapturedMine,
+  logDayIncomeEvent,
+  logPickup,
+  logTownBuilding,
+  logTownCapture,
+  pruneGameLogs,
+} from './gameLog'
+import { emptyHeroInventory, normalizeHeroInventory } from '../items/state'
+import {
+  applyRecycledHeroToNewHire,
+  clearRecycledPoolId,
+} from './recycle'
+import {
+  heroPoolId,
+  migratePoolKeyedSession,
+  poolIdByName,
+  poolProgressKey,
+  progressForPoolId,
+} from './heroPoolKeys'
+import { applyDailyHeroPoolRegen } from '../items/heroRegen'
 import {
   armyOptions,
   buildingById,
@@ -90,6 +112,7 @@ import {
   type GameSession,
   type Hero,
   type HeroProgress,
+  type MapFeature,
   type Node,
   type Player,
   type Town,
@@ -304,21 +327,19 @@ export function nextActivePlayerIndex(session: GameSession): {
 
 export function endTurn(session: GameSession): GameSession {
   let current = withEliminations(session)
-  const ending = activePlayer(current)
   const { index, dayAdvance } = nextActivePlayerIndex(current)
   current = { ...current, activePlayerIndex: index }
-  // Flat +1 Energy and +1 Mana for the player whose turn just ended (capped at max).
-  // Separate from day-rollover / town full-restore and from regen_pure/hybrid.
-  if (ending) {
-    current = regenHeroPoolsEndOfTurn(current, ending.id)
-  }
   const incomeEvents: DayIncomeEvent[] = []
   if (dayAdvance) {
+    const catalog = getCachedCatalog()
     const previous = current.game.calendar
     const next = advanceDay(previous)
     current = {
       ...current,
       game: { ...current.game, calendar: next },
+    }
+    if (catalog) {
+      current = applyDailyHeroPoolRegen(current, catalog)
     }
     current = advanceAllFlights(current)
     const mineResult = applyMineIncomeWithReport(current)
@@ -340,7 +361,6 @@ export function endTurn(session: GameSession): GameSession {
       },
     }
     if (isWeekRollover(previous, next)) {
-      const catalog = getCachedCatalog()
       if (catalog) {
         const weekResult = applyWeeklyGrowthWithReport(current, catalog)
         current = weekResult.session
@@ -348,6 +368,14 @@ export function endTurn(session: GameSession): GameSession {
         current = applyWeeklyMobGrowth(current, catalog)
         current = applyWeeklyNeutralTownGrowth(current, catalog, next)
       }
+    }
+    current = pruneGameLogs(
+      current,
+      catalog,
+      calendarDayNumber(current.game.calendar),
+    )
+    for (const event of incomeEvents) {
+      current = logDayIncomeEvent(current, event)
     }
   }
   const incoming = activePlayer(current)
@@ -454,7 +482,7 @@ function formatDayIncomeNoticeLines(
       )
     } else if (event.kind === 'unique') {
       townLines.push(
-        `${event.uniqueName}: ${formatAmount(event.amount)} ${res}`,
+        `${event.townName}: ${event.uniqueName} — ${formatAmount(event.amount)} ${res}`,
       )
     } else {
       mineLines.push(
@@ -514,10 +542,30 @@ export function progressForHeroName(
   session: GameSession,
   name: string,
 ): HeroProgress {
-  const saved = session.hero_progress?.[name]
+  const poolId = poolIdByName(getCachedCatalog(), name)
+  const saved =
+    poolId != null ? progressForPoolId(session, poolId) : undefined
   return {
     current_level: asHeroLevel(saved?.current_level, STARTING_HERO_LEVEL),
     current_xp: asHeroXp(saved?.current_xp, STARTING_HERO_XP),
+  }
+}
+
+export function setPoolProgress(
+  session: GameSession,
+  poolId: number,
+  live: HeroProgress,
+): GameSession {
+  const key = poolProgressKey(poolId)
+  return {
+    ...session,
+    hero_progress: {
+      ...(session.hero_progress ?? {}),
+      [key]: {
+        current_level: asHeroLevel(live.current_level, STARTING_HERO_LEVEL),
+        current_xp: asHeroXp(live.current_xp, STARTING_HERO_XP),
+      },
+    },
   }
 }
 
@@ -529,17 +577,16 @@ export function withNamedProgress(
   if (!name || name === PLACEHOLDER_HERO_NAME) {
     return session
   }
-  const existing = session.hero_progress?.[name]
+  const poolId = poolIdByName(getCachedCatalog(), name)
+  if (poolId == null) {
+    return session
+  }
+  const key = poolProgressKey(poolId)
+  const existing = session.hero_progress?.[key]
   if (existing) {
     return session
   }
-  return {
-    ...session,
-    hero_progress: {
-      ...(session.hero_progress ?? {}),
-      [name]: live,
-    },
-  }
+  return setPoolProgress(session, poolId, live)
 }
 
 export function setNamedProgress(
@@ -550,55 +597,58 @@ export function setNamedProgress(
   if (!name || name === PLACEHOLDER_HERO_NAME) {
     return session
   }
-  return {
-    ...session,
-    hero_progress: {
-      ...(session.hero_progress ?? {}),
-      [name]: {
-        current_level: asHeroLevel(live.current_level, STARTING_HERO_LEVEL),
-        current_xp: asHeroXp(live.current_xp, STARTING_HERO_XP),
-      },
-    },
+  const poolId = poolIdByName(getCachedCatalog(), name)
+  if (poolId == null) {
+    return session
   }
+  return setPoolProgress(session, poolId, live)
 }
 
 export function normalizeHeroProgress(
   session: GameSession,
 ): GameSession {
+  const catalog = getCachedCatalog()
+  let base = migratePoolKeyedSession(session, catalog)
   const progress: Record<string, HeroProgress> = {}
-  const raw = session.hero_progress
+  const raw = base.hero_progress
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    for (const [name, row] of Object.entries(raw)) {
-      if (!name || name === PLACEHOLDER_HERO_NAME) {
+    for (const [key, row] of Object.entries(raw)) {
+      if (!key || !/^\d+$/.test(key)) {
         continue
       }
-      progress[name] = {
+      progress[key] = {
         current_level: asHeroLevel(row?.current_level, STARTING_HERO_LEVEL),
         current_xp: asHeroXp(row?.current_xp, STARTING_HERO_XP),
       }
     }
   }
-  const heroes = session.heroes.map((hero) => {
+  const heroes = base.heroes.map((hero) => {
+    const withItems = normalizeHeroInventory(hero)
+    const poolId = heroPoolId(catalog, hero)
+    const saved =
+      poolId != null ? progress[poolProgressKey(poolId)] : undefined
     const fromHero = {
       current_level: asHeroLevel(
         hero.current_level,
-        progress[hero.name]?.current_level ?? STARTING_HERO_LEVEL,
+        saved?.current_level ?? STARTING_HERO_LEVEL,
       ),
       current_xp: asHeroXp(
         hero.current_xp,
-        progress[hero.name]?.current_xp ?? STARTING_HERO_XP,
+        saved?.current_xp ?? STARTING_HERO_XP,
       ),
     }
-    const pools = heroResourcePools(getCachedCatalog(), {
-      class_id: hero.class_id,
-      current_level: fromHero.current_level,
+    const pools = heroResourcePools(catalog, {
+      ...withItems,
+      ...fromHero,
     })
-    if (hero.name && hero.name !== PLACEHOLDER_HERO_NAME) {
-      progress[hero.name] = progress[hero.name] ?? fromHero
+    if (poolId != null) {
+      const key = poolProgressKey(poolId)
+      progress[key] = progress[key] ?? fromHero
     }
     return {
-      ...hero,
+      ...withItems,
       ...fromHero,
+      pool_id: poolId ?? hero.pool_id ?? null,
       current_mana: asHeroPoolAmount(hero.current_mana, pools.current_mana),
       current_energy: asHeroPoolAmount(hero.current_energy, pools.current_energy),
       used_abilities_this_battle: asAbilityIdList(hero.used_abilities_this_battle),
@@ -607,7 +657,7 @@ export function normalizeHeroProgress(
         typeof hero.arch_id === 'number' && hero.arch_id > 0 ? hero.arch_id : null,
     }
   })
-  return { ...session, heroes, hero_progress: progress }
+  return { ...base, heroes, hero_progress: progress }
 }
 export function hireHeroCostMap(): Record<number, number> {
   return hireHeroGoldCost(getCachedCatalog())
@@ -656,14 +706,16 @@ export function assignHeroesFromPool(
       nextAvailable[Math.floor(Math.random() * nextAvailable.length)]
     nextAvailable = nextAvailable.filter((row) => row.id !== pick.id)
     changed = true
-    const live = progress[pick.name] ?? {
+    const key = poolProgressKey(pick.id)
+    const live = progress[key] ?? {
       current_level: STARTING_HERO_LEVEL,
       current_xp: STARTING_HERO_XP,
     }
-    progress[pick.name] = live
+    progress[key] = live
     return {
       ...hero,
       name: pick.name,
+      pool_id: pick.id,
       class_id: pick.class_id,
       image_path: pick.image_path,
       army: { ...hero.army, slot_0: pick.name },
@@ -734,7 +786,8 @@ export function hireHeroFromPool(
     return spent
   }
   const live = progressForHeroName(spent.session, pick.name)
-  const hero: Hero = {
+  const catalogLive = getCachedCatalog()
+  let hero: Hero = {
     id: nextHeroId(spent.session),
     player_id: actingPlayerId(spent.session) ?? HUMAN_PLAYER_ID,
     name: pick.name,
@@ -753,7 +806,7 @@ export function hireHeroFromPool(
     used_abilities_today: [],
     arch_id: pick.arch_id ?? null,
     movement_remaining: heroMovementPoints(
-      getCachedCatalog(),
+      catalogLive,
       {
         class_id: pick.class_id,
         current_level: live.current_level,
@@ -762,18 +815,31 @@ export function hireHeroFromPool(
     ),
     flight: null,
     travel_facing: 'right',
-    ...heroResourcePools(getCachedCatalog(), {
+    ...heroResourcePools(catalogLive, {
       class_id: pick.class_id,
       current_level: live.current_level,
+      ...emptyHeroInventory(),
     }),
+    ...emptyHeroInventory(),
   }
+  hero = { ...hero, pool_id: pick.id }
+  if (catalogLive) {
+    hero = applyRecycledHeroToNewHire(
+      spent.session,
+      catalogLive,
+      pick.id,
+      pick.name,
+      hero,
+    )
+  }
+  let hiredSession = clearRecycledPoolId(spent.session, pick.id)
   return {
     session: grantHeroStartingArmy(
       withNamedProgress(
         {
-          ...spent.session,
-          heroes: [...spent.session.heroes, hero],
-          players: spent.session.players.map((player) =>
+          ...hiredSession,
+          heroes: [...hiredSession.heroes, hero],
+          players: hiredSession.players.map((player) =>
             player.id === hero.player_id
               ? { ...player, hero_ids: [...player.hero_ids, hero.id] }
               : player,
@@ -1356,11 +1422,13 @@ export function patchBuildingSlot(
 ): GameSession {
   const current = withBuildingSlots(session, townId)
   const slotNum = slotIndex + 1
-  const exists = current.building_states.some(
+  const prev = current.building_states.find(
     (row) => row.town_id === townId && row.slot_num === slotNum,
   )
+  const exists = prev != null
+  let updated: GameSession
   if (!exists) {
-    return {
+    updated = {
       ...current,
       building_states: [
         ...current.building_states,
@@ -1375,23 +1443,42 @@ export function patchBuildingSlot(
         },
       ],
     }
+  } else {
+    updated = {
+      ...current,
+      building_states: current.building_states.map((row) =>
+        row.town_id === townId && row.slot_num === slotNum
+          ? {
+              ...row,
+              building_id: next.buildingId,
+              level: next.level,
+              recruit_qty: next.recruitQty,
+              growth_bonus: row.growth_bonus ?? 0,
+              offered_abilities:
+                next.level === 0 ? [] : (row.offered_abilities ?? []),
+            }
+          : row,
+      ),
+    }
   }
-  return {
-    ...current,
-    building_states: current.building_states.map((row) =>
-      row.town_id === townId && row.slot_num === slotNum
-        ? {
-            ...row,
-            building_id: next.buildingId,
-            level: next.level,
-            recruit_qty: next.recruitQty,
-            growth_bonus: row.growth_bonus ?? 0,
-            offered_abilities:
-              next.level === 0 ? [] : (row.offered_abilities ?? []),
-          }
-        : row,
-    ),
+  const town = updated.towns.find((row) => row.id === townId)
+  if (
+    town?.player_id &&
+    next.buildingId != null &&
+    next.level > 0 &&
+    (prev?.building_id !== next.buildingId || (prev?.level ?? 0) < next.level)
+  ) {
+    const built = prev?.building_id !== next.buildingId || (prev?.level ?? 0) === 0
+    updated = logTownBuilding(
+      updated,
+      town.player_id,
+      townId,
+      next.buildingId,
+      next.level,
+      built,
+    )
   }
+  return updated
 }
 
 /**
@@ -2079,6 +2166,57 @@ function sameArmyRow(from: ArmySlotRef, to: ArmySlotRef): boolean {
   return from.row === to.row && (from.heroId ?? null) === (to.heroId ?? null)
 }
 
+export function heroStandsInTown(
+  session: GameSession,
+  townId: string,
+  heroId: string | null | undefined,
+): boolean {
+  if (!heroId) {
+    return false
+  }
+  const town = session.towns.find((row) => row.id === townId)
+  const hero = session.heroes.find((row) => row.id === heroId)
+  if (!town || !hero || hero.flight) {
+    return false
+  }
+  return (
+    hero.position.q === town.position.q && hero.position.r === town.position.r
+  )
+}
+
+export function armyCrossTransferError(
+  session: GameSession,
+  townId: string,
+  from: ArmySlotRef,
+  to: ArmySlotRef,
+  primaryHeroId: string | null,
+): string | null {
+  if (sameArmyRow(from, to)) {
+    return null
+  }
+  const involvesGarrison = from.row === 'garrison' || to.row === 'garrison'
+  if (!involvesGarrison) {
+    // Hero ↔ hero (e.g. friendly trade): no town presence required.
+    return null
+  }
+  if (!primaryHeroId || !heroStandsInTown(session, townId, primaryHeroId)) {
+    return 'Hero is not in this town'
+  }
+  const heroIds = new Set<string>()
+  if (from.heroId) {
+    heroIds.add(from.heroId)
+  }
+  if (to.heroId) {
+    heroIds.add(to.heroId)
+  }
+  for (const id of heroIds) {
+    if (!heroStandsInTown(session, townId, id)) {
+      return 'Hero is not in this town'
+    }
+  }
+  return null
+}
+
 function isStackSlot(slot: number): boolean {
   return Number.isInteger(slot) && slot >= 1 && slot <= ARMY_STACK_SLOTS
 }
@@ -2439,9 +2577,20 @@ export function placeArmyStack(
   townId: string,
   from: ArmySlotRef,
   to: ArmySlotRef,
+  primaryHeroId?: string | null,
 ): { session: GameSession; error: string | null } {
   if (!isStackSlot(from.slot) || !isStackSlot(to.slot)) {
     return { session, error: "Can't drop on that slot." }
+  }
+  const crossError = armyCrossTransferError(
+    session,
+    townId,
+    from,
+    to,
+    primaryHeroId ?? null,
+  )
+  if (crossError) {
+    return { session, error: crossError }
   }
   const sameRow = sameArmyRow(from, to)
   if (sameRow && from.slot === to.slot) {
@@ -2591,6 +2740,98 @@ export function splitArmyStack(
   }
 }
 
+/** Split `from` stack evenly across empty slots in the target army row. */
+export function splitArmyStackEvenly(
+  session: GameSession,
+  townId: string,
+  from: ArmySlotRef,
+  target: ArmySlotRef,
+  primaryHeroId?: string | null,
+): { session: GameSession; error: string | null } {
+  const crossError = armyCrossTransferError(
+    session,
+    townId,
+    from,
+    target,
+    primaryHeroId ?? null,
+  )
+  if (crossError) {
+    return { session, error: crossError }
+  }
+  const sourceRow = rowStackSlots(session, townId, from.row, from.heroId)
+  if (sourceRow.error) {
+    return { session, error: sourceRow.error }
+  }
+  const stackId = sourceRow.slots[from.slot - 1]
+  const stack = stackId
+    ? session.units.find((row) => row.id === stackId)
+    : null
+  if (!stack) {
+    return { session, error: 'That slot is empty.' }
+  }
+  const destRow = rowStackSlots(session, townId, target.row, target.heroId)
+  if (destRow.error) {
+    return { session, error: destRow.error }
+  }
+  const emptySlots: number[] = []
+  for (let i = 0; i < destRow.slots.length; i += 1) {
+    if (!destRow.slots[i]) {
+      emptySlots.push(i + 1)
+    }
+  }
+  if (emptySlots.length === 0) {
+    return { session, error: 'No open slots in that army.' }
+  }
+  const base = Math.floor(stack.qty / emptySlots.length)
+  const remainder = stack.qty % emptySlots.length
+  if (base <= 0 && remainder < emptySlots.length) {
+    return {
+      session,
+      error: 'Not enough units to split across open slots.',
+    }
+  }
+  let next = session
+  let units = next.units.filter((row) => row.id !== stack.id)
+  const fromSlots = [...sourceRow.slots]
+  fromSlots[from.slot - 1] = null
+  next = writeRowSlots(
+    next,
+    townId,
+    from.row,
+    fromSlots,
+    units,
+    from.heroId ?? sourceRow.heroId,
+  )
+  const toSlots = [...destRow.slots]
+  for (let i = 0; i < emptySlots.length; i += 1) {
+    const slot = emptySlots[i]
+    const qty = base + (i < remainder ? 1 : 0)
+    if (qty <= 0) {
+      continue
+    }
+    const piece: UnitStack = {
+      id: nextStackId({ ...next, units }),
+      unit_id: stack.unit_id,
+      qty,
+      town_id: stack.town_id,
+      hero_id: stack.hero_id,
+      mob_id: null,
+    }
+    units = [...units, piece]
+    toSlots[slot - 1] = piece.id
+    next = { ...next, units }
+  }
+  next = writeRowSlots(
+    next,
+    townId,
+    target.row,
+    toSlots,
+    units,
+    target.heroId ?? destRow.heroId,
+  )
+  return guardHeroMin(session, next)
+}
+
 function townProducesUnit(
   session: GameSession,
   catalog: ReferenceCatalog,
@@ -2684,9 +2925,20 @@ export function dropHeldArmyStack(
   heldStackId: string,
   origin: ArmySlotRef,
   to: ArmySlotRef,
+  primaryHeroId?: string | null,
 ): { session: GameSession; error: string | null } {
   if (!isStackSlot(to.slot)) {
     return { session, error: "Can't drop on that slot." }
+  }
+  const crossError = armyCrossTransferError(
+    session,
+    townId,
+    origin,
+    to,
+    primaryHeroId ?? null,
+  )
+  if (crossError) {
+    return { session, error: crossError }
   }
   const held = session.units.find((row) => row.id === heldStackId)
   if (!held) {
@@ -2937,7 +3189,7 @@ export function claimTown(
     return current
   }
   const previousId = town.player_id
-  return {
+  const captured = {
     ...current,
     towns: current.towns.map((t) =>
       t.id === town.id ? { ...t, player_id: ownerId } : t,
@@ -2955,6 +3207,7 @@ export function claimTown(
       return player
     }),
   }
+  return logTownCapture(captured, town.id, ownerId, previousId)
 }
 
 export function claimMine(
@@ -2971,11 +3224,18 @@ export function claimMine(
   const existing = session.nodes.find(
     (node) => node.kind === 'mine' && node.position.q === q && node.position.r === r,
   )
+  const heroId =
+    session.heroes.find(
+      (row) => row.player_id === actorId && row.position.q === q && row.position.r === r,
+    )?.id ??
+    session.heroes.find((row) => row.player_id === actorId)?.id ??
+    ''
   if (existing) {
     if (existing.player_id === actorId) {
       return session
     }
-    return {
+    const recapture = existing.player_id != null
+    const next = {
       ...session,
       nodes: session.nodes.map((node) =>
         node.id === existing.id
@@ -2983,6 +3243,18 @@ export function claimMine(
           : node,
       ),
     }
+    if (resourceId != null && heroId) {
+      return logCapturedMine(
+        next,
+        actorId,
+        heroId,
+        resourceId,
+        q,
+        r,
+        recapture,
+      )
+    }
+    return next
   }
   if (resourceId == null) {
     return session
@@ -2997,7 +3269,11 @@ export function claimMine(
     qty: 0,
     accrued_fraction: 0,
   }
-  return { ...session, nodes: [...session.nodes, node] }
+  let next = { ...session, nodes: [...session.nodes, node] }
+  if (heroId) {
+    next = logCapturedMine(next, actorId, heroId, resourceId, q, r, false)
+  }
+  return next
 }
 
 export function collectPickup(
@@ -3036,7 +3312,13 @@ export function collectPickup(
           accrued_fraction: 0,
         },
       ]
-  return {
+  const heroId =
+    session.heroes.find(
+      (row) => row.player_id === playerId && row.position.q === q && row.position.r === r,
+    )?.id ??
+    session.heroes.find((row) => row.player_id === playerId)?.id ??
+    ''
+  let next: GameSession = {
     ...session,
     nodes,
     players: session.players.map((p) =>
@@ -3051,6 +3333,10 @@ export function collectPickup(
         : p,
     ),
   }
+  if (heroId && payout > 0) {
+    next = logPickup(next, playerId, heroId, resourceId, payout)
+  }
+  return next
 }
 
 export function syncHero(
@@ -3102,6 +3388,7 @@ export function restorePlayerHeroMovement(
           hero,
           session.game.settings.move_mode,
         ),
+        ai_route_commit: null,
       }
     }),
   }
@@ -3371,6 +3658,16 @@ export function launchHeroFlight(
   if (spent.error) {
     return { session, error: spent.error }
   }
+  const originTown =
+    excludeOriginTownId != null
+      ? spent.session.towns.find((town) => town.id === excludeOriginTownId)
+      : undefined
+  const transportSprite = transportSpriteForDeparture(
+    catalog,
+    spent.session,
+    originTown,
+    worldHanger != null && originTown == null,
+  )
   return {
     session: {
       ...spent.session,
@@ -3378,7 +3675,10 @@ export function launchHeroFlight(
         row.id === heroId
           ? {
               ...row,
-              flight: { destination_town_id: dest.id },
+              flight: {
+                destination_town_id: dest.id,
+                transport_sprite: transportSprite,
+              },
               movement_remaining: 0,
             }
           : row,
@@ -3466,6 +3766,7 @@ export function finalizeHeroFlightSegment(
                   movement_remaining: 0,
                   flight: {
                     destination_town_id: dest.id,
+                    transport_sprite: hero.flight!.transport_sprite,
                     circling: true,
                   },
                 }
@@ -3589,6 +3890,7 @@ function advanceHeroFlightOnce(
               movement_remaining: 0,
               flight: {
                 destination_town_id: dest.id,
+                transport_sprite: hero.flight!.transport_sprite,
                 circling: true,
               },
             }
@@ -3709,39 +4011,6 @@ function restoreHeroPoolsEndingDayInTown(session: GameSession): GameSession {
       ...hero,
       current_mana: pools.current_mana,
       current_energy: pools.current_energy,
-    }
-  })
-  return changed ? { ...session, heroes } : session
-}
-
-/** World-map end-of-turn: +1 Energy and +1 Mana for that player's heroes (cap at max). */
-function regenHeroPoolsEndOfTurn(
-  session: GameSession,
-  playerId: string,
-): GameSession {
-  const catalog = getCachedCatalog()
-  if (!catalog) {
-    return session
-  }
-  let changed = false
-  const heroes = session.heroes.map((hero) => {
-    if (hero.player_id !== playerId) {
-      return hero
-    }
-    const pools = heroResourcePools(catalog, hero)
-    const nextEnergy = Math.min(pools.current_energy, hero.current_energy + 1)
-    const nextMana = Math.min(pools.current_mana, hero.current_mana + 1)
-    if (
-      nextEnergy === hero.current_energy &&
-      nextMana === hero.current_mana
-    ) {
-      return hero
-    }
-    changed = true
-    return {
-      ...hero,
-      current_energy: nextEnergy,
-      current_mana: nextMana,
     }
   })
   return changed ? { ...session, heroes } : session
@@ -3934,8 +4203,60 @@ export function openChest(session: GameSession, featureId: string): GameSession 
   }
 }
 
+export function updateChest(
+  session: GameSession,
+  featureId: string,
+  updater: (
+    row: Extract<MapFeature, { kind: 'chest' }>,
+  ) => Extract<MapFeature, { kind: 'chest' }>,
+): GameSession {
+  return {
+    ...session,
+    features: (session.features ?? []).map((row) =>
+      row.kind === 'chest' && row.id === featureId ? updater(row) : row,
+    ),
+  }
+}
+
 /** Remove a chest after XP or Loot is taken. */
 export function removeChest(session: GameSession, featureId: string): GameSession {
+  return {
+    ...session,
+    features: (session.features ?? []).filter((row) => row.id !== featureId),
+  }
+}
+
+export function findGroundItemById(
+  session: GameSession,
+  featureId: string,
+): Extract<GameSession['features'][number], { kind: 'ground_item' }> | undefined {
+  return (session.features ?? []).find(
+    (
+      row,
+    ): row is Extract<GameSession['features'][number], { kind: 'ground_item' }> =>
+      row.kind === 'ground_item' && row.id === featureId,
+  )
+}
+
+export function findGroundItemAt(
+  session: GameSession,
+  q: number,
+  r: number,
+): Extract<GameSession['features'][number], { kind: 'ground_item' }> | undefined {
+  return (session.features ?? []).find(
+    (
+      row,
+    ): row is Extract<GameSession['features'][number], { kind: 'ground_item' }> =>
+      row.kind === 'ground_item' &&
+      row.position.q === q &&
+      row.position.r === r,
+  )
+}
+
+export function removeGroundItem(
+  session: GameSession,
+  featureId: string,
+): GameSession {
   return {
     ...session,
     features: (session.features ?? []).filter((row) => row.id !== featureId),

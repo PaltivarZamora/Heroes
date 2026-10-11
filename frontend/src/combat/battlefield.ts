@@ -6,25 +6,52 @@ import type { ReferenceCatalog } from '../town/catalog'
 import { hexTerrainByName } from '../town/catalog'
 import type { CombatTile } from './battle'
 
-export const COMBAT_COLUMNS = 15
-export const COMBAT_ROWS = 11
+/** Playable interior (unchanged 15×11 battlefield). */
+export const COMBAT_PLAY_COLUMNS = 15
+export const COMBAT_PLAY_ROWS = 11
+/** Display frame: +1 col each side, +2 rows on top (BR S9-34). */
+export const COMBAT_FRAME_BORDER_LEFT = 1
+export const COMBAT_FRAME_BORDER_RIGHT = 1
+export const COMBAT_FRAME_BORDER_TOP = 2
+export const COMBAT_COLUMNS =
+  COMBAT_PLAY_COLUMNS + COMBAT_FRAME_BORDER_LEFT + COMBAT_FRAME_BORDER_RIGHT
+export const COMBAT_ROWS = COMBAT_PLAY_ROWS + COMBAT_FRAME_BORDER_TOP
 export const COMBAT_HEX_SIZE = HEX_SCALES.Large
-/** 0-based offset column: one in from the left edge. */
-export const ATTACKER_COL = 1
-/** 0-based offset column: one in from the right edge. */
-export const DEFENDER_COL = COMBAT_COLUMNS - 2
-/** Outer-edge column for the attacker Hero portrait. */
-export const ATTACKER_HERO_COL = 0
+/** 0-based offset column: one in from the playable left edge. */
+export const ATTACKER_COL = COMBAT_FRAME_BORDER_LEFT + 1
+/** 0-based offset column: one in from the playable right edge. */
+export const DEFENDER_COL =
+  COMBAT_FRAME_BORDER_LEFT + COMBAT_PLAY_COLUMNS - 2
+/** Outer-edge column for the attacker Hero portrait (playable edge). */
+export const ATTACKER_HERO_COL = COMBAT_FRAME_BORDER_LEFT
 /** Outer-edge column for the defender Hero portrait. */
-export const DEFENDER_HERO_COL = COMBAT_COLUMNS - 1
-/** First row (top) — both Heroes share this row. */
-export const HERO_ROW = 0
+export const DEFENDER_HERO_COL =
+  COMBAT_FRAME_BORDER_LEFT + COMBAT_PLAY_COLUMNS - 1
+/** First playable row (top) — both Heroes share this row. */
+export const HERO_ROW = COMBAT_FRAME_BORDER_TOP
 
-/** Siege zones, 0-based. Brief columns 1–15 map here as 0–14. */
-export const SIEGE_MOAT_COL = 10
-export const SIEGE_WALL_COL = 11
-export const SIEGE_INTERIOR_COL_START = 12
-export const SIEGE_CATAPULT_COL = 0
+/** Map legacy 15×11 playable coordinates onto the 17×13 combat grid. */
+export function combatGridCol(playCol: number): number {
+  return playCol + COMBAT_FRAME_BORDER_LEFT
+}
+
+export function combatGridRow(playRow: number): number {
+  return playRow + COMBAT_FRAME_BORDER_TOP
+}
+
+export function combatPlayCol(gridCol: number): number {
+  return gridCol - COMBAT_FRAME_BORDER_LEFT
+}
+
+export function combatPlayRow(gridRow: number): number {
+  return gridRow - COMBAT_FRAME_BORDER_TOP
+}
+
+/** Siege zones, 0-based on full grid (includes frame border offset). */
+export const SIEGE_MOAT_COL = COMBAT_FRAME_BORDER_LEFT + 10
+export const SIEGE_WALL_COL = COMBAT_FRAME_BORDER_LEFT + 11
+export const SIEGE_INTERIOR_COL_START = COMBAT_FRAME_BORDER_LEFT + 12
+export const SIEGE_CATAPULT_COL = COMBAT_FRAME_BORDER_LEFT
 export const SIEGE_CATAPULT_ROW = COMBAT_ROWS - 1
 const SIEGE_FLOOR_TERRAIN = 'Siege Floor'
 const SIEGE_MOAT_TERRAIN = 'Moat'
@@ -38,12 +65,31 @@ const WALL_COL_OFFSET_BY_ROW = [1, 0, 0, -1, -1, -2, -1, -1, 0, 0, 1]
 /** 0-based row → column delta from SIEGE_MOAT_COL. Independent of the wall table. */
 const MOAT_COL_OFFSET_BY_ROW = [1, 0, 0, -1, -1, -2, -1, -1, 0, 0, 1]
 
+function playableRowIndex(row: number): number {
+  return row - COMBAT_FRAME_BORDER_TOP
+}
+
+export function isCombatFrameBorder(col: number, row: number): boolean {
+  if (col < COMBAT_FRAME_BORDER_LEFT) {
+    return true
+  }
+  if (col >= COMBAT_COLUMNS - COMBAT_FRAME_BORDER_RIGHT) {
+    return true
+  }
+  if (row < COMBAT_FRAME_BORDER_TOP) {
+    return true
+  }
+  return false
+}
+
 export function siegeWallColForRow(row: number): number {
-  return SIEGE_WALL_COL + (WALL_COL_OFFSET_BY_ROW[row] ?? 0)
+  const playRow = playableRowIndex(row)
+  return SIEGE_WALL_COL + (WALL_COL_OFFSET_BY_ROW[playRow] ?? 0)
 }
 
 export function siegeMoatColForRow(row: number): number {
-  return SIEGE_MOAT_COL + (MOAT_COL_OFFSET_BY_ROW[row] ?? 0)
+  const playRow = playableRowIndex(row)
+  return SIEGE_MOAT_COL + (MOAT_COL_OFFSET_BY_ROW[playRow] ?? 0)
 }
 
 /** Wall + town interior are town floor. Moat is placed per-row (tapered). */
@@ -71,7 +117,7 @@ export function isSiegeExteriorCol(col: number, row: number): boolean {
 const COMBAT_GRID_PADDING = 28
 
 export function armySlotRow(slotIndex: number): number {
-  return slotIndex * 2
+  return combatGridRow(slotIndex * 2)
 }
 
 function measureCombatGrid(grid: Grid<Hex>) {
@@ -303,6 +349,20 @@ export function combatTilesFromHexField(
   siege: boolean,
 ): CombatTile[] {
   return field.map((cell) => {
+    if (isCombatFrameBorder(cell.col, cell.row)) {
+      return {
+        q: cell.q,
+        r: cell.r,
+        col: cell.col,
+        row: cell.row,
+        terrain: cell.terrain,
+        movementCostMultiplier: null,
+        blocked: true,
+        blocksLos: true,
+        chunkId: cell.chunkId,
+        displayOnly: true,
+      }
+    }
     const sampled = cell.terrain
     const terrain = siege
       ? siegeTileTerrain(cell.col, cell.row, sampled)

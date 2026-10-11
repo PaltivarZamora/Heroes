@@ -9,6 +9,43 @@ import {
 import type { DataStatus } from '../hex/debug'
 import { slotFromPlayerId } from '../session/types'
 import { parseFootprint as parseFootprintCode } from '../combat/footprint'
+import {
+  BUILDING_SLOT_HANGER,
+  BUILDING_SLOT_LIBRARY,
+  BUILDING_SLOT_MARKETPLACE,
+  BUILDING_SLOT_TAVERN,
+  BUILDING_SLOT_TOWN_UNIQUE,
+  buildingInSlot,
+} from './buildingSlots'
+import { enrichCatalogUnits } from './enrichCatalogUnits'
+import { asStatRows, type StatRow } from './statCatalog'
+import {
+  asItemAdjs,
+  asItemTemplates,
+  asItemTypes,
+  asRarities,
+  auditItemSlotTypes,
+  type ItemAdjRow,
+  type ItemTemplateRow,
+  type ItemTypeRow,
+  type RarityRow,
+} from '../items/itemCatalog'
+import {
+  equippedItemBonuses,
+  mergeHeroStats,
+} from '../items/bonuses'
+import type { Hero } from '../session/types'
+import {
+  auditUpgradePairing,
+  unitDwellingLevel,
+  advancedUnitsFor,
+} from './unitUpgrade'
+import {
+  TAG_AUTO_TARGET_RANDOM_ENEMY,
+  TAG_AUTO_TARGET_RANDOM_WALL,
+  unitHasNamedTag,
+  unitHasTag,
+} from './unitTags'
 
 export type CostMap = Record<number, number>
 
@@ -76,6 +113,8 @@ export type UnitRow = {
   blocks_los: boolean
   /** Per-creature cost to upgrade this base unit into its Advanced form. */
   upgrade_cost: CostMap | null
+  /** Dwelling tier in catalog: 1 = base, 2 = upgraded (same town/tier/class branch). */
+  level: number
 }
 
 export type UnitRetaliation = {
@@ -389,6 +428,16 @@ export type AppConfigRow = {
   description: string | null
 }
 
+export type KeybindRow = {
+  action: string
+  label: string
+  key: string
+  alt_key: string | null
+  scope: string
+  rebindable: boolean
+  sort_order: number
+}
+
 /** `map_config` / `ai_config` jsonb rows — value stays decoded (object/number/array). */
 export type JsonConfigRow = {
   key: string
@@ -439,6 +488,10 @@ export type PropRow = {
    * Excluded from world scatter and from battlefield prop sampling.
    */
   wall: boolean
+  /** From `terrain_rules.bridge_only` — river bridges; not town scatter. */
+  bridge_only: boolean
+  /** World / town scatter may mirror horizontally when true (default true). */
+  flippable: boolean
   /**
    * Battle-only footprint shape (`1x1` default). World map always paints 1x1.
    */
@@ -494,10 +547,17 @@ export type QuestTextRow = {
   weight: number
 }
 
+export type ClassTypeRow = {
+  id: number
+  name: string
+}
+
 export type HeroTypeRow = {
   id: number
   name: string
   town_id: number
+  /** Caster / Physical / Hybrid — drives daily pool regen. */
+  class_type_id: number | null
   /**
    * Per-town design order (1 = primary / Library default tab).
    * Not alphabetical and not the same as `id` after the Session 8 renumber.
@@ -655,18 +715,40 @@ export type PlayerColorRow = {
   hex_value: string
 }
 
+/** `town.map`: drawbridge hex and the road hexes (1–221 on the town grid). */
+export type TownGroundPlan = {
+  entry: number | null
+  road: number[]
+}
+
 export type TownRow = {
   id: number
   name: string
+  map: TownGroundPlan | null
+}
+
+/** `town_layout.hexes`: footprint (`blocked`) and visit hex (`door`). */
+export type TownLayoutHexes = {
+  door: number | null
+  blocked: number[]
+}
+
+/**
+ * Optional `town_layout.display_rules.map`. Other display_rules keys are
+ * left unread so they do not clash with this tuning.
+ */
+export type TownLayoutMapDisplay = {
+  scale: number
+  dx: number
+  dy: number
 }
 
 export type TownLayoutRow = {
   id: number
   town_type_id: number
   slot: number
-  x_pos: number
-  y_pos: number
-  size: number
+  hexes: TownLayoutHexes
+  mapDisplay: TownLayoutMapDisplay | null
 }
 
 export type ReferenceCatalog = {
@@ -703,8 +785,17 @@ export type ReferenceCatalog = {
   sign_text: SignTextRow[]
   /** Notice Board quest flavour pool (`quest_text` table). */
   quest_text: QuestTextRow[]
+  stat: StatRow[]
+  class_type: ClassTypeRow[]
+  rarity: RarityRow[]
+  item_kind: { id: number; name: string }[]
+  item_type: ItemTypeRow[]
+  item: ItemTemplateRow[]
+  item_adj: ItemAdjRow[]
   app_config: AppConfigRow[]
+  keybind: KeybindRow[]
   map_config: JsonConfigRow[]
+  combat_config: JsonConfigRow[]
   ai_config: JsonConfigRow[]
   ai_arch: AiArchRow[]
   ai_arch_weight: AiArchWeightRow[]
@@ -846,19 +937,107 @@ function catalogLevel(value: unknown): number {
   return n > 0 ? n : 1
 }
 
+function asHexNumber(value: unknown): number | null {
+  if (value == null || value === '') {
+    return null
+  }
+  const n = asInt(value)
+  return n > 0 ? n : null
+}
+
+function asHexNumberList(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const out: number[] = []
+  const seen = new Set<number>()
+  for (const entry of value) {
+    const n = asHexNumber(entry)
+    if (n == null || seen.has(n)) {
+      continue
+    }
+    seen.add(n)
+    out.push(n)
+  }
+  return out
+}
+
+function asTownGroundPlan(value: unknown): TownGroundPlan | null {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return null
+  }
+  const entry = asHexNumber(rec.entry)
+  const road = asHexNumberList(rec.road)
+  if (entry == null && road.length === 0) {
+    return null
+  }
+  return { entry, road }
+}
+
+function asTownRows(rows: unknown): TownRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  const towns: TownRow[] = []
+  for (const row of rows) {
+    if (row == null || typeof row !== 'object') {
+      continue
+    }
+    const raw = row as Record<string, unknown>
+    const id = asInt(raw.id)
+    const name = typeof raw.name === 'string' ? raw.name : ''
+    if (id <= 0) {
+      continue
+    }
+    towns.push({
+      id,
+      name,
+      map: asTownGroundPlan(raw.map),
+    })
+  }
+  return towns
+}
+
+function asTownLayoutHexes(value: unknown): TownLayoutHexes {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return { door: null, blocked: [] }
+  }
+  return {
+    door: asHexNumber(rec.door),
+    blocked: asHexNumberList(rec.blocked),
+  }
+}
+
+function asTownLayoutMapDisplay(value: unknown): TownLayoutMapDisplay | null {
+  const rules = asJsonObject(value)
+  const map = rules ? asJsonObject(rules.map) : null
+  if (!map) {
+    return null
+  }
+  const scale = Number(map.scale)
+  const dx = Number(map.dx)
+  const dy = Number(map.dy)
+  return {
+    scale: Number.isFinite(scale) && scale > 0 ? scale : 1,
+    dx: Number.isFinite(dx) ? dx : 0,
+    dy: Number.isFinite(dy) ? dy : 0,
+  }
+}
+
 function asTownLayout(rows: unknown): TownLayoutRow[] {
   if (!Array.isArray(rows)) {
     return []
   }
   return rows.map((row) => {
-    const raw = row as Partial<TownLayoutRow>
+    const raw = row as Record<string, unknown>
     return {
       id: asInt(raw.id),
       town_type_id: asInt(raw.town_type_id),
       slot: asInt(raw.slot),
-      x_pos: asInt(raw.x_pos),
-      y_pos: asInt(raw.y_pos),
-      size: Math.max(1, asInt(raw.size, 1)),
+      hexes: asTownLayoutHexes(raw.hexes),
+      mapDisplay: asTownLayoutMapDisplay(raw.display_rules),
     }
   })
 }
@@ -1005,6 +1184,29 @@ export function moveTypeDisplay(
   }
   const description = row?.description?.trim() || ''
   return { name, description }
+}
+
+function asKeybind(rows: unknown): KeybindRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  return rows
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const action = typeof rec.action === 'string' ? rec.action.trim() : ''
+      const label = typeof rec.label === 'string' ? rec.label.trim() : action
+      const key = typeof rec.key === 'string' ? rec.key.trim().toLowerCase() : ''
+      const altRaw = rec.alt_key
+      const alt_key =
+        typeof altRaw === 'string' && altRaw.trim()
+          ? altRaw.trim().toLowerCase()
+          : null
+      const scope = typeof rec.scope === 'string' ? rec.scope.trim() : 'world'
+      const rebindable = Number(rec.rebindable) !== 0
+      const sort_order = Number(rec.sort_order) || 0
+      return { action, label, key, alt_key, scope, rebindable, sort_order }
+    })
+    .filter((row) => row.action.length > 0 && row.key.length > 0)
 }
 
 function asAppConfig(rows: unknown): AppConfigRow[] {
@@ -1191,7 +1393,7 @@ function asPropTerrainRules(value: unknown): Record<number, number> {
   }
   const out: Record<number, number> = {}
   for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
-    if (key === 'naval_only') {
+    if (key === 'naval_only' || key === 'bridge_only' || key === 'wall') {
       continue
     }
     const terrainId = Math.floor(Number(key))
@@ -1225,6 +1427,26 @@ function asPropWall(value: unknown): boolean {
     return false
   }
   const flag = (raw as Record<string, unknown>).wall
+  return flag === true || flag === 1 || flag === 'true' || flag === '1'
+}
+
+function asPropBridgeOnly(value: unknown): boolean {
+  let raw: unknown = value
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (!trimmed) {
+      return false
+    }
+    try {
+      raw = JSON.parse(trimmed)
+    } catch {
+      return false
+    }
+  }
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return false
+  }
+  const flag = (raw as Record<string, unknown>).bridge_only
   return flag === true || flag === 1 || flag === 'true' || flag === '1'
 }
 
@@ -1288,6 +1510,11 @@ function asProps(rows: unknown): PropRow[] {
         terrain_rules: asPropTerrainRules(rec.terrain_rules),
         naval_only: asPropNavalOnly(rec.terrain_rules),
         wall: asPropWall(rec.terrain_rules),
+        bridge_only: asPropBridgeOnly(rec.terrain_rules),
+        flippable:
+          rec.flippable == null || rec.flippable === ''
+            ? true
+            : asBoolFlag(rec.flippable),
         footprint: parseFootprintCode(footprintRaw),
         render_scale: (() => {
           const n = Number(rec.render_scale)
@@ -1654,6 +1881,10 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         id: asInt(rec.id),
         name,
         town_id: asInt(rec.town_id),
+        class_type_id:
+          rec.class_type_id == null || rec.class_type_id === ''
+            ? null
+            : asInt(rec.class_type_id) || null,
         // Prefer DB sort_order; fall back to id so older payloads still order stably.
         sort_order: asInt(rec.sort_order, asInt(rec.id)),
         speed: asInt(rec.speed, 10),
@@ -3355,91 +3586,6 @@ function applyS75AbilityNormalization(row: AbilityRow): AbilityRow {
   return row
 }
 
-/** BR S7-5 unit condition chance / duration overrides (Base 33% / Advanced 50%). */
-function s75UnitConditionNorm(
-  _unitId: number,
-  lowerName: string,
-): Partial<UnitCombatAbilities> | null {
-  const byName: Record<string, Partial<UnitCombatAbilities>> = {
-    // Fear
-    'advanced spirit': {
-      chancePct: 50,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    nightmare: {
-      chancePct: 33,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    'advanced nightmare': {
-      chancePct: 50,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    leviathan: {
-      chancePct: 33,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    'bound spirit': {
-      chancePct: 33,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    // Stun
-    medusa: {
-      chancePct: 33,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    'advanced medusa': {
-      chancePct: 50,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-    },
-    arbalast: {
-      chancePct: 33,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-      chancePctFlatStat: null,
-    },
-    'advanced arbalast': {
-      chancePct: 50,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-      chancePctFlatStat: null,
-    },
-    // Silence
-    'concussive turret': { chancePct: 33, resistStat: 'resistance' },
-    'advanced concussive turret': { chancePct: 50, resistStat: 'resistance' },
-    'abyssal siren': {
-      chancePct: 33,
-      resistStat: 'resistance',
-      chancePctFlatStat: null,
-    },
-    'advanced abyssal siren': {
-      chancePct: 50,
-      resistStat: 'resistance',
-      chancePctFlatStat: null,
-    },
-    // Confuse
-    succubus: {
-      chancePct: 33,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-      chancePctFlatStat: null,
-    },
-    'advanced succubus': {
-      chancePct: 50,
-      conditionDuration: 1,
-      resistStat: 'resistance',
-      chancePctFlatStat: null,
-    },
-  }
-  return byName[lowerName] ?? null
-}
-
 function asGroundEffects(rows: unknown): GroundEffectRow[] {
   if (!Array.isArray(rows)) {
     return []
@@ -3918,403 +4064,6 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
   }
 }
 
-/** BR S6-42: Arcane summon units — DB rows only (no hardcoded id fallback). */
-function designedArcaneUnits(): UnitRow[] {
-  return []
-}
-
-/** BR S6-46: Shaman totems — DB rows only (no hardcoded id fallback). */
-function designedTotemUnits(
-  _catalogTowns: { id: number; name: string }[],
-): UnitRow[] {
-  return []
-}
-
-function unitDesignedImmuneToFire(_unitId: number, unitName: string): boolean {
-  const name = unitName.trim().toLowerCase()
-  return (
-    name === 'homunculus' ||
-    name === 'advanced homunculus' ||
-    name === 'imp' ||
-    name === 'advanced imp' ||
-    name === 'smoldering ooze' ||
-    name === 'advanced smoldering ooze' ||
-    name === 'horned hellion' ||
-    name === 'advanced horned hellion' ||
-    name === 'pit fiend arch' ||
-    name === 'advanced pit fiend arch' ||
-    name === 'arsonist' ||
-    name === 'advanced arsonist' ||
-    name === 'fire giant' ||
-    name === 'advanced fire giant'
-  )
-}
-
-function designedFactoryAbilities(
-  _unitId: number,
-  unitName: string,
-): Partial<UnitCombatAbilities> | null {
-  const name = unitName.trim().toLowerCase()
-  // S6-51: Ninja — blink + diminishing STR×2% extra-attack chain.
-  if (name === 'ninja' || name === 'advanced ninja') {
-    return {
-      shape: 'single',
-      blinkMovement: true,
-      requiresLos: true,
-      respectsHexSize: true,
-      grantsSecondAttack: true,
-      chancePctFlatStat: 2,
-      chanceHalvesEachAttempt: true,
-    }
-  }
-  if (name === 'goblin hammersmith' || name === 'advanced goblin hammersmith') {
-    return {
-      shape: 'single',
-      canTargetAllyIfTag: 8,
-      healOnAllyTarget: true,
-      healAmtPerUnit: 1,
-    }
-  }
-  if (name === 'void' || name === 'advanced void') {
-    return {
-      shape: 'pulse',
-      radius: 1,
-      leavesGroundEffectOnMove: true,
-      groundEffectId: 5,
-    }
-  }
-  if (name === 'bouncy bomb' || name === 'advanced bouncy bomb') {
-    return {
-      shape: 'pulse',
-      radius: 1,
-      killChainPulse: true,
-    }
-  }
-  if (name === 'flesh golem' || name === 'advanced flesh golem') {
-    return {
-      shape: 'single',
-      killAbsorbChancePct: 33,
-      killAbsorbTagRequired: 10,
-      growsQtyOnKill: 1,
-    }
-  }
-  if (name === 'pit fiend arch' || name === 'advanced pit fiend arch') {
-    return {
-      shape: 'single',
-      killAbsorbRequiresTier: 6,
-      killAbsorbTagsRequired: [2, 10],
-      growsQtyOnKill: 1,
-      killAbsorbTrigger: 'per_attack',
-      immuneToFire: true,
-    }
-  }
-  // S6-35: Fire-immune units (no other designed combat ability required).
-  if (
-    name === 'homunculus' ||
-    name === 'advanced homunculus' ||
-    name === 'horned hellion' ||
-    name === 'advanced horned hellion' ||
-    name === 'arsonist' ||
-    name === 'advanced arsonist' ||
-    name === 'fire giant' ||
-    name === 'advanced fire giant'
-  ) {
-    return { immuneToFire: true }
-  }
-  // S6-43: Weeping Angel — blink + Blind pulse (no enemy retaliation).
-  if (name === 'weeping angel' || name === 'advanced weeping angel') {
-    return {
-      blinkMovement: true,
-      requiresLos: true,
-      respectsHexSize: true,
-      shape: 'pulse',
-      radius: 1,
-      chancePct: 50,
-      resistStat: 'resistance',
-      inflictsCondition: 5,
-      conditionDuration: 1,
-      no_enemy_retaliation: true,
-    }
-  }
-  // S6-43: Blink Dog — LOS blink relocation only.
-  if (name === 'blink dog' || name === 'advanced blink dog') {
-    return {
-      blinkMovement: true,
-      requiresLos: true,
-      respectsHexSize: true,
-    }
-  }
-  // S6-43: Chronomancer — Temporal Bolt speed swap (retaliation is separate JSON).
-  if (name === 'chronomancer' || name === 'advanced chronomancer') {
-    return {
-      shape: 'single',
-      speedSwapIfTargetFaster: true,
-      speedSwapDuration: 1,
-    }
-  }
-  // S6-35: attack-trail Fire droppers (+ immune where listed).
-  if (name === 'imp' || name === 'advanced imp') {
-    return {
-      shape: 'aoe',
-      radius: 1,
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 6,
-      chancePct: 40,
-      immuneToFire: true,
-      fizzleTerrainIds: [3, 20, 21],
-    }
-  }
-  if (name === 'smoldering ooze' || name === 'advanced smoldering ooze') {
-    return {
-      shape: 'pulse',
-      radius: 1,
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 6,
-      chancePct: 40,
-      immuneToFire: true,
-      fizzleTerrainIds: [3, 20, 21],
-    }
-  }
-  if (name === 'cerberus' || name === 'advanced cerberus') {
-    return {
-      shape: 'breath',
-      rows: 2,
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 6,
-      chancePct: 40,
-      fizzleTerrainIds: [3, 20, 21],
-    }
-  }
-  if (
-    name === 'efreti' ||
-    name === 'advanced efreti' ||
-    name === 'efreeti' ||
-    name === 'advanced efreeti'
-  ) {
-    return {
-      shape: 'single',
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 6,
-      chancePct: 100,
-      fizzleTerrainIds: [3, 20, 21],
-    }
-  }
-  // S6-39 Citadel: CHARGE escalation / flat Slow (DB abilities often still null).
-  if (name === 'jouster' || name === 'advanced jouster') {
-    return {
-      shape: 'single',
-      chargeDmgEscalation: true,
-      escalationChancePctStat: 1,
-      escalationMult: 1.5,
-      escalationMinIncrease: 1,
-    }
-  }
-  if (name === 'war mammoth' || name === 'advanced war mammoth') {
-    return {
-      shape: 'cleave',
-      chargeDmgEscalation: true,
-      escalationChancePctStat: 1,
-      escalationMult: 1.5,
-      escalationMinIncrease: 1,
-    }
-  }
-  if (name === 'gladiator' || name === 'advanced gladiator') {
-    return {
-      shape: 'single',
-      chancePct: 80,
-      resistStat: 'resistance',
-      speedDebuffFlatStatDiv: 9,
-      conditionDuration: 1,
-    }
-  }
-  return null
-}
-
-/** BR S6-50: Confluence unit ability fills when DB abilities JSON is absent. */
-function designedConfluenceAbilities(
-  _unitId: number,
-  unitName: string,
-): Partial<UnitCombatAbilities> | null {
-  const name = unitName.trim().toLowerCase()
-  const advanced = name.startsWith('advanced ')
-  // Mud Sprite — turn-start growth on Mud (`terrain.id` 5): +floor(qty/10) min 1
-  if (name === 'mud sprite' || name === 'advanced mud sprite') {
-    return {
-      shape: 'single',
-      absorbTerrainIds: [5],
-    }
-  }
-  // Spark — Storm on target 100%
-  if (name === 'spark' || name === 'advanced spark') {
-    return {
-      shape: 'single',
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 7,
-      chancePct: 100,
-      immuneToLightning: true,
-    }
-  }
-  // Tidal Caller — line clears Fire
-  if (name === 'tidal caller' || name === 'advanced tidal caller') {
-    return {
-      shape: 'line',
-      dmgIncreasePerHex: 1,
-      clearsGroundEffectId: 6,
-    }
-  }
-  // Thunder Lizard — beam Storm per hex intel×4%
-  if (name === 'thunder lizard' || name === 'advanced thunder lizard') {
-    return {
-      shape: 'beam',
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 7,
-      chancePctIntelStat: 4,
-      immuneToLightning: true,
-    }
-  }
-  // Tempest — post-move Storm scatter
-  if (name === 'tempest' || name === 'advanced tempest') {
-    return {
-      shape: 'aoe',
-      radius: advanced ? 3 : 2,
-      scatterGroundEffectOnMoveStop: true,
-      groundEffectId: 7,
-      chancePctIntelStat: 4,
-      immuneToLightning: true,
-    }
-  }
-  // Pyromaniac — SPIRAL Fire
-  if (name === 'pyromaniac' || name === 'advanced pyromaniac') {
-    return {
-      shape: 'spiral',
-      radius: advanced ? 3 : 2,
-      spiralChanceDecayPct: advanced ? 5 : 10,
-      groundEffectId: 6,
-      fizzleTerrainIds: [3, 20, 21],
-    }
-  }
-  // Tesla Coil — multi Storm 80% per bolt
-  if (name === 'tesla coil' || name === 'advanced tesla coil') {
-    return {
-      shape: 'multi',
-      targets: advanced ? 3 : 2,
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 7,
-      chancePct: 80,
-      immuneToLightning: true,
-    }
-  }
-  // Phoenix
-  if (name === 'phoenix' || name === 'advanced phoenix') {
-    return {
-      shape: 'single',
-      selfRezOnWipe: true,
-      selfRezChanceStatDiv: 3,
-      selfRezCapPct: 90,
-      selfRezBasedOnKillsThisRound: true,
-    }
-  }
-  // Cloud Panther / Channeler / Lightning Totem / Void immunities when DB empty
-  if (name === 'cloud panther' || name === 'advanced cloud panther') {
-    return { shape: 'single', immuneToLightning: true }
-  }
-  if (name === 'channeler' || name === 'advanced channeler') {
-    return { shape: 'chain', immuneToLightning: true }
-  }
-  if (name === 'void' || name === 'advanced void') {
-    return {
-      immuneToLightning: true,
-      immuneToFire: true,
-    }
-  }
-  if (name === 'fire totem') {
-    return {
-      shape: 'single',
-      autoTarget: 'random_enemy',
-      immuneToFire: true,
-    }
-  }
-  if (name === 'lightning totem') {
-    return {
-      shape: 'beam',
-      autoTarget: 'random_enemy',
-      immuneToLightning: true,
-    }
-  }
-  if (name === 'nature totem') {
-    return {
-      shape: 'single',
-    }
-  }
-  return null
-}
-
-/** BR S6-47: Temple unit ability fills when DB abilities JSON is absent. */
-function designedTempleAbilities(
-  _unitId: number,
-  unitName: string,
-): Partial<UnitCombatAbilities> | null {
-  const name = unitName.trim().toLowerCase()
-  const advanced = name.startsWith('advanced ')
-  if (name === 'zealot' || name === 'advanced zealot') {
-    // Attack stays single; chain lives on retaliation JSON.
-    return { shape: 'single' }
-  }
-  if (name === 'high priestess' || name === 'advanced high priestess') {
-    return {
-      shape: 'single',
-      healMostInjuredOnKill: true,
-      healFull: true,
-    }
-  }
-  if (name === 'inquisitor grand' || name === 'advanced inquisitor grand') {
-    return {
-      shape: 'single',
-      extraTurnOnKill: true,
-      chancePctFlatStat: 1,
-    }
-  }
-  if (name === 'angelic warrior' || name === 'advanced angelic warrior') {
-    return {
-      shape: 'cleave',
-      dualAttack: true,
-      secondAttackDmgType: 'Physical',
-      secondAttackMinDmg: advanced ? 36 : 35,
-      secondAttackMaxDmg: advanced ? 46 : 45,
-      retaliateOnceAfterBoth: true,
-    }
-  }
-  if (
-    name === 'divine aura master' ||
-    name === 'advanced divine aura master'
-  ) {
-    return {
-      shape: 'single',
-      auraRadius: advanced ? 2 : 1,
-      auraCountsAlliesAsExtraQty: true,
-    }
-  }
-  return null
-}
-
-function designedTempleRetaliation(
-  _unitId: number,
-  unitName: string,
-): Partial<UnitRetaliation> | null {
-  const name = unitName.trim().toLowerCase()
-  if (name === 'zealot' || name === 'advanced zealot') {
-    const advanced = name === 'advanced zealot'
-    return {
-      shape: 'chain',
-      jumps: advanced ? 3 : 2,
-      falloff: 33,
-      times: 1,
-      dmgPct: 50,
-    }
-  }
-  return null
-}
-
 function asResistStat(value: unknown): 'resistance' | 'defense' | null {
   const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
   if (text === 'resistance' || text === 'defense') {
@@ -4474,9 +4223,6 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const imageAlt =
       typeof extra.image_path_alt === 'string' ? extra.image_path_alt.trim() : ''
-    const unitName = typeof row.name === 'string' ? row.name.trim() : ''
-    const unitId = asInt(row.id)
-    const rift = unitName.toLowerCase() === 'unstable rift'
     const footprint = parseFootprintCode(
       extra.footprint ?? extra.hex_size ?? '1x1',
     )
@@ -4492,8 +4238,8 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     return {
       ...row,
       cost: asCost(row.cost),
-      image_path: image || (rift ? 'Unstable_Rift_1.png' : null),
-      image_path_alt: imageAlt || (rift ? 'Silent_Rift_1.png' : null),
+      image_path: image || null,
+      image_path_alt: imageAlt || null,
       footprint,
       speed:
         extra.speed == null || extra.speed === ''
@@ -4508,344 +4254,13 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       min_dmg: asInt(extra.min_dmg),
       max_dmg: asInt(extra.max_dmg),
       min_range: asInt(extra.min_range),
-      // Halberdier base: DB may have max_range 1; designed polearm reach is 1–2.
-      max_range: (() => {
-        const parsed =
-          maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw)
-        if (
-          unitName.trim().toLowerCase() === 'halberdier' &&
-          parsed < 2
-        ) {
-          return 2
-        }
-        return parsed
-      })(),
-      retaliation: (() => {
-        const base = asUnitRetaliation(extra.retaliation)
-        const lower = unitName.toLowerCase()
-        if (
-          lower === 'weeping angel' ||
-          lower === 'advanced weeping angel'
-        ) {
-          return { ...base, times: 0 }
-        }
-        const chrono =
-          lower === 'chronomancer' || lower === 'advanced chronomancer'
-        if (chrono) {
-          const advanced = lower === 'advanced chronomancer'
-          return {
-            ...base,
-            teleportsAttacker: true,
-            teleportChancePct:
-              base.teleportChancePct ?? (advanced ? 75 : 50),
-            resistStat: base.resistStat ?? 'resistance',
-            dmgPct: base.dmgPct === 'default' ? 50 : base.dmgPct,
-          }
-        }
-        // S6-47 Zealot: force chain retaliation when DB JSON is missing/partial.
-        const templeRet = designedTempleRetaliation(unitId, unitName)
-        if (templeRet) {
-          return {
-            ...base,
-            ...templeRet,
-            shape: base.shape ?? templeRet.shape,
-            jumps: base.jumps ?? templeRet.jumps,
-            falloff: base.falloff ?? templeRet.falloff,
-            dmgPct:
-              base.dmgPct !== 'default' ? base.dmgPct : (templeRet.dmgPct ?? base.dmgPct),
-            times: base.times !== 1 || templeRet.times == null ? base.times : templeRet.times,
-          }
-        }
-        return base
-      })(),
-      abilities: (() => {
-        const base = asUnitCombatAbilities(extra.abilities)
-        let next = base
-        if (unitName.toLowerCase() === 'mud golem') {
-          next = {
-            ...next,
-            autoSplitOnTurn: true,
-            skipFirstTurn: true,
-          }
-        }
-        // BR S7-4: Thorned Lash speed debuff is resistable (DB may omit key).
-        {
-          const lower = unitName.trim().toLowerCase()
-          if (lower === 'vines' || lower === 'advanced vines') {
-            next = {
-              ...next,
-              resistStat: next.resistStat ?? 'resistance',
-            }
-          }
-        }
-        // BR S7-5: flat condition chance + duration on listed units.
-        {
-          const s75 = s75UnitConditionNorm(unitId, unitName.trim().toLowerCase())
-          if (s75) {
-            next = {
-              ...next,
-              ...s75,
-              resistStat: s75.resistStat ?? next.resistStat ?? 'resistance',
-            }
-          }
-        }
-        // Factory S6-28/29/35: DB rows may still be null — fill designed stats only
-        // when abilities JSON is absent so a live DB row always wins.
-        if (!abilitiesConfigPresent(extra.abilities)) {
-          const designed =
-            designedTempleAbilities(unitId, unitName) ??
-            designedConfluenceAbilities(unitId, unitName) ??
-            designedFactoryAbilities(unitId, unitName)
-          if (designed) {
-            next = { ...DEFAULT_UNIT_ABILITIES, ...designed }
-          }
-        }
-        // S6-47 Temple: force designed keys when DB abilities omit them.
-        {
-          const temple = designedTempleAbilities(unitId, unitName)
-          if (temple) {
-            next = {
-              ...next,
-              ...(temple.healMostInjuredOnKill
-                ? { healMostInjuredOnKill: true }
-                : {}),
-              ...(temple.healFull ? { healFull: true } : {}),
-              ...(temple.extraTurnOnKill ? { extraTurnOnKill: true } : {}),
-              ...(temple.chancePctFlatStat != null &&
-              next.chancePctFlatStat == null
-                ? { chancePctFlatStat: temple.chancePctFlatStat }
-                : {}),
-              ...(temple.dualAttack
-                ? {
-                    dualAttack: true,
-                    secondAttackDmgType:
-                      next.secondAttackDmgType ?? temple.secondAttackDmgType,
-                    secondAttackMinDmg:
-                      next.secondAttackMinDmg ?? temple.secondAttackMinDmg,
-                    secondAttackMaxDmg:
-                      next.secondAttackMaxDmg ?? temple.secondAttackMaxDmg,
-                    retaliateOnceAfterBoth: true,
-                    shape:
-                      next.shape === 'single'
-                        ? (temple.shape ?? next.shape)
-                        : next.shape,
-                  }
-                : {}),
-              ...(temple.auraCountsAlliesAsExtraQty
-                ? {
-                    auraCountsAlliesAsExtraQty: true,
-                    auraRadius: next.auraRadius ?? temple.auraRadius,
-                  }
-                : {}),
-            }
-          }
-        }
-        // S6-50 Confluence: force engine keys when DB JSON is partial/outdated.
-        {
-          const confluence = designedConfluenceAbilities(unitId, unitName)
-          if (confluence) {
-            next = {
-              ...next,
-              ...(confluence.scatterGroundEffectOnMoveStop
-                ? {
-                    scatterGroundEffectOnMoveStop: true,
-                    groundEffectId:
-                      next.groundEffectId ?? confluence.groundEffectId,
-                    chancePctIntelStat:
-                      next.chancePctIntelStat ?? confluence.chancePctIntelStat,
-                    radius: Math.max(
-                      next.radius ?? 0,
-                      confluence.radius ?? 0,
-                    ),
-                  }
-                : {}),
-              ...(confluence.leavesGroundEffectOnAttack
-                ? {
-                    leavesGroundEffectOnAttack: true,
-                    groundEffectId:
-                      next.groundEffectId ?? confluence.groundEffectId,
-                    chancePct: next.chancePct ?? confluence.chancePct,
-                    chancePctIntelStat:
-                      next.chancePctIntelStat ?? confluence.chancePctIntelStat,
-                    fizzleTerrainIds:
-                      next.fizzleTerrainIds.length > 0
-                        ? next.fizzleTerrainIds
-                        : (confluence.fizzleTerrainIds ?? []),
-                  }
-                : {}),
-              ...(confluence.selfRezOnWipe
-                ? {
-                    selfRezOnWipe: true,
-                    selfRezChanceStatDiv:
-                      next.selfRezChanceStatDiv ??
-                      confluence.selfRezChanceStatDiv,
-                    selfRezCapPct:
-                      next.selfRezCapPct ?? confluence.selfRezCapPct,
-                    selfRezBasedOnKillsThisRound: true,
-                  }
-                : {}),
-              ...(confluence.absorbTerrainIds != null &&
-              confluence.absorbTerrainIds.length > 0
-                ? {
-                    absorbTerrainIds:
-                      next.absorbTerrainIds.length > 0
-                        ? next.absorbTerrainIds
-                        : confluence.absorbTerrainIds,
-                  }
-                : {}),
-              ...(confluence.clearsGroundEffectId != null
-                ? {
-                    clearsGroundEffectId:
-                      next.clearsGroundEffectId ??
-                      confluence.clearsGroundEffectId,
-                    dmgIncreasePerHex:
-                      next.dmgIncreasePerHex ?? confluence.dmgIncreasePerHex,
-                    shape:
-                      next.shape === 'single'
-                        ? (confluence.shape ?? next.shape)
-                        : next.shape,
-                  }
-                : {}),
-              ...(confluence.shape === 'spiral'
-                ? {
-                    shape: 'spiral' as const,
-                    radius: Math.max(
-                      next.radius ?? 0,
-                      confluence.radius ?? 0,
-                    ),
-                    spiralChanceDecayPct:
-                      next.spiralChanceDecayPct ??
-                      confluence.spiralChanceDecayPct,
-                    groundEffectId:
-                      next.groundEffectId ?? confluence.groundEffectId,
-                    fizzleTerrainIds:
-                      next.fizzleTerrainIds.length > 0
-                        ? next.fizzleTerrainIds
-                        : (confluence.fizzleTerrainIds ?? []),
-                  }
-                : {}),
-              ...(confluence.immuneToLightning
-                ? { immuneToLightning: true }
-                : {}),
-              ...(confluence.immuneToFire ? { immuneToFire: true } : {}),
-            }
-          }
-        }
-        // Fire leave-behind / spiral: default fizzle list when GE is Fire and unset.
-        if (
-          next.groundEffectId === 6 &&
-          next.fizzleTerrainIds.length === 0
-        ) {
-          next = { ...next, fizzleTerrainIds: [3, 20, 21] }
-        }
-        // S6-35: listed Fire-immune units always get the flag even if older DB
-        // abilities JSON omitted it.
-        if (unitDesignedImmuneToFire(unitId, unitName)) {
-          next = { ...next, immuneToFire: true }
-        }
-        // S6-42 Arcane unit flags — keep live even if older DB abilities omit them.
-        {
-          const lower = unitName.toLowerCase()
-          if (lower === 'arcane illusion') {
-            next = { ...next, aiTreatAsThreat: true }
-          }
-          if (lower === 'arcane shield') {
-            next = { ...next, immuneToMagicDmg: true }
-          }
-          if (lower === 'animated weapon' && next.autoTarget == null) {
-            next = { ...next, autoTarget: 'random_enemy' }
-          }
-          // S6-46 Shaman totems.
-          if (lower === 'fire totem') {
-            next = {
-              ...next,
-              shape: 'single',
-              autoTarget: next.autoTarget ?? 'random_enemy',
-            }
-          }
-          if (lower === 'lightning totem') {
-            next = {
-              ...next,
-              shape: 'beam',
-              autoTarget: next.autoTarget ?? 'random_enemy',
-            }
-          }
-          if (lower === 'nature totem') {
-            // Heal-only — do not attach autoTarget / damage shapes.
-            next = {
-              ...next,
-              shape: next.shape ?? 'single',
-            }
-          }
-          // S6-43 Tower: force blink / Chronomancer keys even if older DB omitted them.
-          if (
-            lower === 'weeping angel' ||
-            lower === 'advanced weeping angel'
-          ) {
-            next = {
-              ...next,
-              blinkMovement: true,
-              requiresLos: true,
-              respectsHexSize: true,
-              shape: next.shape === 'single' ? 'pulse' : next.shape,
-              radius: Math.max(1, next.radius),
-              chancePct: next.chancePct ?? 50,
-              resistStat: next.resistStat ?? 'resistance',
-              inflictsCondition: next.inflictsCondition ?? 5,
-              conditionDuration: Math.max(1, next.conditionDuration),
-              no_enemy_retaliation: true,
-            }
-          }
-          if (lower === 'blink dog' || lower === 'advanced blink dog') {
-            next = {
-              ...next,
-              blinkMovement: true,
-              requiresLos: true,
-              respectsHexSize: true,
-            }
-          }
-          // S6-51 Ninja: blink + diminishing extra-attack chain.
-          if (lower === 'ninja' || lower === 'advanced ninja') {
-            next = {
-              ...next,
-              blinkMovement: true,
-              requiresLos: true,
-              respectsHexSize: true,
-              grantsSecondAttack: true,
-              chancePctFlatStat: 2,
-              chanceHalvesEachAttempt: true,
-              // Must not take Assassin's flat-chance path (that skips this chain).
-              extraAttackOnAttackOnly: false,
-            }
-          }
-          if (
-            lower === 'chronomancer' ||
-            lower === 'advanced chronomancer'
-          ) {
-            next = {
-              ...next,
-              speedSwapIfTargetFaster: true,
-              speedSwapDuration: Math.max(1, next.speedSwapDuration || 1),
-            }
-          }
-        }
-        return next
-      })(),
+      max_range:
+        maxRangeRaw == null || maxRangeRaw === '' ? 1 : asInt(maxRangeRaw),
+      retaliation: asUnitRetaliation(extra.retaliation),
+      abilities: asUnitCombatAbilities(extra.abilities),
       tags: asIntIds(extra.tags),
       has_abilities: abilitiesConfigPresent(extra.abilities),
-      blocks_los: (() => {
-        if (asBoolFlag(extra.blocks_los)) {
-          return true
-        }
-        const lower = unitName.toLowerCase()
-        // Terrain drops / Rift: always block sight even if an older DB row
-        // omitted blocks_los (Tidal Caller could shoot through Earth Spikes).
-        return (
-          lower === 'unstable rift' ||
-          lower === 'earth spikes' ||
-          lower === 'ice shards'
-        )
-      })(),
+      blocks_los: asBoolFlag(extra.blocks_los),
       town_id: townId != null && townId > 0 ? townId : null,
       class_id: extra.class_id == null || extra.class_id === '' ? null : asInt(extra.class_id),
       tier: extra.tier == null || extra.tier === '' ? null : asInt(extra.tier),
@@ -4853,35 +4268,16 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
         (row as { upgrade_cost?: CostMap | Record<string, number> | null })
           .upgrade_cost,
       ),
+      level: catalogLevel((row as { level?: unknown }).level),
     }
   })
-  {
-    const haveIds = new Set(unit.map((row) => row.id))
-    const haveNames = new Set(
-      unit.map((row) => row.name.trim().toLowerCase()),
-    )
-    const towns = Array.isArray(payload.town)
-      ? (payload.town as { id: number; name: string }[])
-      : []
-    const extras = [
-      ...designedArcaneUnits(),
-      ...designedTotemUnits(towns),
-    ].filter(
-      (row) =>
-        !haveIds.has(row.id) &&
-        !haveNames.has(row.name.trim().toLowerCase()),
-    )
-    if (extras.length > 0) {
-      unit = [...unit, ...extras]
-    }
-  }
   const catalog: ReferenceCatalog = {
     building,
     unit,
     hero_type: asHeroTypes(payload.hero_type),
     hero_pool: asHeroPool(payload.hero_pool),
     resource,
-    town: Array.isArray(payload.town) ? payload.town : [],
+    town: asTownRows(payload.town),
     town_layout: asTownLayout(payload.town_layout),
     market: asMarket(payload.market),
     ability: asAbilities(payload.ability),
@@ -4927,11 +4323,44 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     feature: asFeatures((payload as { feature?: unknown }).feature),
     sign_text: asSignText((payload as { sign_text?: unknown }).sign_text),
     quest_text: asQuestText((payload as { quest_text?: unknown }).quest_text),
+    stat: asStatRows((payload as { stat?: unknown }).stat),
+    class_type: Array.isArray((payload as { class_type?: unknown }).class_type)
+      ? (
+          (payload as { class_type: unknown[] }).class_type as Record<
+            string,
+            unknown
+          >[]
+        )
+          .map((rec) => ({
+            id: asInt(rec.id),
+            name: String(rec.name ?? '').trim(),
+          }))
+          .filter((row) => row.id > 0 && row.name.length > 0)
+      : [],
+    rarity: asRarities((payload as { rarity?: unknown }).rarity),
+    item_kind: Array.isArray((payload as { item_kind?: unknown }).item_kind)
+      ? (
+          (payload as { item_kind: unknown[] }).item_kind as Record<
+            string,
+            unknown
+          >[]
+        ).map((rec) => ({
+          id: Math.floor(Number(rec.id) || 0),
+          name: String(rec.name ?? ''),
+        }))
+      : [],
+    item_type: asItemTypes((payload as { item_type?: unknown }).item_type),
+    item: asItemTemplates((payload as { item?: unknown }).item),
+    item_adj: asItemAdjs((payload as { item_adj?: unknown }).item_adj),
     app_config: asAppConfig(
       (payload as { app_config?: unknown }).app_config,
     ),
+    keybind: asKeybind((payload as { keybind?: unknown }).keybind),
     map_config: asJsonConfig(
       (payload as { map_config?: unknown }).map_config,
+    ),
+    combat_config: asJsonConfig(
+      (payload as { combat_config?: unknown }).combat_config,
     ),
     ai_config: asJsonConfig(
       (payload as { ai_config?: unknown }).ai_config,
@@ -4946,6 +4375,12 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       (payload as { ground_effect?: unknown }).ground_effect,
     ),
   }
+  enrichCatalogUnits(catalog)
+  auditItemSlotTypes(catalog)
+  const upgradePairingIssues = auditUpgradePairing(catalog)
+  if (upgradePairingIssues.length > 0) {
+    console.warn('[catalog] upgrade pairing issues', upgradePairingIssues)
+  }
   catalog.ability = fillDesignedAbilities(
     catalog.ability,
     catalog.ability_target,
@@ -4954,13 +4389,115 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     ...row,
     stats: normalizeAbilityStatFlags(row.stats),
   }))
-  cachedCatalog = catalog
+  rebuildGameDifficultyCatalog(catalog)
   emitCatalog()
   return catalog
 }
 
 let cachedCatalog: ReferenceCatalog | null = null
+let baselineCatalog: ReferenceCatalog | null = null
+let activeDifficultyId: number | null = null
+let activeGameCatalog: ReferenceCatalog | null = null
 const catalogListeners = new Set<() => void>()
+
+const DIFFICULTY_OVERRIDE_SECTIONS = new Set([
+  'map_config',
+  'ai_config',
+  'combat_config',
+  'app_config',
+])
+
+function replaceJsonConfigKey(
+  rows: JsonConfigRow[],
+  key: string,
+  value: unknown,
+): JsonConfigRow[] {
+  const trimmed = key.trim()
+  if (!trimmed) {
+    return rows
+  }
+  let found = false
+  const next = rows.map((row) => {
+    if (row.key !== trimmed) {
+      return row
+    }
+    found = true
+    return { ...row, value }
+  })
+  if (!found) {
+    return [...next, { key: trimmed, value, description: null }]
+  }
+  return next
+}
+
+function applyDifficultyOverrides(
+  catalog: ReferenceCatalog,
+  difficultyId: number,
+): ReferenceCatalog {
+  const row =
+    catalog.difficulty.find((entry) => entry.id === difficultyId) ??
+    catalog.difficulty.find(
+      (entry) => entry.name.trim().toLowerCase() === 'normal',
+    )
+  const overrides = row?.payload?.overrides
+  if (
+    overrides == null ||
+    typeof overrides !== 'object' ||
+    Array.isArray(overrides)
+  ) {
+    return catalog
+  }
+  const sections = overrides as Record<string, Record<string, unknown>>
+  let next: ReferenceCatalog = { ...catalog }
+  for (const section of DIFFICULTY_OVERRIDE_SECTIONS) {
+    const keys = sections[section]
+    if (keys == null || typeof keys !== 'object' || Array.isArray(keys)) {
+      continue
+    }
+    const current = catalog[section as keyof ReferenceCatalog]
+    if (!Array.isArray(current)) {
+      continue
+    }
+    let rows = current as JsonConfigRow[]
+    for (const [key, value] of Object.entries(keys)) {
+      rows = replaceJsonConfigKey(rows, key, value)
+    }
+    next = { ...next, [section]: rows }
+  }
+  return next
+}
+
+export function rebuildGameDifficultyCatalog(catalog: ReferenceCatalog): void {
+  baselineCatalog = catalog
+  if (activeDifficultyId != null && activeDifficultyId > 0) {
+    activeGameCatalog = applyDifficultyOverrides(catalog, activeDifficultyId)
+    cachedCatalog = activeGameCatalog
+    return
+  }
+  activeGameCatalog = null
+  cachedCatalog = catalog
+}
+
+export function setGameDifficultyCatalog(difficultyId: number | null): void {
+  activeDifficultyId =
+    difficultyId != null && difficultyId > 0 ? Math.floor(difficultyId) : null
+  if (baselineCatalog) {
+    rebuildGameDifficultyCatalog(baselineCatalog)
+    emitCatalog()
+  }
+}
+
+export function getBaselineCatalog(): ReferenceCatalog | null {
+  return baselineCatalog ?? cachedCatalog
+}
+
+export function difficultyName(
+  catalog: ReferenceCatalog | null | undefined,
+  difficultyId: number,
+): string {
+  const row = catalog?.difficulty.find((entry) => entry.id === difficultyId)
+  return row?.name?.trim() || 'Normal'
+}
 
 function emitCatalog(): void {
   for (const listener of catalogListeners) {
@@ -5061,23 +4598,27 @@ export function unitUpgradeCost(unit: UnitRow | null): CostMap {
   return unit ? asCost(unit.upgrade_cost) : {}
 }
 
-export function isAdvancedUnit(unit: UnitRow | null | undefined): boolean {
-  return (unit?.name ?? '').trim().toLowerCase().startsWith('advanced ')
+/** Catalog upgraded dwelling row (`level` 2). */
+export function isAdvancedUnit(
+  _catalog: ReferenceCatalog | null | undefined,
+  unit: UnitRow | { level?: number } | null | undefined,
+): boolean {
+  return unit != null && unitDwellingLevel(unit) === 2
 }
 
-/** Advanced counterpart by name: "Worms" → "Advanced Worms". */
+/** Level-2 partner: same `town_id`, `tier`, `class_id`, `level` 2. */
 export function advancedUnitFor(
   catalog: ReferenceCatalog | null | undefined,
   unit: UnitRow | null | undefined,
 ): UnitRow | null {
-  if (!catalog || !unit || isAdvancedUnit(unit)) {
+  if (!catalog || !unit || unitDwellingLevel(unit) !== 1) {
     return null
   }
-  const want = `Advanced ${unit.name.trim()}`.toLowerCase()
-  return (
-    catalog.unit.find((row) => row.name.trim().toLowerCase() === want) ?? null
-  )
+  const matches = advancedUnitsFor(catalog, unit)
+  return matches.length === 1 ? matches[0] : null
 }
+
+export { auditUpgradePairing, type UpgradePairingIssue } from './unitUpgrade'
 
 /** Battlefield footprint shape for this unit. Null/missing → `1x1`. */
 export function unitFootprint(
@@ -5131,17 +4672,20 @@ export function unitAttackShape(
 
 export function unitAutoTarget(
   unit: UnitRow | null | undefined,
+  catalog?: ReferenceCatalog | null,
 ): AutoTargetKind | null {
   const fromAbilities = unitAttackShape(unit).autoTarget
   if (fromAbilities) {
     return fromAbilities
   }
-  const name = (unit?.name ?? '').trim().toLowerCase()
-  if (name === 'siege' || name === 'catapult') {
-    return 'random_wall_segment'
-  }
-  if (name === 'shooter') {
-    return 'random_enemy'
+  const cat = catalog ?? getCachedCatalog()
+  if (cat && unit) {
+    if (unitHasNamedTag(cat, unit, TAG_AUTO_TARGET_RANDOM_WALL)) {
+      return 'random_wall_segment'
+    }
+    if (unitHasNamedTag(cat, unit, TAG_AUTO_TARGET_RANDOM_ENEMY)) {
+      return 'random_enemy'
+    }
   }
   return null
 }
@@ -5205,28 +4749,33 @@ export function isArmySlot(slotId: number): boolean {
 }
 
 export function isTavernBuilding(building: BuildingRow): boolean {
-  return building.name.trim().toLowerCase() === 'tavern'
+  return buildingInSlot(building, BUILDING_SLOT_TAVERN)
 }
 
 export function isMarketplaceBuilding(building: BuildingRow): boolean {
-  return building.name.trim().toLowerCase() === 'marketplace'
+  return buildingInSlot(building, BUILDING_SLOT_MARKETPLACE)
 }
 
-/** Town / Village Hall (and similar) — name match or gold_income root. */
+/** Town / Village Hall — `gold_income` effect. */
 export function isHallBuilding(building: BuildingRow): boolean {
-  const name = building.name.trim().toLowerCase()
-  if (name.includes('hall')) {
-    return true
-  }
-  return building.effect_type === 'gold_income'
+  return building.effect_type.trim().toLowerCase() === 'gold_income'
 }
 
 export function isLibraryBuilding(building: BuildingRow): boolean {
-  return building.name.trim().toLowerCase().includes('library')
+  return buildingInSlot(building, BUILDING_SLOT_LIBRARY)
 }
 
+/** Catalog row that only pads an otherwise-empty slot (`effect_type` = `empty_slot`). */
 export function isEmptyPlaceholder(building: BuildingRow): boolean {
-  return building.name.trim().toLowerCase() === 'empty'
+  return building.effect_type.trim().toLowerCase() === 'empty_slot'
+}
+
+export function isHangerBuilding(building: BuildingRow): boolean {
+  return buildingInSlot(building, BUILDING_SLOT_HANGER)
+}
+
+export function isTownUniqueSlotBuilding(building: BuildingRow): boolean {
+  return buildingInSlot(building, BUILDING_SLOT_TOWN_UNIQUE)
 }
 
 export function isEmptyPlaceholderSlot(
@@ -5261,33 +4810,6 @@ export function townLayoutError(
     return `town_layout — expected ${TOWN_LAYOUT_SLOT_COUNT} slots, got ${rows.length}`
   }
   return null
-}
-
-function layoutCellSize(rows: TownLayoutRow[]): number {
-  const steps = rows.flatMap((row) => [row.x_pos, row.y_pos]).filter((n) => n > 0)
-  return steps.length > 0 ? Math.min(...steps) : 100
-}
-
-export function townLayoutSlotStyle(
-  row: TownLayoutRow,
-  rows: TownLayoutRow[],
-): { left: string; top: string; width: string; height: string } {
-  const cell = layoutCellSize(rows)
-  let maxX = 0
-  let maxY = 0
-  for (const item of rows) {
-    maxX = Math.max(maxX, item.x_pos + item.size * cell)
-    maxY = Math.max(maxY, item.y_pos + item.size * cell)
-  }
-  if (maxX <= 0 || maxY <= 0) {
-    return { left: '0%', top: '0%', width: '25%', height: '25%' }
-  }
-  return {
-    left: `${(row.x_pos / maxX) * 100}%`,
-    top: `${(row.y_pos / maxY) * 100}%`,
-    width: `${((row.size * cell) / maxX) * 100}%`,
-    height: `${((row.size * cell) / maxY) * 100}%`,
-  }
 }
 
 export function armyTier(slotId: number): number {
@@ -5589,6 +5111,7 @@ export function heroEffectiveStats(
   catalog: ReferenceCatalog,
   classId: number | null,
   currentLevel: number,
+  itemBonus?: Partial<HeroStats>,
 ): HeroStats {
   const type =
     classId != null
@@ -5596,7 +5119,7 @@ export function heroEffectiveStats(
       : undefined
   const stats = heroTypeBaseStats(type)
   if (classId == null) {
-    return stats
+    return mergeHeroStats(stats, itemBonus ?? {})
   }
   const cap = Math.max(1, Math.floor(currentLevel))
   for (const row of catalog.hero_levels) {
@@ -5610,7 +5133,35 @@ export function heroEffectiveStats(
       }
     }
   }
-  return stats
+  return mergeHeroStats(stats, itemBonus ?? {})
+}
+
+/** Base + level bumps + equipped item stat bonuses (not backpack). */
+export function heroEffectiveStatsForHero(
+  catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
+): HeroStats {
+  if (!hero) {
+    return emptyHeroStats()
+  }
+  const bonus = equippedItemBonuses(catalog, hero).hero
+  return heroEffectiveStats(
+    catalog,
+    hero.class_id,
+    hero.current_level ?? 1,
+    bonus,
+  )
+}
+
+export function heroEquippedRegenBonus(
+  catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
+): { manaRegen: number; energyRegen: number } {
+  if (!hero) {
+    return { manaRegen: 0, energyRegen: 0 }
+  }
+  const part = equippedItemBonuses(catalog, hero)
+  return { manaRegen: part.manaRegen, energyRegen: part.energyRegen }
 }
 
 /**
@@ -5679,7 +5230,10 @@ export function heroMovementPoints(
     return Math.max(1, 10 * stepsPer)
   }
   const level = Math.max(1, Math.floor(hero?.current_level ?? 1))
-  const speed = heroEffectiveStats(catalog, hero?.class_id ?? null, level).speed
+  const speed =
+    hero && 'equipment' in hero
+      ? heroEffectiveStatsForHero(catalog, hero as Hero).speed
+      : heroEffectiveStats(catalog, hero?.class_id ?? null, level).speed
   return Math.max(1, Math.floor(Math.max(0, speed) * stepsPer))
 }
 
@@ -5736,6 +5290,7 @@ export function startingStockpileFor(
   catalog: ReferenceCatalog | null | undefined,
   resource: { id: number; name: string },
   difficultyId?: number | null,
+  forAi = false,
 ): number {
   const id =
     difficultyId != null && difficultyId > 0
@@ -5747,7 +5302,15 @@ export function startingStockpileFor(
       (entry) => entry.name.trim().toLowerCase() === 'normal',
     ) ??
     null
-  const start = row?.payload?.start_resources
+  const payload = row?.payload
+  const startKey = forAi ? 'ai_start_resources' : 'start_resources'
+  const start =
+    payload != null &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)[startKey] ??
+        (forAi ? undefined : (payload as Record<string, unknown>).start_resources)
+      : undefined
   if (start == null || typeof start !== 'object' || Array.isArray(start)) {
     return 0
   }
@@ -5840,7 +5403,7 @@ export function dummyHeroStat(
 export function commandingHeroStats(
   catalog: ReferenceCatalog | null | undefined,
   hero:
-    | { class_id: number | null; current_level?: number }
+    | Pick<Hero, 'class_id' | 'current_level' | 'equipment' | 'backpack'>
     | null
     | undefined,
 ): HeroStats {
@@ -5856,6 +5419,9 @@ export function commandingHeroStats(
       crit_pct: n,
       crit_amt: n,
     }
+  }
+  if (hero.equipment) {
+    return heroEffectiveStatsForHero(catalog, hero as Hero)
   }
   return heroEffectiveStats(
     catalog,
@@ -5874,13 +5440,16 @@ export function dummyArmyQty(
 export function heroResourcePools(
   catalog: ReferenceCatalog | null | undefined,
   hero:
-    | { class_id: number | null; current_level?: number }
+    | Hero
+    | { class_id: number | null; current_level?: number; equipment?: Hero['equipment']; backpack?: Hero['backpack'] }
     | null
     | undefined,
 ): { current_mana: number; current_energy: number } {
   const stats =
     catalog && hero
-      ? heroEffectiveStats(catalog, hero.class_id, hero.current_level ?? 1)
+      ? hero.equipment
+        ? heroEffectiveStatsForHero(catalog, hero as Hero)
+        : heroEffectiveStats(catalog, hero.class_id, hero.current_level ?? 1)
       : emptyHeroStats()
   const mult = abilityMult(catalog)
   return {
@@ -6138,7 +5707,7 @@ export function classBranchBaseUnit(
   }
   const byTier = new Map<number, UnitRow>()
   for (const unit of catalog.unit) {
-    if (isAdvancedUnit(unit) || unitClassId(catalog, unit) !== classId) {
+    if (isAdvancedUnit(catalog, unit) || unitClassId(catalog, unit) !== classId) {
       continue
     }
     const tier = unitCreatureTier(catalog, unit)
@@ -6153,12 +5722,7 @@ export function classBranchBaseUnit(
   return ranked[rank - 1] ?? null
 }
 
-export function unitHasTag(
-  unit: UnitRow | null | undefined,
-  tagId: number,
-): boolean {
-  return Boolean(unit?.tags?.includes(tagId))
-}
+export { unitHasTag } from './unitTags'
 
 export function unitsWithTag(
   catalog: ReferenceCatalog,
@@ -6433,6 +5997,13 @@ export function aiCfgNumber(
   return n != null ? n : fallback
 }
 
+export function aiCfgRaw(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+): unknown {
+  return jsonConfigRaw(catalog?.ai_config, key)
+}
+
 export function appConfigNumber(
   catalog: ReferenceCatalog | null | undefined,
   key: string,
@@ -6441,6 +6012,54 @@ export function appConfigNumber(
   const raw = catalog?.app_config.find((row) => row.key === key)?.value
   const n = raw == null || raw === '' ? NaN : Number(raw)
   return Number.isFinite(n) ? n : fallback
+}
+
+export function combatConfigNumber(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  fallback: number,
+): number {
+  const n = asFiniteNumber(jsonConfigRaw(catalog?.combat_config, key))
+  return n != null ? n : fallback
+}
+
+/** Roll a percent from a scalar or `{ min, max }` combat_config entry. */
+export function combatConfigRollPercent(
+  catalog: ReferenceCatalog | null | undefined,
+  key: string,
+  fallback: number,
+  random: () => number,
+): number {
+  const raw = jsonConfigRaw(catalog?.combat_config, key)
+  if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const rec = raw as Record<string, unknown>
+    const min = asFiniteNumber(rec.min) ?? asFiniteNumber(rec.lo)
+    const max = asFiniteNumber(rec.max) ?? asFiniteNumber(rec.hi)
+    if (min != null && max != null) {
+      const lo = Math.min(min, max)
+      const hi = Math.max(min, max)
+      return lo + random() * (hi - lo)
+    }
+  }
+  return combatConfigNumber(catalog, key, fallback)
+}
+
+/** Map View overview hex width in px (`app_config.map_view_hex_px`). */
+export function mapViewHexPx(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  return Math.max(4, Math.floor(appConfigNumber(catalog, 'map_view_hex_px', 10)))
+}
+
+/** Map View wall overlay fill (`app_config.map_view_wall_color`). */
+export function mapViewWallColor(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  const raw = catalog?.app_config.find((row) => row.key === 'map_view_wall_color')
+    ?.value
+  const text =
+    typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : '#2B2B2B'
+  return parseCssHex(text) ?? 0x2b2b2b
 }
 
 /** Hexes per day while airborne (`app_config.flight_speed`). */

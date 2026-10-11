@@ -34,6 +34,7 @@ public class ReferenceCatalogController {
         body.put("condition", decodeRows(referenceData.rows("condition"), resourceNameToId));
         body.put("move_type", decodeRows(referenceData.rows("move_type"), resourceNameToId));
         body.put("hero_type", decodeRows(referenceData.rows("hero_type"), resourceNameToId));
+        body.put("class_type", decodeRows(referenceData.rows("class_type"), resourceNameToId));
         body.put("hero_pool", decodeRows(referenceData.rows("hero_pool"), resourceNameToId));
         body.put("town_layout", decodeRows(referenceData.rows("town_layout"), resourceNameToId));
         body.put("market", decodeRows(referenceData.rows("market"), resourceNameToId));
@@ -53,7 +54,14 @@ public class ReferenceCatalogController {
         body.put("feature", decodeRows(referenceData.rows("feature"), resourceNameToId));
         body.put("sign_text", decodeRows(referenceData.rows("sign_text"), resourceNameToId));
         body.put("quest_text", decodeRows(referenceData.rows("quest_text"), resourceNameToId));
+        body.put("stat", decodeRows(referenceData.rows("stat"), resourceNameToId));
+        body.put("rarity", decodeRows(referenceData.rows("rarity"), resourceNameToId));
+        body.put("item_kind", decodeRows(referenceData.rows("item_kind"), resourceNameToId));
+        body.put("item_type", decodeRows(referenceData.rows("item_type"), resourceNameToId));
+        body.put("item", decodeRows(referenceData.rows("item"), resourceNameToId));
+        body.put("item_adj", decodeRows(referenceData.rows("item_adj"), resourceNameToId));
         body.put("app_config", decodeRows(referenceData.rows("app_config"), resourceNameToId));
+        body.put("combat_config", decodeRows(referenceData.rows("combat_config"), resourceNameToId));
         body.put("map_config", decodeRows(referenceData.rows("map_config"), resourceNameToId));
         body.put("ai_config", decodeRows(referenceData.rows("ai_config"), resourceNameToId));
         body.put("ai_arch", decodeRows(referenceData.rows("ai_arch"), resourceNameToId));

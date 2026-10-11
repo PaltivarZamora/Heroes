@@ -1,4 +1,5 @@
 import type { Calendar } from '../hex/calendar'
+import type { HeroEquipment, RolledItem } from '../items/types'
 
 export type AxialPos = {
   q: number
@@ -42,6 +43,25 @@ export type Game = {
   pending_flight_sieges?: Array<{ heroId: string; townId: string }>
 }
 
+export type GameLogEntry = {
+  day: number
+  type: string
+  data: Record<string, string | number | boolean | null>
+}
+
+export type GameLogCombatArchive = {
+  id: string
+  day: number
+  lines: string[]
+}
+
+export type PlayerGameLog = {
+  world: GameLogEntry[]
+  town: GameLogEntry[]
+  enemy: GameLogEntry[]
+  combat: GameLogCombatArchive[]
+}
+
 export type Player = {
   id: string
   is_ai: boolean
@@ -59,6 +79,8 @@ export type Player = {
   town_ids: string[]
   /** Per-player fog of war — hexes this player has seen. */
   explored: AxialPos[]
+  /** Structured game log (World / Town / Enemy / Combat). */
+  game_log?: PlayerGameLog
 }
 
 export type TownGarrison = {
@@ -108,6 +130,8 @@ export type HeroArmy = {
 /** Active Hanger flight — hero is airborne toward a town. */
 export type HeroFlight = {
   destination_town_id: string
+  /** Sprite file under `/assets/heroes/sprites/` (e.g. `Transport_Citadel.png`). */
+  transport_sprite?: string
   /**
    * Waiting to land: another of our heroes occupies the town slot.
    * Hero orbits the town footprint; no further progress toward dest.
@@ -144,6 +168,8 @@ export type Hero = {
   used_abilities_today: number[]
   /** Nullable hero archetype from `hero_pool.arch_id`. Null = pure player blend. */
   arch_id: number | null
+  /** `hero_pool.id` for named tavern heroes; progress/recycle keyed by this. */
+  pool_id?: number | null
   /**
    * Hanger flight in progress. Null/undefined = on the ground.
    * While set, hero is untargetable and auto-advances each day.
@@ -154,9 +180,31 @@ export type Hero = {
    * Updated from each movement / sail / flight step.
    */
   travel_facing?: 'left' | 'right'
+  /**
+   * BR S9-30: locked world goal + walk/boat/flight plan until pursuit changes
+   * or movement is restored for a new turn.
+   */
+  ai_route_commit?: import('../ai/routeChoice').AiRouteCommit | null
+  /** BR S9-40: equipped items keyed by slot id 1–6. */
+  equipment: import('../items/types').HeroEquipment
+  /** BR S9-40: 15 backpack slots (index 0–14). */
+  backpack: Array<import('../items/types').RolledItem | null>
 }
 
 /** Per-name XP/level that survives death → tavern → re-hire. */
+/** Tavern-pool hero snapshot after defeat (BR S9-41 §5a). */
+export type RecycledHeroState = {
+  class_id: number
+  image_path: string | null
+  arch_id: number | null
+  current_level: number
+  current_xp: number
+  learned_abilities: number[]
+  ability_learn_log?: Array<{ ability_id: number; learned_on_day: number }>
+  equipment: HeroEquipment
+  backpack: Array<RolledItem | null>
+}
+
 export type HeroProgress = {
   current_level: number
   current_xp: number
@@ -211,8 +259,27 @@ export type MapFeature =
       open: boolean
       /** Rolled at map generation; fixed thereafter. */
       loot: Array<{ resource_id: number; qty: number }>
+      /** Rolled item reward (BR S9-41); null when none. */
+      item: RolledItem | null
       /** Adjacent guard spawn hex (one-time seeding). */
       guard: AxialPos | null
+    }
+  | {
+      id: string
+      kind: 'ground_item'
+      position: AxialPos
+      /** Tooltip / AI-visible name only (no rarity). */
+      name: string
+      item: RolledItem
+      flipped: boolean
+      /** Pocket placement (null when standalone). */
+      pocket_id: number | null
+      pocket_tier: number | null
+      /** Standalone guard hex and rolled tier; null in pockets. */
+      guard: AxialPos | null
+      guard_tier: number | null
+      /** World generation vs mob kill drop (runtime). */
+      origin?: 'world' | 'mob_drop'
     }
   | {
       id: string
@@ -306,6 +373,8 @@ export type QuestPlayerState = {
   turned_in: boolean
   /** `calendarDayNumber` when accepted; used for Know Ability. */
   accepted_on_day: number | null
+  /** When set, replaces XP/gold/resources for this player (BR S9-41). */
+  reward_item?: RolledItem | null
 }
 
 /** Fixed weekly quest payload on a Notice Board (BR S9-10). */
@@ -350,6 +419,8 @@ export type Mob = {
   id: string
   position: AxialPos
   slots_1_to_6: Array<string | null>
+  /** Guard mobs (chest/pocket/island/item) do not roll item drops (BR S9-43). */
+  guards_loot?: boolean
 }
 
 export type GameSession = {
@@ -362,6 +433,8 @@ export type GameSession = {
   heroes: Hero[]
   /** Name-keyed level/XP; survives a hero leaving the map. */
   hero_progress: Record<string, HeroProgress>
+  /** Defeated named heroes available for tavern re-hire (BR S9-41). */
+  recycled_heroes?: Record<string, RecycledHeroState>
   units: UnitStack[]
   nodes: Node[]
   /** Neutral map features (fountains, chests, signs). Persist for save/reload. */
@@ -369,6 +442,8 @@ export type GameSession = {
   /** World boats (empty or occupied). Persist for save/reload. */
   boats: Boat[]
   mobs: Mob[]
+  /** Next rolled-item uid counter (`i1`, `i2`, …). */
+  next_item_no?: number
 }
 
 export const HUMAN_PLAYER_ID = 'player-1'

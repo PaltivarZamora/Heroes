@@ -71,8 +71,17 @@ final class TestGrid {
 
     static TestGridResponse generate(
             ReferenceData data, Integer players, MapSize mapSize, int[] playerTownTypes) {
+        return generate(data, players, mapSize, playerTownTypes, null);
+    }
+
+    static TestGridResponse generate(
+            ReferenceData data,
+            Integer players,
+            MapSize mapSize,
+            int[] playerTownTypes,
+            Integer difficultyId) {
         int seed = ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE);
-        return generate(seed, data, players, mapSize, playerTownTypes);
+        return generate(seed, data, players, mapSize, playerTownTypes, difficultyId);
     }
 
     static TestGridResponse generate(int seed, ReferenceData data) {
@@ -100,6 +109,16 @@ final class TestGrid {
             Integer players,
             MapSize mapSize,
             int[] playerTownTypes) {
+        return generate(seed, data, players, mapSize, playerTownTypes, null);
+    }
+
+    static TestGridResponse generate(
+            int seed,
+            ReferenceData data,
+            Integer players,
+            MapSize mapSize,
+            int[] playerTownTypes,
+            Integer difficultyId) {
         MapSize size =
                 mapSize != null
                         ? mapSize
@@ -107,11 +126,13 @@ final class TestGrid {
         long totalStart = System.nanoTime();
         MapGenTimings.start();
         log.info(
-                "Map gen start: size={} ({}×{}) seed={}",
+                "Map gen start: size={} ({}×{}) seed={} difficulty={}",
                 size.name(),
                 size.width(),
                 size.height(),
-                seed);
+                seed,
+                DifficultyConfig.normalizeDifficultyId(difficultyId));
+        DifficultyConfig.pushMapOverrides(data, difficultyId);
         try {
             TestGridResponse response =
                     generateTimed(seed, data, players, size, playerTownTypes);
@@ -138,6 +159,8 @@ final class TestGrid {
                     seed,
                     e.toString());
             throw e;
+        } finally {
+            DifficultyConfig.popMapOverrides();
         }
     }
 
@@ -185,9 +208,10 @@ final class TestGrid {
                     boolean enabled = MapConfig.cfgFlag(c.data, "roads_enabled", c.sizeName(), false);
                     if (!enabled) {
                         MapGenPipeline.logCounts("roads", "skipped (roads_enabled=0)");
-                        return;
+                    } else {
+                        WorldRoads.run(c);
                     }
-                    WorldRoads.run(c);
+                    Rivers.finishBridges(c);
                 });
 
         // 5a. Permanent buildings (existing placement rules, plus gap / terrain / adjacency).
@@ -268,11 +292,11 @@ final class TestGrid {
                             "props", "before=" + before + " after=" + after + " mult=" + mult);
                 });
 
-        // 6. Random mobs — frontend (see report). Empty backend slot.
-        MapGenPipeline.runLayer(
-                ctx,
-                "L6",
-                c -> MapGenPipeline.logCounts("mobs", "frontend (unchanged)"));
+        // 5h. Chest item rewards (BR S9-41). After all chests exist; before mobs.
+        MapGenPipeline.runLayer(ctx, "L5h-chest-items", ChestItemsLayer::run);
+
+        // 6. World mobs (random, gap, road, guards). Not reachability blockers.
+        MapGenPipeline.runLayer(ctx, "L6", MobsLayer::run);
 
         // 7. Final reachability
         MapGenPipeline.runLayer(ctx, "L7", FinalReachability::run);
@@ -294,10 +318,12 @@ final class TestGrid {
                 int r = row;
                 int chunkId = ctx.chunkIds[row][col];
                 WorldProps.Seed prop = ctx.propSeeds[row][col];
+                boolean bridge = Rivers.isBridge(ctx, col, row);
                 boolean blocked =
-                        terrain.blocked()
-                                || (prop != null && prop.blocker())
-                                || townLeftBlocked.contains(q + "," + r);
+                        !bridge
+                                && (terrain.blocked()
+                                        || (prop != null && prop.blocker())
+                                        || townLeftBlocked.contains(q + "," + r));
                 java.util.List<Integer> borders = null;
                 if (ctx.wallBeside != null) {
                     java.util.List<Integer> beside = ctx.wallBeside.get(row * ctx.width + col);
@@ -354,7 +380,12 @@ final class TestGrid {
         MapGenTimings.current().layer("asm", asmMs);
         logStep("assemble", t);
         return new TestGridResponse(
-                seed, List.copyOf(tiles), List.copyOf(ctx.objects), List.copyOf(roads), roadPlan);
+                seed,
+                List.copyOf(tiles),
+                List.copyOf(ctx.objects),
+                List.copyOf(roads),
+                roadPlan,
+                List.copyOf(ctx.mobs));
     }
 
     private static TestGridResponse.RoadPlan roadPlan(MapGenContext ctx) {
@@ -991,6 +1022,7 @@ final class TestGrid {
                             null,
                             null,
                             null,
+                            null,
                             null));
             chestKeys.add(chestKey);
             guardKeys.add(guardKey);
@@ -1146,6 +1178,7 @@ final class TestGrid {
                             null,
                             null,
                             textId,
+                            null,
                             null,
                             null,
                             null,
@@ -1342,6 +1375,7 @@ final class TestGrid {
                             null,
                             null,
                             List.copyOf(abilityIds),
+                            null,
                             null,
                             null,
                             null,
@@ -1551,6 +1585,27 @@ final class TestGrid {
 
         List<java.util.HashSet<String>> bodies =
                 waterBodies(cells, width, height, bodyTerrainIds);
+        if (gen.river != null) {
+            bodies.removeIf(body -> {
+                for (String key : body) {
+                    int comma = key.indexOf(',');
+                    if (comma < 0) {
+                        return false;
+                    }
+                    int q = Integer.parseInt(key.substring(0, comma));
+                    int r = Integer.parseInt(key.substring(comma + 1));
+                    int col = HexCoords.colOf(q, r);
+                    if (r < 0
+                            || col < 0
+                            || r >= gen.height
+                            || col >= gen.width
+                            || !gen.river[r][col]) {
+                        return false;
+                    }
+                }
+                return !body.isEmpty();
+            });
+        }
         log.info(
                 "Dock placement: found {} deep-water body(ies) (min={}, per={})",
                 bodies.size(),
@@ -1683,6 +1738,7 @@ final class TestGrid {
                                 null,
                                 lq,
                                 lr,
+                                null,
                                 null,
                                 null));
                 occupied.add(key);
@@ -2454,6 +2510,7 @@ final class TestGrid {
                 null,
                 def.level(),
                 List.copyOf(rollChestLoot(def, rng)),
+                null,
                 null,
                 null,
                 null,

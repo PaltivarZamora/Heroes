@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, Fragment, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   formatAmount,
   GOLD_RESOURCE_ID,
@@ -10,7 +10,6 @@ import {
   buildingById,
   buildingGrowth,
   destroyCostOf,
-  emptySlotPreviewLines,
   hasPrerequisite,
   effectLine,
   fetchCatalog,
@@ -22,7 +21,7 @@ import {
   isArmySlot,
   isEmptyPlaceholderSlot,
   isLibraryBuilding,
-  isMarketplaceSlot,
+  isMarketplaceBuilding,
   isTavernBuilding,
   isUndesignedSlot,
   maxAffordableQty,
@@ -32,8 +31,6 @@ import {
   scaleCost,
   subscribeCatalog,
   townLayoutError,
-  townLayoutFor,
-  townLayoutSlotStyle,
   unitCost,
   unitForBuilding,
   flightSpeed,
@@ -46,23 +43,16 @@ import {
   townConstructionCost,
   townRecruitUnitCost,
 } from './townUniques'
-import {
-  emptySlotArtFilename,
-  GARRISON_ART_FILENAME,
-  GENERIC_EMPTY_ART_FILENAME,
-  slotArtFilename,
-  slotArtUrl,
-  townSkylineFilename,
-} from './slotArt'
 import { Marketplace } from './Marketplace'
 import { Library } from './Library'
-import { AbilityTip } from './AbilityTip'
+import { TownMapView } from './TownMapView'
+import { GameWindowModal } from '../layout/GameWindowModal'
+import { GameWindowOverlay } from '../layout/GameWindowOverlay'
 import { getSession, subscribe, updateSession } from '../session/store'
-import { NECROPOLIS_TOWN_TYPE_ID, type GameSession } from '../session/types'
+import { NECROPOLIS_TOWN_TYPE_ID } from '../session/types'
 import {
   assignHeroesFromPool,
   afterTownBuildingPlaced,
-  dropHeldArmyStack,
   findTownById,
   flightDestinationsFromTown,
   hireHeroFromPool,
@@ -70,58 +60,15 @@ import {
   ensureLibraryOffers,
   launchHeroFlight,
   patchBuildingSlot,
-  placeArmyStack,
   recruitToGarrison,
-  returnHeldArmyStack,
   slotStatesForTown,
   spendResources,
-  splitArmyStack,
-  stackUpgradeOffer,
   takeArchiveLearnNotice,
   unusedTavernPool,
-  upgradeArmyStack,
   visitingHeroId,
   type ArchiveLearnNotice,
-  type ArmyRowId,
-  type ArmySlotRef,
 } from '../session/accessors'
 import type { SlotState } from './townSlots'
-import { stackView, type UnitStackView } from './unitStack'
-import { ArmyRow } from './ArmyRow'
-import { ReservedCorner } from './ReservedCorner'
-import { garrisonTooltipText } from './garrisonTooltip'
-import { heroTooltipText } from './HeroTooltip'
-import {
-  formatToolkitRows,
-  sessionUnitToolkitRows,
-} from './UnitToolkitTip'
-
-function panelAnchorFromClick(
-  event: ReactMouseEvent<HTMLButtonElement>,
-  root: HTMLElement | null,
-): { left: number; top: number } | null {
-  if (!root) {
-    return null
-  }
-  const box = root.getBoundingClientRect()
-  const width = Math.min(520, box.width * 0.42)
-  const gap = 8
-  let left = event.clientX - box.left
-  let top = event.clientY - box.top
-  if (left + width > box.width - gap) {
-    left = Math.max(gap, box.width - width - gap)
-  }
-  if (left < gap) {
-    left = gap
-  }
-  if (top > box.height - 180) {
-    top = Math.max(gap, box.height - 180)
-  }
-  if (top < gap) {
-    top = gap
-  }
-  return { left, top }
-}
 
 type TownManagementProps = {
   townId: string
@@ -141,40 +88,9 @@ type TownManagementProps = {
   readOnly?: boolean
   /** After a successful Hanger flight launch — sync map hero / camera. */
   onHeroFlew?: (heroId: string) => void
-}
-
-function SlotArt({
-  filename,
-  unbuilt,
-}: {
-  filename: string
-  unbuilt?: boolean
-}) {
-  const [missing, setMissing] = useState(false)
-  const [generic, setGeneric] = useState(false)
-  useEffect(() => {
-    setMissing(false)
-    setGeneric(false)
-  }, [filename])
-  if (missing) {
-    return <span className="town-building-slot-filename">{filename}</span>
-  }
-  const src = slotArtUrl(
-    unbuilt && generic ? GENERIC_EMPTY_ART_FILENAME : filename,
-  )
-  return (
-    <img
-      src={src}
-      alt=""
-      onError={() => {
-        if (unbuilt && !generic) {
-          setGeneric(true)
-          return
-        }
-        setMissing(true)
-      }}
-    />
-  )
+  embedded?: boolean
+  /** Dev: draw town-grid hex numbers and outlines. */
+  showHexNumbers?: boolean
 }
 
 export function TownManagement({
@@ -185,25 +101,21 @@ export function TownManagement({
   calendarLabel,
   hasActedToday: actedToday,
   onActed,
-  visitingHeroName,
+  visitingHeroName: _visitingHeroName,
   selectedHeroId = null,
-  onOpenHero,
-  onCycleTown,
-  onQuests,
+  onOpenHero: _onOpenHero,
   onArchiveLearn,
   readOnly = false,
   onHeroFlew,
+  embedded = false,
+  showHexNumbers = false,
 }: TownManagementProps) {
   const hasActedToday = actedToday || readOnly
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const slots = slotStatesForTown(session, townId)
-  const rootRef = useRef<HTMLDivElement>(null)
   const [openSlot, setOpenSlot] = useState<number | null>(null)
-  const [panelAnchor, setPanelAnchor] = useState<{ left: number; top: number } | null>(
-    null,
-  )
   const [marketOpen, setMarketOpen] = useState(false)
   const [librarySlot, setLibrarySlot] = useState<number | null>(null)
   const [scrollsOpen, setScrollsOpen] = useState(false)
@@ -212,12 +124,9 @@ export function TownManagement({
     findTownById(session, townId)?.town_type_id ?? NECROPOLIS_TOWN_TYPE_ID
   const townTypeLabel =
     catalog?.town.find((row) => row.id === townTypeId)?.name ?? 'Necropolis'
-  const layoutRows = catalog ? townLayoutFor(catalog, townTypeId) : []
   const layoutError = catalog ? townLayoutError(catalog, townTypeId) : null
-
   useEffect(() => {
     setOpenSlot(null)
-    setPanelAnchor(null)
     setMarketOpen(false)
     setLibrarySlot(null)
     setScrollsOpen(false)
@@ -225,11 +134,20 @@ export function TownManagement({
   }, [townId])
 
   useEffect(() => {
+    return () => {
+      document
+        .querySelectorAll('.game-window > .town-building-screen-embedded')
+        .forEach((node) => node.remove())
+    }
+  }, [])
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.repeat) {
         return
       }
       event.preventDefault()
+      event.stopImmediatePropagation()
       if (librarySlot != null) {
         setLibrarySlot(null)
         return
@@ -244,14 +162,13 @@ export function TownManagement({
       }
       if (openSlot != null) {
         setOpenSlot(null)
-        setPanelAnchor(null)
         setMessage(null)
         return
       }
       onExit()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [librarySlot, marketOpen, onExit, openSlot, scrollsOpen])
 
   useEffect(() => {
@@ -320,7 +237,6 @@ export function TownManagement({
 
   const closePanel = () => {
     setOpenSlot(null)
-    setPanelAnchor(null)
     setMessage(null)
   }
 
@@ -455,19 +371,57 @@ export function TownManagement({
 
   const slotState = openSlot != null ? slots[openSlot - 1] : null
 
+  const openTownSlot = (slot: number) => {
+    setMessage(null)
+    if (!catalog) {
+      setOpenSlot(slot)
+      return
+    }
+    const state = slots[slot - 1]
+    if (!state || state.level === 0) {
+      setOpenSlot(slot)
+      return
+    }
+    const current = buildingById(catalog, state.buildingId)
+    if (!current) {
+      setOpenSlot(slot)
+      return
+    }
+    if (!readOnly && isMarketplaceBuilding(current)) {
+      setOpenSlot(null)
+      setLibrarySlot(null)
+      setMarketOpen(true)
+      return
+    }
+    if (!readOnly && isLibraryBuilding(current)) {
+      const nextCandidate = nextInChain(current, catalog, slot, townTypeId)
+      if (nextCandidate == null) {
+        setOpenSlot(null)
+        setMarketOpen(false)
+        setLibrarySlot(slot)
+        return
+      }
+    }
+    setOpenSlot(slot)
+  }
+
   return (
     <div
-      ref={rootRef}
-      className="town-management"
+      className={
+        embedded
+          ? 'town-management game-window-embed town-management-embedded'
+          : 'town-management'
+      }
       role="dialog"
       aria-modal="true"
       aria-labelledby="town-management-title"
       data-tip-contain=""
     >
-      <img
-        className="town-management-skyline"
-        src={slotArtUrl(townSkylineFilename(townTypeLabel))}
-        alt=""
+      <TownMapView
+        townId={townId}
+        showHexNumbers={showHexNumbers}
+        preferredHeroId={selectedHeroId}
+        onSlotClick={openTownSlot}
       />
       <header className="town-management-bar">
         <h1 id="town-management-title">
@@ -477,8 +431,12 @@ export function TownManagement({
             ? `${townTypeLabel}: ${townName}`
             : townName || townTypeLabel}
         </h1>
-        <p className="town-calendar">{calendarLabel}</p>
-        <ResourceBar wallet={wallet} className="town-resource-strip" />
+        {!embedded ? (
+          <>
+            <p className="town-calendar">{calendarLabel}</p>
+            <ResourceBar wallet={wallet} className="town-resource-strip" />
+          </>
+        ) : null}
         <button type="button" onClick={onExit}>
           Exit Town
         </button>
@@ -486,102 +444,17 @@ export function TownManagement({
       {readOnly ? (
         <p className="town-readonly-banner">Read-only — AI spectator (DEV)</p>
       ) : null}
-      <div className="town-building-grid">
-        {!catalog ? (
-          <p className="town-building-layout-error">Loading buildings…</p>
-        ) : layoutError ? (
-          <p className="town-building-layout-error">{layoutError}</p>
-        ) : (
-          layoutRows.map((layout) => {
-            const id = layout.slot
-            const state = slots[id - 1] ?? {
-              level: 0,
-              buildingId: null,
-              recruitQty: 0,
-            }
-            const building = catalog
-              ? buildingById(catalog, state.buildingId)
-              : null
-            const emptyPlaceholder = catalog
-              ? isEmptyPlaceholderSlot(catalog, id, townTypeId)
-              : false
-            const unbuilt = state.level <= 0
-            const filename = unbuilt
-              ? emptySlotArtFilename(id, townTypeLabel)
-              : slotArtFilename(
-                  id,
-                  state.level,
-                  building?.image_path ?? null,
-                  townTypeLabel,
-                )
-            const hoverPreview =
-              unbuilt && catalog
-                ? emptySlotPreviewLines(
-                    catalog,
-                    id,
-                    townTypeId,
-                    builtBuildingIds,
-                    (building) =>
-                      townConstructionCost(session, catalog, townId, building),
-                  ).join('\n')
-                : ''
-            const slotStyle = townLayoutSlotStyle(layout, layoutRows)
-            const slotButton = (
-              <button
-                type="button"
-                className={
-                  emptyPlaceholder && state.level <= 0
-                    ? 'town-building-slot town-building-slot-empty'
-                    : 'town-building-slot'
-                }
-                style={hoverPreview ? { inset: 0, width: '100%', height: '100%' } : slotStyle}
-                aria-label={`Slot ${id}`}
-                onClick={(event) => {
-                  setOpenSlot(id)
-                  setPanelAnchor(panelAnchorFromClick(event, rootRef.current))
-                  setMessage(null)
-                }}
-              >
-                {emptyPlaceholder && state.level <= 0 ? null : (
-                  <SlotArt filename={filename} unbuilt={unbuilt} />
-                )}
-              </button>
-            )
-            if (!hoverPreview) {
-              return <Fragment key={id}>{slotButton}</Fragment>
-            }
-            return (
-              <AbilityTip
-                key={id}
-                description={hoverPreview}
-                className="town-building-slot-tip"
-                style={slotStyle}
-              >
-                {slotButton}
-              </AbilityTip>
-            )
-          })
-        )}
-      </div>
-      <div className="town-bottom-dock">
-        <ReservedCorner
-          onHero={() => onOpenHero?.(selectedHeroId)}
-          onTown={() => onCycleTown?.()}
-          onQuests={() => onQuests?.()}
-          onScrolls={() => setScrollsOpen(true)}
-        />
-        <ArmyRows
-          session={session}
-          townId={townId}
-          catalog={catalog}
-          visitingHeroName={visitingHeroName}
-          selectedHeroId={selectedHeroId}
-          onOpenHero={onOpenHero}
-          readOnly={readOnly}
-          hasActedToday={hasActedToday}
-        />
-      </div>
+      {!catalog ? (
+        <p className="town-building-layout-error">Loading buildings…</p>
+      ) : layoutError ? (
+        <p className="town-building-layout-error">{layoutError}</p>
+      ) : null}
       {openSlot != null && slotState ? (
+        <GameWindowOverlay>
+          <GameWindowModal
+            aria-labelledby="town-slot-panel-title"
+            onBackdropClick={closePanel}
+          >
         <BuildingPanel
           slotId={openSlot}
           slotState={slotState}
@@ -591,12 +464,7 @@ export function TownManagement({
           hasActedToday={hasActedToday}
           townId={townId}
           townTypeId={townTypeId}
-          anchor={panelAnchor}
-          onClose={() => {
-            setOpenSlot(null)
-            setPanelAnchor(null)
-            setMessage(null)
-          }}
+          onClose={closePanel}
           onBuild={(building) => build(openSlot, building)}
           onUpgrade={(next) => upgrade(openSlot, next)}
           onDestroy={(building) => destroy(openSlot, building)}
@@ -626,34 +494,57 @@ export function TownManagement({
             onHeroFlew?.(heroId)
           }}
           onFlyError={(text) => setMessage(text)}
-          onOpenMarket={() => {
-            if (readOnly) {
-              return
-            }
-            setOpenSlot(null)
-            setPanelAnchor(null)
-            setMarketOpen(true)
-          }}
           onOpenLibrary={() => {
             if (readOnly || openSlot == null) {
               return
             }
             const slot = openSlot
             setOpenSlot(null)
-            setPanelAnchor(null)
             setLibrarySlot(slot)
           }}
         />
+          </GameWindowModal>
+        </GameWindowOverlay>
       ) : null}
       {marketOpen ? (
-        <Marketplace onClose={() => setMarketOpen(false)} />
+        embedded ? (
+          <GameWindowOverlay className="town-building-screen-embedded marketplace-screen-embedded">
+            <GameWindowModal
+              aria-labelledby="marketplace-title"
+              onBackdropClick={() => setMarketOpen(false)}
+            >
+              <Marketplace
+                embedded
+                onClose={() => setMarketOpen(false)}
+              />
+            </GameWindowModal>
+          </GameWindowOverlay>
+        ) : (
+          <Marketplace onClose={() => setMarketOpen(false)} />
+        )
       ) : null}
       {librarySlot != null ? (
-        <Library
-          townId={townId}
-          slotNum={librarySlot}
-          onClose={() => setLibrarySlot(null)}
-        />
+        embedded ? (
+          <GameWindowOverlay className="town-building-screen-embedded library-screen-embedded">
+            <GameWindowModal
+              aria-labelledby="library-title"
+              onBackdropClick={() => setLibrarySlot(null)}
+            >
+              <Library
+                embedded
+                townId={townId}
+                slotNum={librarySlot}
+                onClose={() => setLibrarySlot(null)}
+              />
+            </GameWindowModal>
+          </GameWindowOverlay>
+        ) : (
+          <Library
+            townId={townId}
+            slotNum={librarySlot}
+            onClose={() => setLibrarySlot(null)}
+          />
+        )
       ) : null}
       {scrollsOpen ? (
         <div
@@ -674,512 +565,6 @@ export function TownManagement({
   )
 }
 
-function stackLabel(
-  session: GameSession,
-  stackId: string | null | undefined,
-  catalog: ReferenceCatalog | null,
-): string {
-  if (!stackId) {
-    return 'Empty'
-  }
-  const stack = session.units.find((row) => row.id === stackId)
-  if (!stack) {
-    return 'Empty'
-  }
-  const unit = catalog?.unit.find((row) => row.id === stack.unit_id)
-  return `${unit?.name ?? 'Unknown'} - ${formatAmount(stack.qty)}`
-}
-
-function rowSlotIds(
-  session: GameSession,
-  townId: string,
-  row: ArmyRowId,
-  preferredHeroId?: string | null,
-): Array<string | null> {
-  const town = findTownById(session, townId)
-  if (!town) {
-    return [null, null, null, null, null, null]
-  }
-  if (row === 'garrison') {
-    const slots = town.garrison.slots_1_to_6
-    return [0, 1, 2, 3, 4, 5].map((index) => slots[index] ?? null)
-  }
-  const heroId = visitingHeroId(session, town, preferredHeroId)
-  const hero = heroId
-    ? session.heroes.find((item) => item.id === heroId)
-    : null
-  const slots = hero?.army.slots_1_to_6 ?? []
-  return [0, 1, 2, 3, 4, 5].map((index) => slots[index] ?? null)
-}
-
-function rowStacks(
-  session: GameSession,
-  townId: string,
-  row: ArmyRowId,
-  catalog: ReferenceCatalog | null,
-  preferredHeroId?: string | null,
-): UnitStackView[] {
-  return rowSlotIds(session, townId, row, preferredHeroId).map((id) =>
-    stackView(session, id, catalog),
-  )
-}
-
-function stackAt(
-  session: GameSession,
-  townId: string,
-  ref: ArmySlotRef,
-  preferredHeroId?: string | null,
-) {
-  const id = rowSlotIds(
-    session,
-    townId,
-    ref.row,
-    preferredHeroId ?? ref.heroId,
-  )[ref.slot - 1]
-  return id ? session.units.find((row) => row.id === id) ?? null : null
-}
-
-function slotFromPoint(x: number, y: number): ArmySlotRef | 'portrait' | null {
-  const el = document.elementFromPoint(x, y)
-  if (!(el instanceof Element)) {
-    return null
-  }
-  if (el.closest('[data-portrait]')) {
-    return 'portrait'
-  }
-  const slotEl = el.closest('[data-row][data-slot]')
-  if (!(slotEl instanceof HTMLElement)) {
-    return null
-  }
-  const row = slotEl.dataset.row
-  const slot = Number(slotEl.dataset.slot)
-  if ((row !== 'garrison' && row !== 'hero') || !Number.isInteger(slot)) {
-    return null
-  }
-  return { row, slot }
-}
-
-function ArmyRows({
-  session,
-  townId,
-  catalog,
-  visitingHeroName,
-  selectedHeroId = null,
-  onOpenHero,
-  readOnly = false,
-  hasActedToday = false,
-}: {
-  session: GameSession
-  townId: string
-  catalog: ReferenceCatalog | null
-  visitingHeroName: string
-  selectedHeroId?: string | null
-  onOpenHero?: (heroId?: string | null) => void
-  readOnly?: boolean
-  hasActedToday?: boolean
-}) {
-  const town = findTownById(session, townId)
-  const visitingId = town
-    ? visitingHeroId(session, town, selectedHeroId)
-    : null
-  const visiting = visitingId
-    ? session.heroes.find((row) => row.id === visitingId) ?? null
-    : null
-  const [menu, setMenu] = useState<{
-    slot: ArmySlotRef
-    x: number
-    y: number
-  } | null>(null)
-  const [splitSlot, setSplitSlot] = useState<ArmySlotRef | null>(null)
-  const [splitText, setSplitText] = useState('1')
-  const [held, setHeld] = useState<{
-    stackId: string
-    origin: ArmySlotRef
-  } | null>(null)
-  const [dragging, setDragging] = useState<ArmySlotRef | null>(null)
-  const [ghost, setGhost] = useState<{
-    x: number
-    y: number
-    text: string
-  } | null>(null)
-  const [armyMessage, setArmyMessage] = useState<string | null>(null)
-  const heldRef = useRef(held)
-  const draggingRef = useRef(dragging)
-  heldRef.current = held
-  draggingRef.current = dragging
-
-  const cancelHeld = (notice: string | null) => {
-    const current = heldRef.current
-    if (!current) {
-      return
-    }
-    updateSession((currentSession) =>
-      returnHeldArmyStack(
-        currentSession,
-        townId,
-        current.stackId,
-        current.origin,
-      ),
-    )
-    heldRef.current = null
-    setHeld(null)
-    setGhost(null)
-    setArmyMessage(notice)
-  }
-
-  useEffect(() => {
-    const onMove = (event: PointerEvent) => {
-      const currentHeld = heldRef.current
-      const currentDrag = draggingRef.current
-      if (!currentHeld && !currentDrag) {
-        return
-      }
-      const text = currentHeld
-        ? stackLabel(getSession(), currentHeld.stackId, catalog)
-        : currentDrag
-          ? stackLabel(
-              getSession(),
-              rowSlotIds(getSession(), townId, currentDrag.row)[
-                currentDrag.slot - 1
-              ],
-              catalog,
-            )
-          : ''
-      setGhost({ x: event.clientX, y: event.clientY, text })
-    }
-    const onUp = (event: PointerEvent) => {
-      const target = slotFromPoint(event.clientX, event.clientY)
-      const currentHeld = heldRef.current
-      const currentDrag = draggingRef.current
-      if (currentHeld) {
-        if (!target || target === 'portrait') {
-          cancelHeld(
-            target === 'portrait'
-              ? "Can't drop on the portrait."
-              : 'Split stack returned to its origin.',
-          )
-          return
-        }
-        let error: string | null = null
-        updateSession((currentSession) => {
-          const result = dropHeldArmyStack(
-            currentSession,
-            townId,
-            currentHeld.stackId,
-            currentHeld.origin,
-            target,
-          )
-          if (result.error) {
-            error = result.error
-            return returnHeldArmyStack(
-              currentSession,
-              townId,
-              currentHeld.stackId,
-              currentHeld.origin,
-            )
-          }
-          return result.session
-        })
-        heldRef.current = null
-        setHeld(null)
-        setGhost(null)
-        setArmyMessage(error)
-        return
-      }
-      if (!currentDrag) {
-        return
-      }
-      if (target && target !== 'portrait') {
-        let error: string | null = null
-        updateSession((currentSession) => {
-          const result = placeArmyStack(
-            currentSession,
-            townId,
-            currentDrag,
-            target,
-          )
-          error = result.error
-          return result.error ? currentSession : result.session
-        })
-        setArmyMessage(error)
-      } else if (target === 'portrait') {
-        setArmyMessage("Can't drop on the portrait.")
-      }
-      draggingRef.current = null
-      setDragging(null)
-      setGhost(null)
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') {
-        return
-      }
-      const busy =
-        heldRef.current != null ||
-        draggingRef.current != null ||
-        menu != null ||
-        splitSlot != null
-      if (!busy) {
-        return
-      }
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      if (heldRef.current) {
-        cancelHeld('Split stack returned to its origin.')
-      }
-      draggingRef.current = null
-      setDragging(null)
-      setGhost(null)
-      setMenu(null)
-      setSplitSlot(null)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('keydown', onKey, true)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('keydown', onKey, true)
-    }
-  }, [catalog, menu, splitSlot, townId])
-
-  useEffect(() => {
-    return () => {
-      const current = heldRef.current
-      if (current) {
-        updateSession((currentSession) =>
-          returnHeldArmyStack(
-            currentSession,
-            townId,
-            current.stackId,
-            current.origin,
-          ),
-        )
-      }
-    }
-  }, [townId])
-
-  const confirmSplit = () => {
-    if (!splitSlot) {
-      return
-    }
-    const qty = Number.parseInt(splitText, 10)
-    let error: string | null = null
-    let heldStackId: string | null = null
-    updateSession((currentSession) => {
-      const result = splitArmyStack(currentSession, townId, splitSlot, qty)
-      error = result.error
-      heldStackId = result.heldStackId
-      return result.error ? currentSession : result.session
-    })
-    if (error || !heldStackId) {
-      setArmyMessage(error)
-      return
-    }
-    const nextHeld = { stackId: heldStackId, origin: splitSlot }
-    heldRef.current = nextHeld
-    setHeld(nextHeld)
-    setSplitSlot(null)
-    setMenu(null)
-    setArmyMessage('Drop the split stack on a slot (Esc cancels).')
-  }
-
-  const confirmUpgrade = (ref: ArmySlotRef) => {
-    if (readOnly || !catalog) {
-      setMenu(null)
-      return
-    }
-    let error: string | null = null
-    updateSession((currentSession) => {
-      const result = upgradeArmyStack(currentSession, townId, ref, catalog)
-      error = result.error
-      return result.error ? currentSession : result.session
-    })
-    setMenu(null)
-    setArmyMessage(error)
-  }
-
-  const menuStack = menu
-    ? stackAt(session, townId, menu.slot, selectedHeroId)
-    : null
-  const upgradeOffer =
-    menuStack && catalog
-      ? stackUpgradeOffer(session, catalog, townId, menuStack)
-      : null
-
-  return (
-    <div className="town-army-rows">
-      <ArmyRow
-        row="garrison"
-        portraitLabel="Garrison"
-        portraitFilename={GARRISON_ART_FILENAME}
-        portraitTip={
-          catalog
-            ? garrisonTooltipText(
-                catalog,
-                session,
-                townId,
-                hasActedToday,
-              )
-            : null
-        }
-        armyStacks={rowStacks(session, townId, 'garrison', catalog)}
-        slotTip={(slot, stack) => {
-          if (!catalog || stack.empty) {
-            return null
-          }
-          const unit = stackAt(session, townId, {
-            row: 'garrison',
-            slot,
-          }, selectedHeroId)
-          if (!unit) {
-            return null
-          }
-          return formatToolkitRows(
-            sessionUnitToolkitRows(catalog, unit.unit_id, unit.qty),
-          )
-        }}
-        onSlotPointerDown={(slot, event) => {
-          if (event.button !== 0 || held) {
-            return
-          }
-          const ref: ArmySlotRef = { row: 'garrison', slot }
-          if (!stackAt(session, townId, ref, selectedHeroId)) {
-            return
-          }
-          event.preventDefault()
-          draggingRef.current = ref
-          setDragging(ref)
-          setMenu(null)
-          setArmyMessage(null)
-        }}
-        onSlotContextMenu={(slot, event) => {
-          const ref: ArmySlotRef = { row: 'garrison', slot }
-          if (held || !stackAt(session, townId, ref, selectedHeroId)) {
-            return
-          }
-          event.preventDefault()
-          setMenu({ slot: ref, x: event.clientX, y: event.clientY })
-          setSplitSlot(null)
-        }}
-      />
-      <ArmyRow
-        row="hero"
-        portraitLabel={visiting?.name ?? (visitingId ? visitingHeroName : 'None')}
-        portraitFilename={visiting?.image_path ?? null}
-        portraitTip={
-          catalog && visiting
-            ? heroTooltipText(catalog, visiting, session)
-            : null
-        }
-        armyStacks={rowStacks(session, townId, 'hero', catalog, selectedHeroId)}
-        slotTip={(slot, stack) => {
-          if (!catalog || stack.empty) {
-            return null
-          }
-          const unit = stackAt(session, townId, {
-            row: 'hero',
-            slot,
-          }, selectedHeroId)
-          if (!unit) {
-            return null
-          }
-          return formatToolkitRows(
-            sessionUnitToolkitRows(catalog, unit.unit_id, unit.qty),
-          )
-        }}
-        onPortraitClick={
-          visitingId && !held
-            ? () => onOpenHero?.(visitingId)
-            : undefined
-        }
-        onSlotPointerDown={(slot, event) => {
-          if (event.button !== 0 || held) {
-            return
-          }
-          const ref: ArmySlotRef = { row: 'hero', slot }
-          if (!stackAt(session, townId, ref, selectedHeroId)) {
-            return
-          }
-          event.preventDefault()
-          draggingRef.current = ref
-          setDragging(ref)
-          setMenu(null)
-          setArmyMessage(null)
-        }}
-        onSlotContextMenu={(slot, event) => {
-          const ref: ArmySlotRef = { row: 'hero', slot }
-          if (held || !stackAt(session, townId, ref, selectedHeroId)) {
-            return
-          }
-          event.preventDefault()
-          setMenu({ slot: ref, x: event.clientX, y: event.clientY })
-          setSplitSlot(null)
-        }}
-      />
-      {armyMessage ? (
-        <p className="town-army-message">{armyMessage}</p>
-      ) : null}
-      {held ? (
-        <p className="town-army-message">
-          Holding {stackLabel(session, held.stackId, catalog)}
-        </p>
-      ) : null}
-      {menu ? (
-        <div
-          className="town-army-menu"
-          style={{ left: menu.x, top: menu.y }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setSplitSlot(menu.slot)
-              setSplitText('1')
-              setMenu(null)
-            }}
-          >
-            Split
-          </button>
-          {upgradeOffer && !readOnly ? (
-            <button type="button" onClick={() => confirmUpgrade(menu.slot)}>
-              Upgrade — {formatCost(upgradeOffer.total)}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {splitSlot ? (
-        <div className="town-army-split">
-          <label className="town-recruit-qty">
-            Split quantity
-            <input
-              type="number"
-              min={1}
-              max={Math.max(1, (stackAt(session, townId, splitSlot, selectedHeroId)?.qty ?? 1) - 1)}
-              value={splitText}
-              onChange={(event) => setSplitText(event.target.value)}
-            />
-          </label>
-          <div className="town-recruit-actions">
-            <button type="button" onClick={confirmSplit}>
-              Confirm
-            </button>
-            <button type="button" onClick={() => setSplitSlot(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {ghost ? (
-        <div
-          className="town-army-ghost"
-          style={{ left: ghost.x + 12, top: ghost.y + 12 }}
-        >
-          {ghost.text}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function BuildingPanel({
   slotId,
   slotState,
@@ -1190,7 +575,6 @@ function BuildingPanel({
   townId,
   townTypeId,
   wallet,
-  anchor,
   onClose,
   onBuild,
   onUpgrade,
@@ -1200,7 +584,6 @@ function BuildingPanel({
   hireCandidates,
   onHire,
   builtBuildingIds,
-  onOpenMarket,
   onOpenLibrary,
   visitingHeroId: visitorId,
   onFlyLaunched,
@@ -1215,7 +598,6 @@ function BuildingPanel({
   townId: string
   townTypeId: number
   wallet: ResourceWallet
-  anchor: { left: number; top: number } | null
   onClose: () => void
   onBuild: (building: BuildingRow) => void
   onUpgrade: (next: BuildingRow) => void
@@ -1225,7 +607,6 @@ function BuildingPanel({
   hireCandidates: HeroPoolRow[]
   onHire: (pick: HeroPoolRow) => boolean
   builtBuildingIds: ReadonlySet<number>
-  onOpenMarket: () => void
   onOpenLibrary: () => void
   visitingHeroId: string | null
   onFlyLaunched: (heroId: string) => void
@@ -1260,16 +641,9 @@ function BuildingPanel({
       : null
 
   return (
-    <div
-      className="town-building-panel"
-      style={
-        anchor
-          ? { left: anchor.left, top: anchor.top, bottom: 'auto' }
-          : undefined
-      }
-    >
+    <div className="town-building-panel town-building-panel-popup">
       <div className="town-building-panel-header">
-        <h2>Slot {slotId}</h2>
+        <h2 id="town-slot-panel-title">Slot {slotId}</h2>
         <button type="button" onClick={onClose}>
           Close
         </button>
@@ -1331,15 +705,6 @@ function BuildingPanel({
       ) : (
         <p>Unknown building.</p>
       )}
-      {catalog &&
-      isMarketplaceSlot(catalog, slotId, townTypeId) &&
-      slotState.level > 0 ? (
-        <p>
-          <button type="button" onClick={onOpenMarket}>
-            Open Marketplace
-          </button>
-        </p>
-      ) : null}
       {message ? <p className="town-building-panel-msg">{message}</p> : null}
     </div>
   )
