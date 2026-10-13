@@ -920,6 +920,7 @@ function App() {
     combatWaitRef.current = null
     done?.()
     syncActivePlayerView()
+    requestAnimationFrame(() => resyncWorldMapAfterMapView())
     const result = matchVictoryResult(getSession())
     if (result && !matchEndShownRef.current) {
       matchEndShownRef.current = true
@@ -2249,6 +2250,7 @@ function App() {
             setWelcomeTown(null)
             setMapInputLocked(false)
             abortActiveMapMovement()
+            requestAnimationFrame(() => resyncWorldMapAfterMapView())
           }}
           calendarLabel={calendarLabel}
           hasActedToday={hasActedToday}

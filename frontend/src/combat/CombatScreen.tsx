@@ -304,6 +304,12 @@ const ABILITY_BEAT_MS = 500
 /** app_config sentinel: no auto-dismiss (Space/Esc only). */
 const POPUP_NO_AUTO_SECS = 99
 
+/** Do not destroy the shared WebGL context used by the world map (see MapView). */
+function releaseCombatPixiApp(application: Application): void {
+  application.canvas.remove()
+  application.destroy(false, { children: true })
+}
+
 type CombatScreenProps = {
   attackerHeroId: string
   defenderHeroId: string | null
@@ -1350,6 +1356,9 @@ export function CombatScreen({
           }
         }
       }
+      presentPendingCombatSummary()
+    }).catch((error) => {
+      console.error('[combat] mob kill item reward failed', error)
       presentPendingCombatSummary()
     })
   }
@@ -3567,7 +3576,7 @@ export function CombatScreen({
         antialias: true,
       })
       if (cancelled) {
-        instance.destroy()
+        releaseCombatPixiApp(instance)
         return
       }
       app = instance
@@ -3583,7 +3592,7 @@ export function CombatScreen({
           )
         : null
       if (cancelled) {
-        instance.destroy()
+        releaseCombatPixiApp(instance)
         return
       }
       const fills = new Graphics()
@@ -4104,7 +4113,7 @@ export function CombatScreen({
         }),
       )
       if (cancelled) {
-        instance.destroy()
+        releaseCombatPixiApp(instance)
         return
       }
       if (downTex && gateMoat) {
@@ -4613,7 +4622,7 @@ export function CombatScreen({
         auraApiRef.current = null
         bridgeArtApiRef.current = null
         activeApiRef.current = null
-        instance.destroy()
+        releaseCombatPixiApp(instance)
       }
     })()
 
@@ -4626,7 +4635,10 @@ export function CombatScreen({
       navalMaskApiRef.current = null
       activeApiRef.current = null
       fieldRef.current = null
-      app?.destroy()
+      if (app) {
+        releaseCombatPixiApp(app)
+      }
+      canvasHost.replaceChildren()
     }
   }, [attackerHeroId, defenderHeroId, siegeTownId, defenderMobId, navalLayout, catalog])
 

@@ -1078,6 +1078,15 @@
   background-color: #111;
 }
 
+/* Town / combat fill the 1273×840 game window, not the browser viewport. */
+.game-window > .town-management,
+.game-window > .combat-screen.town-management {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .town-management-skyline {
   position: absolute;
   inset: 0;

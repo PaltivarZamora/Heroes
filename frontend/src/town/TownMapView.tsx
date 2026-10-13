@@ -623,7 +623,11 @@ export function TownMapView({
       host.removeEventListener('pointermove', onPointerMove)
       host.removeEventListener('pointerleave', onPointerLeave)
       host.removeEventListener('pointerdown', onPointerDown)
-      pixiRef.current?.app.destroy(true, { children: true })
+      const pixiApp = pixiRef.current?.app
+      if (pixiApp) {
+        pixiApp.canvas.remove()
+        pixiApp.destroy(false, { children: true })
+      }
       pixiRef.current = null
       canvasHost.replaceChildren()
     }

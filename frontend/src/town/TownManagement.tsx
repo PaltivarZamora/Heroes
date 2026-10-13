@@ -134,14 +134,6 @@ export function TownManagement({
   }, [townId])
 
   useEffect(() => {
-    return () => {
-      document
-        .querySelectorAll('.game-window > .town-building-screen-embedded')
-        .forEach((node) => node.remove())
-    }
-  }, [])
-
-  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.repeat) {
         return
