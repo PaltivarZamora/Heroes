@@ -7,6 +7,7 @@ import {
   type FederatedPointerEvent,
 } from 'pixi.js'
 import type { Grid, Hex } from 'honeycomb-grid'
+import { positionWorldTipInGameWindow } from '../layout/gameWindowTips'
 import { activePlayer } from '../session/accessors'
 import { getSession } from '../session/store'
 import type { GameSession, Hero, Node } from '../session/types'
@@ -604,9 +605,14 @@ export function MapView({
         if (tipEl) {
           if (hit) {
             tipEl.textContent = hit.tooltip
-            tipEl.hidden = false
-            tipEl.style.left = `${event.clientX - host.getBoundingClientRect().left + 12}px`
-            tipEl.style.top = `${event.clientY - host.getBoundingClientRect().top + 12}px`
+            positionWorldTipInGameWindow(
+              tipEl,
+              host,
+              event.clientX,
+              event.clientY,
+              12,
+              12,
+            )
           } else {
             tipEl.hidden = true
           }

@@ -1,4 +1,14 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import {
+  clampBoxInRect,
+  gameWindowTipInnerRect,
+} from '../layout/gameWindowTips'
 import { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
 import type { Texture } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
@@ -415,6 +425,7 @@ export function TownMapView({
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [tip, setTip] = useState<TipState | null>(null)
+  const tipRef = useRef<HTMLDivElement>(null)
   const town = findTownById(session, townId)
   const terrainName =
     (town ? getTile(town.position.q, town.position.r)?.terrain?.trim() : '') ||
@@ -511,6 +522,28 @@ export function TownMapView({
   useEffect(() => {
     runPaintRef.current()
   }, [baseDrawKey, structureDrawKey, showHexNumbers])
+
+  useLayoutEffect(() => {
+    const el = tipRef.current
+    const host = hostRef.current
+    if (!tip || !el || !host) {
+      return
+    }
+    el.style.left = `${tip.x}px`
+    el.style.top = `${tip.y}px`
+    const inner = gameWindowTipInnerRect(host)
+    if (!inner) {
+      return
+    }
+    const box = el.getBoundingClientRect()
+    const next = clampBoxInRect(box.left, box.top, box.width, box.height, inner)
+    if (next.left === box.left && next.top === box.top) {
+      return
+    }
+    const hostBox = host.getBoundingClientRect()
+    el.style.left = `${next.left - hostBox.left}px`
+    el.style.top = `${next.top - hostBox.top}px`
+  }, [tip])
 
   useEffect(() => {
     const host = hostRef.current
@@ -652,10 +685,7 @@ export function TownMapView({
         </p>
       ) : null}
       {tip ? (
-        <div
-          className="world-hover-tip town-map-tip"
-          style={{ left: tip.x, top: tip.y }}
-        >
+        <div ref={tipRef} className="world-hover-tip town-map-tip">
           {tip.text}
         </div>
       ) : null}

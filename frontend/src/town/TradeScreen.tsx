@@ -5,6 +5,7 @@ import { GameWindowOverlay } from '../layout/GameWindowOverlay'
 import { getSession, subscribe } from '../session/store'
 import { getCachedCatalog, subscribeCatalog } from './catalog'
 import { HeroInventory } from './HeroInventory'
+import { heroInventoryHeaderTitle, heroTitleWithClass } from './heroTitle'
 
 type TradeScreenProps = {
   /** Hero who initiated the meet (map selection). */
@@ -32,6 +33,11 @@ export function TradeScreen({
     return null
   }
 
+  const leftHeader = heroInventoryHeaderTitle(catalog, partner)
+  const rightHeader = heroInventoryHeaderTitle(catalog, active)
+  const leftTitle = heroTitleWithClass(catalog, partner)
+  const rightTitle = heroTitleWithClass(catalog, active)
+
   return (
     <GameWindowOverlay className="trade-screen-embedded game-window-overlay-host">
       <GameWindowModal
@@ -41,21 +47,29 @@ export function TradeScreen({
         onBackdropClick={onClose}
       >
         <h1 id="trade-screen-title" className="trade-screen-title">
-          Trade — {active.name} &amp; {partner.name}
+          Trade — {leftTitle} &amp; {rightTitle}
         </h1>
         <div className="trade-screen-body" data-tip-contain>
-          <section className="trade-screen-half" aria-label={`${partner.name} inventory`}>
+          <section
+            className="trade-screen-half"
+            aria-label={`${leftHeader} inventory`}
+          >
             <HeroInventory
               catalog={catalog}
               hero={partner}
+              headerTitle={leftHeader}
               inCombat={false}
               tradePeerHeroId={active.id}
             />
           </section>
-          <section className="trade-screen-half" aria-label={`${active.name} inventory`}>
+          <section
+            className="trade-screen-half"
+            aria-label={`${rightHeader} inventory`}
+          >
             <HeroInventory
               catalog={catalog}
               hero={active}
+              headerTitle={rightHeader}
               inCombat={false}
               tradePeerHeroId={partner.id}
             />

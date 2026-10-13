@@ -2224,7 +2224,6 @@ function App() {
           siegeTownId={combat.siegeTownId}
           defenderMobId={combat.defenderMobId}
           navalLayout={combat.navalLayout}
-          debugSections={debugSections}
           onLiveLogLines={setLiveCombatLogLines}
           onExit={onCombatExit}
         />

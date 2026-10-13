@@ -10,6 +10,10 @@ import { Application, Container, Graphics, Sprite } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
 import { clientPointInElement } from '../layout/clientPointer'
 import {
+  clampBoxInRect,
+  gameWindowTipInnerRect,
+} from '../layout/gameWindowTips'
+import {
   ATTACKER_COL,
   ATTACKER_HERO_COL,
   COMBAT_COLUMNS,
@@ -51,9 +55,7 @@ import {
 import { addFootprintPropSprite, loadPropTexture } from '../hex/propTextures'
 import { parseCssHexColor, wedgesForHex } from '../hex/terrainTransition'
 import { terrainFillColor } from '../hex/world'
-import { DebugCopyPanel } from '../hex/DebugCopyPanel'
 import { setNavalMaskDebugState } from './navalMaskDebugBridge'
-import type { DebugSections } from '../hex/debug'
 import { formatMp, MOVE_STEP_MS } from '../hex/hero'
 import { axialNeighborDirs } from '../hex/pathfinding'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
@@ -317,7 +319,6 @@ type CombatScreenProps = {
   defenderMobId?: string | null
   /** Naval battlefield variant (world boat fight or Fixed Fight). */
   navalLayout?: NavalLayoutKind | null
-  debugSections: DebugSections
   onLiveLogLines?: (lines: string[]) => void
   onExit: (
     levelUp?: LevelUpNotice | null,
@@ -374,17 +375,30 @@ function CombatHoverTip({
     if (!el || !(parent instanceof HTMLElement)) {
       return
     }
-    const pad = 8
     el.style.setProperty('--tip-shift-x', '0px')
+    el.style.setProperty('--tip-shift-y', '0px')
     const tip = el.getBoundingClientRect()
-    const bound = parent.getBoundingClientRect()
-    let shift = 0
-    if (tip.left < bound.left + pad) {
-      shift = bound.left + pad - tip.left
-    } else if (tip.right > bound.right - pad) {
-      shift = bound.right - pad - tip.right
+    const inner = gameWindowTipInnerRect(parent) ?? {
+      left: parent.getBoundingClientRect().left + 8,
+      top: parent.getBoundingClientRect().top + 8,
+      right: parent.getBoundingClientRect().right - 8,
+      bottom: parent.getBoundingClientRect().bottom - 8,
     }
-    el.style.setProperty('--tip-shift-x', `${shift}px`)
+    const clamped = clampBoxInRect(
+      tip.left,
+      tip.top,
+      tip.width,
+      tip.height,
+      inner,
+    )
+    el.style.setProperty(
+      '--tip-shift-x',
+      `${clamped.left - tip.left}px`,
+    )
+    el.style.setProperty(
+      '--tip-shift-y',
+      `${clamped.top - tip.top}px`,
+    )
   }, [left, top, placeBelow, children])
   return (
     <div
@@ -619,7 +633,6 @@ export function CombatScreen({
   siegeTownId,
   defenderMobId,
   navalLayout = null,
-  debugSections,
   onLiveLogLines,
   onExit,
 }: CombatScreenProps) {
@@ -712,6 +725,26 @@ export function CombatScreen({
   const moatStartKeyRef = useRef<string | null>(null)
   const splitStartKeyRef = useRef<string | null>(null)
   const [field, setField] = useState<FieldView | null>(null)
+  const combatBodyRef = useRef<HTMLDivElement>(null)
+  const [combatFieldScale, setCombatFieldScale] = useState(1)
+  useLayoutEffect(() => {
+    const body = combatBodyRef.current
+    if (!body || !field) {
+      return
+    }
+    const measure = () => {
+      const w = body.clientWidth
+      const h = body.clientHeight
+      if (w <= 0 || h <= 0 || field.width <= 0 || field.height <= 0) {
+        return
+      }
+      setCombatFieldScale(Math.min(w / field.width, h / field.height))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(body)
+    return () => ro.disconnect()
+  }, [field])
   const [battle, setBattle] = useState<CombatBattle | null>(null)
   const [log, setLog] = useState<BattleLog | null>(null)
   const [catalogReady, setCatalogReady] = useState(false)
@@ -4740,44 +4773,31 @@ export function CombatScreen({
     )
   }
 
+  const requestExitCombat = () => {
+    if (summary) {
+      exitCombat(summary.levelUpNotice ?? null)
+      return
+    }
+    if (battle && finishCombat(battleRef.current ?? battle)) {
+      return
+    }
+    exitCombat(null)
+  }
+
   return (
     <div
       className="town-management combat-screen game-window-embed"
       data-hero-cast={heroCast ? 'true' : undefined}
+      data-tip-contain=""
       role="dialog"
       aria-modal="true"
       aria-labelledby="combat-screen-title"
     >
-      <header className="town-management-bar">
-        <h1 id="combat-screen-title">Combat</h1>
-        <div className="combat-debug-end">
-          <DebugCopyPanel
-            sections={debugSections}
-            navalMaskDebug={
-              navalLayout
-                ? {
-                    enabled: navalMaskDebug,
-                    onToggle: () => setNavalMaskDebug((on) => !on),
-                  }
-                : undefined
-            }
-          />
-          <button
-            type="button"
-            onClick={() => {
-              if (summary) {
-                exitCombat(summary.levelUpNotice ?? null)
-                return
-              }
-              if (battle && finishCombat(battleRef.current ?? battle)) {
-                return
-              }
-              exitCombat(null)
-            }}
-          >
-            Exit
-          </button>
-        </div>
+      <header className="town-management-bar combat-exit-bar">
+        <h1 id="combat-screen-title" className="sr-only">Combat</h1>
+        <button type="button" onClick={requestExitCombat}>
+          Exit Combat
+        </button>
       </header>
       {heroCast?.abilityId != null ? (
         <p className="combat-hero-aim-hint">
@@ -4786,17 +4806,20 @@ export function CombatScreen({
             : 'Select a target. Esc returns to abilities.'}
         </p>
       ) : null}
-      <div className="combat-body">
+      <div className="combat-body" ref={combatBodyRef}>
         <div
           className="combat-field"
-          style={field ? { width: field.width } : undefined}
           aria-label={`Battlefield ${COMBAT_COLUMNS} by ${COMBAT_ROWS}`}
         >
           <div
             className="combat-hexes"
             style={
               field
-                ? { width: field.width, height: field.height }
+                ? {
+                    width: field.width,
+                    height: field.height,
+                    transform: `scale(${combatFieldScale})`,
+                  }
                 : undefined
             }
           >

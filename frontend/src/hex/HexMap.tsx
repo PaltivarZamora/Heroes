@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
+import { positionWorldTipInGameWindow } from '../layout/gameWindowTips'
 import { clampCamera, PAN_SPEED_PX_PER_SEC } from './camera'
 import {
   CLICK_PAN_THRESHOLD_PX,
@@ -3530,11 +3531,8 @@ export function HexMap({
             ? `WP ${waypointPlan.waypoints.length} · ${formatMp(waypointPlan.remaining)} left`
             : null
         if (tipText || wpTip) {
-          tipEl.hidden = false
           tipEl.textContent = [wpTip, tipText].filter(Boolean).join('\n')
-          const hostBox = host.getBoundingClientRect()
-          tipEl.style.left = `${event.clientX - hostBox.left + 14}px`
-          tipEl.style.top = `${event.clientY - hostBox.top + 14}px`
+          positionWorldTipInGameWindow(tipEl, host, event.clientX, event.clientY)
         } else {
           tipEl.hidden = true
         }
@@ -4282,11 +4280,8 @@ export function HexMap({
           }
           waypointPlan = next
           drawPreview(next.steps)
-          tipEl.hidden = false
           tipEl.textContent = `WP ${next.waypoints.length} · ${formatMp(next.remaining)} left`
-          const hostBox = host.getBoundingClientRect()
-          tipEl.style.left = `${event.clientX - hostBox.left + 14}px`
-          tipEl.style.top = `${event.clientY - hostBox.top + 14}px`
+          positionWorldTipInGameWindow(tipEl, host, event.clientX, event.clientY)
           return
         }
         const occupant = otherHeroAt(hex.q, hex.r, hero.id)

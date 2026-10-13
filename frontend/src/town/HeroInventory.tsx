@@ -1,9 +1,9 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -29,13 +29,22 @@ import {
 import type { ItemLocation, RolledItem } from '../items/types'
 import { BACKPACK_SIZE, EQUIPMENT_SLOT_IDS } from '../items/types'
 import type { GameSession, Hero } from '../session/types'
+import { useGameStage } from '../layout/GameStage'
 import { getSession, updateSession } from '../session/store'
 import type { ReferenceCatalog } from './catalog'
-import { xpToReachLevel } from './catalog'
 import { AbilityTip } from './AbilityTip'
 
 const LEFT_SLOTS = [1, 3, 5] as const
 const RIGHT_SLOTS = [2, 4, 6] as const
+const DRAG_START_THRESHOLD_PX = 5
+
+type PendingDrag = {
+  item: RolledItem
+  from: ItemLocation
+  startX: number
+  startY: number
+  pointerId: number
+}
 
 export type HeroInventoryProps = {
   catalog: ReferenceCatalog
@@ -43,6 +52,8 @@ export type HeroInventoryProps = {
   inCombat?: boolean
   /** Other hero id when shown in friendly trade (enables cross-hero drag). */
   tradePeerHeroId?: string | null
+  /** Panel title; defaults to hero name only on hero screen. */
+  headerTitle?: string
 }
 
 function isEquipped(hero: Hero, item: RolledItem): boolean {
@@ -146,40 +157,6 @@ function ItemArt({
   )
 }
 
-function ItemHoverTip({
-  catalog,
-  item,
-  children,
-}: {
-  catalog: ReferenceCatalog
-  item: RolledItem
-  children: ReactNode
-}) {
-  const color = rolledItemRarityColor(catalog, item)
-  const slotId = rolledItemSlotTypeId(catalog, item)
-  const slot =
-    slotId != null ? inventorySlotTypeName(catalog, slotId) : 'Item'
-  const rarity = rolledItemRarityName(catalog, item)
-  const name = rolledItemDisplayName(catalog, item)
-  const statLines = item.stats.map((line) => {
-    const stat = catalog.stat.find((row) => row.id === line.statId)
-    const label = stat?.name ?? `Stat ${line.statId}`
-    return `+${line.amt} ${label}`
-  })
-  const description = [
-    name,
-    `${rarity} - ${slot}`,
-    ...statLines,
-  ].join('\n')
-  return (
-    <AbilityTip description={description}>
-      <span className="hero-inventory-item-tip-anchor" style={{ color }}>
-        {children}
-      </span>
-    </AbilityTip>
-  )
-}
-
 type DragState = {
   item: RolledItem
   from: ItemLocation
@@ -191,22 +168,19 @@ export function HeroInventory({
   hero,
   inCombat = false,
   tradePeerHeroId = null,
+  headerTitle,
 }: HeroInventoryProps) {
+  const { scale: stageScale } = useGameStage()
+  const ghostSizePx = 113 * stageScale
   const [focusItem, setFocusItem] = useState<RolledItem | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  const pendingDragRef = useRef<PendingDrag | null>(null)
   dragRef.current = drag
 
-  const level = hero.current_level ?? 1
-  const xp = hero.current_xp ?? 0
-  const xpNext = xpToReachLevel(catalog, level)
-  const xpFmt = (n: number) => n.toLocaleString('en-US')
-  const header =
-    xpNext != null
-      ? `${hero.name} - Lvl ${level} (${xpFmt(xp)} / ${xpFmt(xpNext)})`
-      : `${hero.name} - Lvl ${level} (${xpFmt(xp)})`
+  const header = headerTitle ?? hero.name
 
   const detailItem = drag?.item ?? focusItem
   const showCompare =
@@ -226,13 +200,127 @@ export function HeroInventory({
     setFocusItem(null)
   }
 
+  const applyMove = useCallback((
+    current: DragState,
+    target: DropTarget,
+    to: ItemLocation,
+  ) => {
+    if (
+      target.heroId === current.heroId &&
+      locKey(to) === locKey(current.from)
+    ) {
+      clearDetail()
+      resetAllInventoryDetails()
+      return
+    }
+
+    const session = getSession()
+    let result:
+      | { session: GameSession; ok: true }
+      | { session: GameSession; ok: false; message: string }
+    if (target.heroId === current.heroId) {
+      result = moveHeroItem(
+        session,
+        catalog,
+        current.heroId,
+        current.from,
+        to,
+        inCombat,
+      )
+    } else if (
+      tradePeerHeroId &&
+      current.heroId === hero.id &&
+      target.heroId === tradePeerHeroId
+    ) {
+      result = moveTradeItem(
+        session,
+        catalog,
+        hero.id,
+        current.from,
+        tradePeerHeroId,
+        to,
+        inCombat,
+      )
+    } else if (
+      tradePeerHeroId &&
+      current.heroId === tradePeerHeroId &&
+      target.heroId === hero.id
+    ) {
+      result = moveTradeItem(
+        session,
+        catalog,
+        tradePeerHeroId,
+        current.from,
+        hero.id,
+        to,
+        inCombat,
+      )
+    } else {
+      result = { session, ok: false, message: 'Invalid trade target' }
+    }
+    if (!result.ok) {
+      setMessage(result.message)
+      clearDetail()
+      resetAllInventoryDetails()
+      return
+    }
+    updateSession(() => result.session)
+    clearDetail()
+    resetAllInventoryDetails()
+  }, [catalog, hero.id, inCombat, tradePeerHeroId])
+
+  const equipFromBackpack = useCallback((item: RolledItem, from: ItemLocation) => {
+    if (inCombat) {
+      setMessage('Cannot move items during combat')
+      return
+    }
+    if (from.kind !== 'backpack') {
+      return
+    }
+    const slotId = rolledItemSlotTypeId(catalog, item)
+    if (slotId == null) {
+      setMessage('Wrong slot')
+      return
+    }
+    applyMove(
+      { item, from, heroId: hero.id },
+      { heroId: hero.id, loc: { kind: 'equipment', slotId } },
+      { kind: 'equipment', slotId },
+    )
+  }, [applyMove, hero.id, inCombat, catalog])
+
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      const pending = pendingDragRef.current
+      if (pending && !dragRef.current && pending.pointerId === event.pointerId) {
+        const dx = event.clientX - pending.startX
+        const dy = event.clientY - pending.startY
+        if (Math.hypot(dx, dy) >= DRAG_START_THRESHOLD_PX) {
+          dragRef.current = {
+            item: pending.item,
+            from: pending.from,
+            heroId: hero.id,
+          }
+          setDrag({
+            item: pending.item,
+            from: pending.from,
+            heroId: hero.id,
+          })
+          setGhost({ x: event.clientX, y: event.clientY })
+          pendingDragRef.current = null
+        }
+      }
       if (dragRef.current) {
         setGhost({ x: event.clientX, y: event.clientY })
       }
     }
     const onUp = (event: PointerEvent) => {
+      if (
+        pendingDragRef.current &&
+        pendingDragRef.current.pointerId === event.pointerId
+      ) {
+        pendingDragRef.current = null
+      }
       const current = dragRef.current
       if (!current) {
         return
@@ -262,68 +350,7 @@ export function HeroInventory({
         to = target.loc
       }
 
-      if (
-        target.heroId === current.heroId &&
-        locKey(to) === locKey(current.from)
-      ) {
-        clearDetail()
-        resetAllInventoryDetails()
-        return
-      }
-
-      const session = getSession()
-      let result:
-        | { session: GameSession; ok: true }
-        | { session: GameSession; ok: false; message: string }
-      if (target.heroId === current.heroId) {
-        result = moveHeroItem(
-          session,
-          catalog,
-          current.heroId,
-          current.from,
-          to,
-          inCombat,
-        )
-      } else if (
-        tradePeerHeroId &&
-        current.heroId === hero.id &&
-        target.heroId === tradePeerHeroId
-      ) {
-        result = moveTradeItem(
-          session,
-          catalog,
-          hero.id,
-          current.from,
-          tradePeerHeroId,
-          to,
-          inCombat,
-        )
-      } else if (
-        tradePeerHeroId &&
-        current.heroId === tradePeerHeroId &&
-        target.heroId === hero.id
-      ) {
-        result = moveTradeItem(
-          session,
-          catalog,
-          tradePeerHeroId,
-          current.from,
-          hero.id,
-          to,
-          inCombat,
-        )
-      } else {
-        result = { session, ok: false, message: 'Invalid trade target' }
-      }
-      if (!result.ok) {
-        setMessage(result.message)
-        clearDetail()
-        resetAllInventoryDetails()
-        return
-      }
-      updateSession(() => result.session)
-      clearDetail()
-      resetAllInventoryDetails()
+      applyMove(current, target, to)
     }
 
     window.addEventListener('pointermove', onMove)
@@ -332,9 +359,9 @@ export function HeroInventory({
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [catalog, hero.id, inCombat, tradePeerHeroId])
+  }, [applyMove, hero.id])
 
-  const beginDrag = (
+  const onItemPointerDown = (
     event: ReactPointerEvent,
     item: RolledItem,
     from: ItemLocation,
@@ -344,12 +371,13 @@ export function HeroInventory({
       return
     }
     event.preventDefault()
-    if (event.currentTarget instanceof HTMLElement) {
-      event.currentTarget.setPointerCapture(event.pointerId)
+    pendingDragRef.current = {
+      item,
+      from,
+      startX: event.clientX,
+      startY: event.clientY,
+      pointerId: event.pointerId,
     }
-    dragRef.current = { item, from, heroId: hero.id }
-    setDrag({ item, from, heroId: hero.id })
-    setGhost({ x: event.clientX, y: event.clientY })
     setFocusItem(item)
   }
 
@@ -362,26 +390,31 @@ export function HeroInventory({
     const isDragSource =
       drag != null && locKey(drag.from) === key
     const inner = item ? (
-      <ItemHoverTip catalog={catalog} item={item}>
-        <button
-          type="button"
-          className="hero-inventory-slot-btn"
-          style={{ backgroundColor: rolledItemRarityColor(catalog, item) }}
-          onPointerDown={(event) => beginDrag(event, item, loc)}
-          onMouseEnter={() => setFocusItem(item)}
-          onMouseLeave={() => {
-            if (!dragRef.current) {
-              setFocusItem(null)
-            }
-          }}
-        >
-          <ItemArt catalog={catalog} item={item} />
-        </button>
-      </ItemHoverTip>
+      <button
+        type="button"
+        className="hero-inventory-slot-btn"
+        style={{ backgroundColor: rolledItemRarityColor(catalog, item) }}
+        onPointerDown={(event) => onItemPointerDown(event, item, loc)}
+        onDoubleClick={(event) => {
+          event.preventDefault()
+          pendingDragRef.current = null
+          if (loc.kind === 'backpack') {
+            equipFromBackpack(item, loc)
+          }
+        }}
+        onMouseEnter={() => setFocusItem(item)}
+        onMouseLeave={() => {
+          if (!dragRef.current) {
+            setFocusItem(null)
+          }
+        }}
+      >
+        <ItemArt catalog={catalog} item={item} />
+      </button>
     ) : (
       <div className="hero-inventory-slot-empty">
         {emptyTip ? (
-          <AbilityTip description={emptyTip}>
+          <AbilityTip description={emptyTip} placement="portal-right">
             <span className="hero-inventory-empty-hit" aria-hidden="true" />
           </AbilityTip>
         ) : (
@@ -554,6 +587,8 @@ export function HeroInventory({
               style={{
                 left: ghost.x,
                 top: ghost.y,
+                width: ghostSizePx,
+                height: ghostSizePx,
                 backgroundColor: rolledItemRarityColor(catalog, drag.item),
               }}
             >

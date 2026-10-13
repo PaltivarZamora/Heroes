@@ -16,6 +16,7 @@ import {
   heroEffectiveStatsForHero,
   subscribeCatalog,
 } from './catalog'
+import { heroInventoryHeaderTitle, heroTitleWithClass } from './heroTitle'
 import { classDisciplines } from './libraryRules'
 import { HeroAbilitiesPanel } from './HeroAbilitiesPanel'
 import { HeroInventory } from './HeroInventory'
@@ -173,7 +174,12 @@ export function HeroScreen({
       </section>
       <section className="hero-screen-right" aria-label="Inventory">
         {catalog && hero ? (
-          <HeroInventory catalog={catalog} hero={hero} inCombat={false} />
+          <HeroInventory
+            catalog={catalog}
+            hero={hero}
+            inCombat={false}
+            headerTitle={heroInventoryHeaderTitle(catalog, hero)}
+          />
         ) : null}
       </section>
     </div>
@@ -203,11 +209,10 @@ export function HeroScreen({
         className="hero-screen-modal"
         aria-modal="true"
         aria-labelledby="hero-screen-title"
-        onBackdropClick={onClose}
         data-tip-contain
       >
         <h1 id="hero-screen-title" className="hero-screen-title">
-          {hero?.name ?? 'Hero'}
+          {catalog && hero ? heroTitleWithClass(catalog, hero) : 'Hero'}
         </h1>
         {body}
       </GameWindowModal>

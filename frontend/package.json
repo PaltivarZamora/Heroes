@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "check:no-stale-js": "node scripts/check-no-stale-js.mjs",
+    "dev": "node scripts/check-no-stale-js.mjs && vite",
+    "build": "node scripts/check-no-stale-js.mjs && tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
   },

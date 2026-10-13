@@ -5,3 +5,7 @@
 
 # Maven build output
 backend/target/
+
+# Accidental TypeScript emit into frontend/src (must stay .ts/.tsx only)
+frontend/src/**/*.js
+frontend/src/**/*.jsx

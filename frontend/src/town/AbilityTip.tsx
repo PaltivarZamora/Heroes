@@ -1,25 +1,41 @@
 import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  clampBoxInRect,
+  gameWindowTipInnerRect,
+  type ClientRect,
+} from '../layout/gameWindowTips'
 
 const PAD = 8
 const GAP = 6
 
-function placeTipBeside(anchor: HTMLElement, body: HTMLElement, side: 'right' | 'left') {
+function tipInnerBounds(anchor: HTMLElement): ClientRect | null {
+  const game = gameWindowTipInnerRect(anchor)
+  if (game) {
+    return game
+  }
   const contain = anchor.closest('[data-tip-contain]')
   if (!(contain instanceof HTMLElement)) {
+    return null
+  }
+  const box = contain.getBoundingClientRect()
+  return {
+    left: box.left + contain.clientLeft + PAD,
+    top: box.top + contain.clientTop + PAD,
+    right: box.left + contain.clientLeft + contain.clientWidth - PAD,
+    bottom: box.top + contain.clientTop + contain.clientHeight - PAD,
+  }
+}
+
+function placeTipBeside(anchor: HTMLElement, body: HTMLElement, side: 'right' | 'left') {
+  const inner = tipInnerBounds(anchor)
+  if (!inner) {
     return
   }
   body.style.left = '50%'
   body.style.top = 'auto'
   body.style.bottom = `calc(100% + ${GAP}px)`
   body.style.transform = 'translateX(-50%)'
-  const box = contain.getBoundingClientRect()
-  const inner = {
-    left: box.left + contain.clientLeft,
-    top: box.top + contain.clientTop,
-    right: box.left + contain.clientLeft + contain.clientWidth,
-    bottom: box.top + contain.clientTop + contain.clientHeight,
-  }
   const trigger = anchor.getBoundingClientRect()
   const size = body.getBoundingClientRect()
   if (size.width === 0 || size.height === 0) {
@@ -30,18 +46,9 @@ function placeTipBeside(anchor: HTMLElement, body: HTMLElement, side: 'right' | 
       ? trigger.right + GAP
       : trigger.left - GAP - size.width
   let top = trigger.top + trigger.height / 2 - size.height / 2
-  if (left + size.width > inner.right - PAD) {
-    left = inner.right - PAD - size.width
-  }
-  if (left < inner.left + PAD) {
-    left = inner.left + PAD
-  }
-  if (top < inner.top + PAD) {
-    top = inner.top + PAD
-  }
-  if (top + size.height > inner.bottom - PAD) {
-    top = inner.bottom - PAD - size.height
-  }
+  const clamped = clampBoxInRect(left, top, size.width, size.height, inner)
+  left = clamped.left
+  top = clamped.top
   const parent =
     (body.offsetParent instanceof HTMLElement
       ? body.offsetParent.getBoundingClientRect()
@@ -53,46 +60,27 @@ function placeTipBeside(anchor: HTMLElement, body: HTMLElement, side: 'right' | 
 }
 
 function placeTip(anchor: HTMLElement, body: HTMLElement) {
-  const contain = anchor.closest('[data-tip-contain]')
-  if (!(contain instanceof HTMLElement)) {
+  const inner = tipInnerBounds(anchor)
+  if (!inner) {
     return
   }
   body.style.left = '50%'
   body.style.top = 'auto'
   body.style.bottom = `calc(100% + ${GAP}px)`
   body.style.transform = 'translateX(-50%)'
-  const box = contain.getBoundingClientRect()
-  const inner = {
-    left: box.left + contain.clientLeft,
-    top: box.top + contain.clientTop,
-    right: box.left + contain.clientLeft + contain.clientWidth,
-    bottom: box.top + contain.clientTop + contain.clientHeight,
-  }
   const trigger = anchor.getBoundingClientRect()
   const size = body.getBoundingClientRect()
   if (size.width === 0 || size.height === 0) {
     return
   }
   let top = trigger.top - GAP - size.height
-  if (top < inner.top + PAD) {
+  if (top < inner.top) {
     top = trigger.bottom + GAP
   }
-  if (top + size.height > inner.bottom - PAD) {
-    top = inner.bottom - PAD - size.height
-  }
-  if (top < inner.top + PAD) {
-    top = inner.top + PAD
-  }
   let left = trigger.left + trigger.width / 2 - size.width / 2
-  if (left < inner.left + PAD) {
-    left = inner.left + PAD
-  }
-  if (left + size.width > inner.right - PAD) {
-    left = inner.right - PAD - size.width
-  }
-  if (left < inner.left + PAD) {
-    left = inner.left + PAD
-  }
+  const clamped = clampBoxInRect(left, top, size.width, size.height, inner)
+  left = clamped.left
+  top = clamped.top
   const parent =
     (body.offsetParent instanceof HTMLElement
       ? body.offsetParent.getBoundingClientRect()
@@ -112,6 +100,13 @@ function clearTip(body: HTMLElement) {
 }
 
 function placeTipPortal(anchor: HTMLElement, body: HTMLElement, side: 'right' | 'left') {
+  const inner =
+    gameWindowTipInnerRect(anchor) ?? {
+      left: PAD,
+      top: PAD,
+      right: window.innerWidth - PAD,
+      bottom: window.innerHeight - PAD,
+    }
   const trigger = anchor.getBoundingClientRect()
   body.style.display = 'block'
   body.style.position = 'fixed'
@@ -126,20 +121,9 @@ function placeTipPortal(anchor: HTMLElement, body: HTMLElement, side: 'right' | 
       ? trigger.right + GAP
       : trigger.left - GAP - size.width
   let top = trigger.top + trigger.height / 2 - size.height / 2
-  if (left + size.width > window.innerWidth - PAD) {
-    left = window.innerWidth - PAD - size.width
-  }
-  if (left < PAD) {
-    left = PAD
-  }
-  if (top + size.height > window.innerHeight - PAD) {
-    top = window.innerHeight - PAD - size.height
-  }
-  if (top < PAD) {
-    top = PAD
-  }
-  body.style.left = `${left}px`
-  body.style.top = `${top}px`
+  const clamped = clampBoxInRect(left, top, size.width, size.height, inner)
+  body.style.left = `${clamped.left}px`
+  body.style.top = `${clamped.top}px`
 }
 
 export function AbilityTip({
