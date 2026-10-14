@@ -211,7 +211,7 @@ export function HeroScreen({
         aria-labelledby="hero-screen-title"
         data-tip-contain
       >
-        <h1 id="hero-screen-title" className="hero-screen-title">
+        <h1 id="hero-screen-title" className="hero-inventory-header">
           {catalog && hero ? heroTitleWithClass(catalog, hero) : 'Hero'}
         </h1>
         {body}

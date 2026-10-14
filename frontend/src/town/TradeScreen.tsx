@@ -46,7 +46,7 @@ export function TradeScreen({
         aria-labelledby="trade-screen-title"
         onBackdropClick={onClose}
       >
-        <h1 id="trade-screen-title" className="trade-screen-title">
+        <h1 id="trade-screen-title" className="hero-inventory-header">
           Trade — {leftTitle} &amp; {rightTitle}
         </h1>
         <div className="trade-screen-body" data-tip-contain>

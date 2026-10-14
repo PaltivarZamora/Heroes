@@ -474,13 +474,10 @@
   max-height: none;
 }
 
-.hero-screen-title,
-.trade-screen-title {
-  margin: 0 0 8px;
-  font-size: 22px;
-  font-weight: 600;
-  color: #f4f4f4;
+.hero-screen-modal > .hero-inventory-header,
+.trade-screen-modal > .hero-inventory-header {
   flex: 0 0 auto;
+  width: 100%;
 }
 
 .hero-screen-body,
@@ -3510,12 +3507,16 @@ button.hero-ability-name:disabled {
 }
 
 .hero-inventory-header {
+  margin: 0;
   min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
   padding: 4px 8px;
+  font: 16px/1.35 system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+  color: #e8e8e8;
   font-variant-numeric: tabular-nums;
 }
 
