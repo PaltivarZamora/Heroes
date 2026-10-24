@@ -2,11 +2,8 @@ import type { Axial } from '../hex/hero'
 import { neighborHexes } from '../hex/pathfinding'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
-import {
-  heroTypeName,
-  unitAttackShape,
-  unitById,
-} from '../town/catalog'
+import { hasPassiveKey, PASSIVE_KEY } from '../town/heroPassiveKey'
+import { unitAttackShape, unitById } from '../town/catalog'
 import {
   missingPassiveStatKey,
   passiveStatNumber,
@@ -40,29 +37,6 @@ function nextShadowId(): string {
   return `shadow-${shadowSeq}`
 }
 
-export function isHeroClass(
-  catalog: ReferenceCatalog,
-  hero: Hero | null | undefined,
-  className: string,
-): boolean {
-  if (!hero) {
-    return false
-  }
-  return (
-    heroTypeName(catalog, hero.class_id).trim().toLowerCase() ===
-    className.trim().toLowerCase()
-  )
-}
-
-export function sideHasHeroClass(
-  catalog: ReferenceCatalog,
-  heroes: CombatHeroes | undefined,
-  side: CombatSide,
-  className: string,
-): boolean {
-  return isHeroClass(catalog, heroForSide(side, heroes ?? {}), className)
-}
-
 export function necromancerHeroesInBattle(
   catalog: ReferenceCatalog,
   heroes: CombatHeroes | undefined,
@@ -71,10 +45,10 @@ export function necromancerHeroesInBattle(
   if (!heroes) {
     return out
   }
-  if (heroes.atk && isHeroClass(catalog, heroes.atk, 'Necromancer')) {
+  if (heroes.atk && hasPassiveKey(catalog, heroes.atk, PASSIVE_KEY.NECROMANCER_SHADOW)) {
     out.push({ hero: heroes.atk, side: 'atk' })
   }
-  if (heroes.def && isHeroClass(catalog, heroes.def, 'Necromancer')) {
+  if (heroes.def && hasPassiveKey(catalog, heroes.def, PASSIVE_KEY.NECROMANCER_SHADOW)) {
     out.push({ hero: heroes.def, side: 'def' })
   }
   return out
@@ -410,7 +384,7 @@ export function necromancerShadowDamageBonusPct(
     return 0
   }
   const hero = heroForSide(striker.side, heroes ?? {})
-  if (!isHeroClass(catalog, hero, 'Necromancer') || !hero) {
+  if (!hasPassiveKey(catalog, hero, PASSIVE_KEY.NECROMANCER_SHADOW) || !hero) {
     return 0
   }
   const stats = requirePassiveStats(catalog, hero, 'Necromancer shadow dmg')
@@ -451,7 +425,7 @@ export function deathKnightShadowDamageBonusPct(
     return 0
   }
   const hero = heroForSide(striker.side, heroes ?? {})
-  if (!isHeroClass(catalog, hero, 'Death Knight') || !hero) {
+  if (!hasPassiveKey(catalog, hero, PASSIVE_KEY.DEATH_KNIGHT_SHADOW) || !hero) {
     return 0
   }
   const stats = requirePassiveStats(catalog, hero, 'Death Knight shadow dmg')
@@ -533,7 +507,7 @@ export function deathKnightShadowMoveAdjust(
     return undefined
   }
   const hero = heroForSide(moverSide, heroes)
-  if (!hero || !isHeroClass(catalog, hero, 'Death Knight')) {
+  if (!hero || !hasPassiveKey(catalog, hero, PASSIVE_KEY.DEATH_KNIGHT_SHADOW)) {
     return undefined
   }
   const stats = requirePassiveStats(catalog, hero, 'Death Knight shadow move')

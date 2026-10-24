@@ -1,5 +1,5 @@
-import { hexDistance } from '../hex/pathfinding'
 import type { Axial } from '../hex/hero'
+import { hexDistance } from '../hex/pathfinding'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
@@ -82,6 +82,11 @@ import {
   isWallSegmentUnit,
 } from './siege'
 import {
+  applySummonOnKillFromAttack,
+  unitHasSummonOnKill,
+} from './summonOnKill'
+import { tryApplyStatShredFromHit } from './statShred'
+import {
   applyHighPriestessHealOnKill,
   auraExtraQty,
 } from './templePassive'
@@ -90,7 +95,6 @@ import {
   monkReflectRetaliationChancePct,
 } from './citadelPassive'
 import {
-  fortressUnitGetsPassives,
   grantHeroEnergy,
   groveUnitGetsPassives,
   isDruidHero,
@@ -103,7 +107,8 @@ import {
   grantHeroMana,
   isSorcererHero,
   isWizardHero,
-  towerUnitGetsPassives,
+  grantSorcererMagicHitPool,
+  heroFactionUnitGetsPassives,
 } from './towerPassive'
 
 export type DmgKind = 'physical' | 'magic'
@@ -1889,7 +1894,7 @@ export function resolveAttack(
   }
   // S6-44 Tower passives: track offensive Magic damage only (never retaliation).
   let wizardMagicDealt = false
-  const sorcererMagicTaken = new Map<string, CombatSide>()
+  const sorcererMagicVictimSides = new Set<CombatSide>()
   let heroState: CombatHeroes = { atk: heroes?.atk, def: heroes?.def }
 
   const live = (id: string) => stacks.find((row) => row.id === id) ?? null
@@ -1929,10 +1934,11 @@ export function resolveAttack(
     }
     // Ranger: may suppress post-attack retaliation entirely.
     if (!preemptivePass) {
-      if (groveUnitGetsPassives(catalog, atk)) {
+      const rangerHero = heroForSide(atk.side, heroes)
+      if (groveUnitGetsPassives(catalog, rangerHero, atk)) {
         const chance = rangerSuppressChancePct(
           catalog,
-          heroForSide(atk.side, heroes),
+          rangerHero,
           { ...battle, stacks },
           atk.side,
         )
@@ -2259,14 +2265,14 @@ export function resolveAttack(
         retaliationsLeft: spendRetaliationCharge(def.retaliationsLeft),
       }
       const applyRetaliationSideEffects = () => {
-        // Rogue: Energy when a Fortress unit's attack is retaliated against.
-        if (
-          atk &&
-          fortressUnitGetsPassives(catalog, atk) &&
-          isRogueHero(catalog, heroForSide(atk.side, heroState))
-        ) {
+        // Rogue: Energy when a faction unit's attack is retaliated against.
+        if (atk) {
           const rogue = heroForSide(atk.side, heroState)
-          if (rogue) {
+          if (
+            rogue &&
+            isRogueHero(catalog, rogue) &&
+            heroFactionUnitGetsPassives(catalog, rogue, atk)
+          ) {
             const amount = rogueEnergyPerTrigger(catalog, rogue)
             const gained = grantHeroEnergy(catalog, rogue, amount)
             if (gained.current_energy > rogue.current_energy) {
@@ -2419,10 +2425,18 @@ export function resolveAttack(
 
   tryRetaliate(true)
 
+  const offensiveKillHexes: Axial[] = []
+
   const fireOffensive = (
     dmgPctForHit: (hitPct: number | 'max') => number | 'max',
     waveMods?: StrikeMods & { qtyOverride?: number },
   ): { pool: number; kills: number } => {
+    const recordKillHex = (stack: CombatStack | null | undefined) => {
+      if (!stack) {
+        return
+      }
+      offensiveKillHexes.push({ q: stack.q, r: stack.r })
+    }
     if (!atk || atk.qty <= 0) {
       return { pool: 0, kills: 0 }
     }
@@ -2530,8 +2544,9 @@ export function resolveAttack(
           waveMods?.damageKind ?? damageKindOf(unitById(catalog, atk.unitId))
         if (waveKind === 'magic') {
           wizardMagicDealt = true
-          if (towerUnitGetsPassives(catalog, hitVictim)) {
-            sorcererMagicTaken.set(hitVictim.id, hitVictim.side)
+          const victimHero = heroForSide(hitVictim.side, heroes)
+          if (heroFactionUnitGetsPassives(catalog, victimHero, hitVictim)) {
+            sorcererMagicVictimSides.add(hitVictim.side)
           }
         }
       }
@@ -2539,11 +2554,37 @@ export function resolveAttack(
       noteKill(deathUnitId, struck.killed)
       pool += struck.damage
       kills += struck.killed
+      if (struck.killed > 0) {
+        recordKillHex(pulseVictim)
+      }
       stacks = writeStack(
         stacks,
         struck.spellRedirected && struck.stack ? struck.stack.id : def.id,
         struck.stack,
       )
+      if (
+        struck.damage > 0 &&
+        !struck.missed &&
+        !struck.parried &&
+        spec.statShred &&
+        atk
+      ) {
+        const victimId =
+          struck.spellRedirected && struck.stack ? struck.stack.id : def.id
+        const victimStack = live(victimId)
+        if (victimStack) {
+          const shredded = tryApplyStatShredFromHit(
+            catalog,
+            atk,
+            victimStack,
+            spec.statShred,
+            heroForSide(atk.side, heroes),
+            random,
+          )
+          stacks = writeStack(stacks, victimId, shredded.stack)
+          lines.push(...shredded.lines)
+        }
+      }
       // Bouncy Bomb: deaths on THIS stack pulse min_dmg × deaths at enemies.
       if (struck.killed > 0) {
         const boom = applyKillChainDeathPulse(
@@ -2858,6 +2899,23 @@ export function resolveAttack(
         healKeys.push(...healed.healKeys)
       }
     }
+    if (offensiveKills > 0 && unitHasSummonOnKill(spec)) {
+      atk = live(attackerId)
+      if (atk && atk.qty > 0) {
+        const raised = applySummonOnKillFromAttack(
+          { ...battle, stacks, unitDeaths, roundUnitDeaths },
+          catalog,
+          tiles,
+          atk,
+          spec,
+          offensiveKills,
+          offensiveKillHexes,
+          heroState,
+        )
+        stacks = raised.battle.stacks
+        lines.push(...raised.lines)
+      }
+    }
     atk = live(attackerId)
     if (atk && atk.qty > 0) {
       atk = applyVampiricFromDamage(atk, offensivePool)
@@ -2963,7 +3021,11 @@ export function resolveAttack(
     const attackerSide = before.side
     if (
       wizardMagicDealt &&
-      towerUnitGetsPassives(catalog, before) &&
+      heroFactionUnitGetsPassives(
+        catalog,
+        heroForSide(attackerSide, heroState),
+        before,
+      ) &&
       isWizardHero(catalog, heroForSide(attackerSide, heroState))
     ) {
       const wizard = heroForSide(attackerSide, heroState)
@@ -2982,7 +3044,11 @@ export function resolveAttack(
       }
     }
     if (
-      groveUnitGetsPassives(catalog, before) &&
+      groveUnitGetsPassives(
+        catalog,
+        heroForSide(attackerSide, heroState),
+        before,
+      ) &&
       isDruidHero(catalog, heroForSide(attackerSide, heroState))
     ) {
       const druid = heroForSide(attackerSide, heroState)
@@ -3000,7 +3066,7 @@ export function resolveAttack(
         }
       }
     }
-    for (const [, side] of sorcererMagicTaken) {
+    for (const side of sorcererMagicVictimSides) {
       if (!isSorcererHero(catalog, heroForSide(side, heroState))) {
         continue
       }
@@ -3008,16 +3074,13 @@ export function resolveAttack(
       if (!sorcerer) {
         continue
       }
-      const amount = passiveManaPerAttack(catalog, sorcerer, 'Sorcerer mana')
-      const gained = grantHeroMana(catalog, sorcerer, amount)
-      if (gained.current_mana > sorcerer.current_mana) {
+      const gained = grantSorcererMagicHitPool(catalog, sorcerer)
+      if (gained) {
         heroState =
           side === 'atk'
-            ? { ...heroState, atk: gained }
-            : { ...heroState, def: gained }
-        lines.push(
-          `Sorcerer: +${amount} Mana (${gained.current_mana}/${poolMax(catalog, gained, 2)}).`,
-        )
+            ? { ...heroState, atk: gained.hero }
+            : { ...heroState, def: gained.hero }
+        lines.push(gained.label)
       }
     }
   }

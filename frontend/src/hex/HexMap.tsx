@@ -106,7 +106,7 @@ import {
   mobUnitQty,
 } from '../session/mobs'
 import { HERO_ID, type Mob } from '../session/types'
-import { featureRenderScale, fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, unitById, visionRange } from '../town/catalog'
+import { featureRenderScale, fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, isHeroTypeOffered, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, unitById, visionRange } from '../town/catalog'
 import { unitPortraitUrl } from '../town/slotArt'
 import {
   activePlayer,
@@ -790,7 +790,15 @@ export function HexMap({
             return 0
           }
           const type = catalog?.hero_type.find((row) => row.id === heroTypeId)
-          return type != null && type.town_id > 0 ? type.town_id : 0
+          if (
+            type == null ||
+            type.town_id <= 0 ||
+            !catalog ||
+            !isHeroTypeOffered(catalog, heroTypeId)
+          ) {
+            return 0
+          }
+          return type.town_id
         })
         const townTypesParam =
           townTypeIds.length > 0 && townTypeIds.some((id) => id > 0)

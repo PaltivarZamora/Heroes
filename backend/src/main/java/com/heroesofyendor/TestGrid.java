@@ -462,7 +462,10 @@ final class TestGrid {
         if (playerTownTypes != null
                 && playerIndex < playerTownTypes.length
                 && playerTownTypes[playerIndex] > 0) {
-            return playerTownTypes[playerIndex];
+            int picked = playerTownTypes[playerIndex];
+            if (isPlayableTownType(data, picked)) {
+                return picked;
+            }
         }
         List<Integer> all = allTownTypeIds(data);
         if (all.isEmpty()) {
@@ -481,12 +484,28 @@ final class TestGrid {
     static List<Integer> allTownTypeIds(ReferenceData data) {
         List<Integer> ids = new ArrayList<>();
         for (Map<String, Object> row : data.rows("town")) {
+            if (!TownEnablement.isEnabled(row)) {
+                continue;
+            }
             Integer id = intId(row, "id");
             if (id != null && id > 0) {
                 ids.add(id);
             }
         }
         return ids;
+    }
+
+    static boolean isPlayableTownType(ReferenceData data, int townTypeId) {
+        if (townTypeId <= 0) {
+            return false;
+        }
+        for (Map<String, Object> row : data.rows("town")) {
+            Integer id = intId(row, "id");
+            if (id != null && id == townTypeId) {
+                return TownEnablement.isEnabled(row);
+            }
+        }
+        return false;
     }
 
     static List<Integer> townTypesExcluding(
@@ -2167,7 +2186,10 @@ final class TestGrid {
         for (Map<String, Object> row : data.rows("hero_type")) {
             Integer townId = intId(row, "town_id");
             Integer id = intId(row, "id");
-            if (id != null && townId != null && townTypeIds.contains(townId)) {
+            if (id != null
+                    && townId != null
+                    && townTypeIds.contains(townId)
+                    && isPlayableTownType(data, townId)) {
                 classIds.add(id);
             }
         }
@@ -2763,8 +2785,7 @@ final class TestGrid {
         }
 
         static TownNameSession from(ReferenceData data, Random rng) {
-            List<Map<String, Object>> towns = data.rows("town");
-            int startTownId = resolveStartTownTypeId(towns);
+            int startTownId = resolveStartTownTypeId(data);
             TownNameSession session = new TownNameSession(startTownId);
             for (Map<String, Object> row : data.rows("town_name_pool")) {
                 Object idObj = row.get("town_id");
@@ -2773,6 +2794,9 @@ final class TestGrid {
                     continue;
                 }
                 int townId = ((Number) idObj).intValue();
+                if (!isPlayableTownType(data, townId)) {
+                    continue;
+                }
                 session
                         .remaining
                         .computeIfAbsent(townId, key -> new ArrayList<>())
@@ -2844,14 +2868,22 @@ final class TestGrid {
             return names != null && !names.isEmpty();
         }
 
-        private static int resolveStartTownTypeId(List<Map<String, Object>> towns) {
-            for (Map<String, Object> row : towns) {
+        private static int resolveStartTownTypeId(ReferenceData data) {
+            for (Map<String, Object> row : data.rows("town")) {
                 if (row.get("id") instanceof Number id && id.intValue() == START_TOWN_TYPE_ID) {
-                    return START_TOWN_TYPE_ID;
+                    if (TownEnablement.isEnabled(row)) {
+                        return START_TOWN_TYPE_ID;
+                    }
+                    break;
                 }
             }
-            if (!towns.isEmpty() && towns.get(0).get("id") instanceof Number id) {
-                return id.intValue();
+            for (Map<String, Object> row : data.rows("town")) {
+                if (!TownEnablement.isEnabled(row)) {
+                    continue;
+                }
+                if (row.get("id") instanceof Number id && id.intValue() > 0) {
+                    return id.intValue();
+                }
             }
             return START_TOWN_TYPE_ID;
         }

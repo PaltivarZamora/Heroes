@@ -29,12 +29,10 @@ export type CombatSide = 'atk' | 'def'
 /** Tag id → creature qty per side, frozen when the battle opens. */
 export type ArmyTagCounts = Record<number, Partial<Record<CombatSide, number>>>
 
-/** Town-scoped counts for S6-46 army passives, frozen at battle start. */
-export type ArmyTownCounts = Partial<
-  Record<
-    'grove' | 'fortress' | 'confluence' | 'factory_nonliving' | 'temple',
-    Partial<Record<CombatSide, number>>
-  >
+/** Faction town id → stack counts per side, frozen at battle start. */
+export type ArmyTownCounts = Record<
+  number,
+  Partial<Record<CombatSide, number>>
 >
 
 export type CombatTile = {
@@ -232,6 +230,11 @@ export type CombatStack = {
   lastStand?: { minQty: number; lastUnitHp: number }
   /** Flat deltas on live combat stats (Mutation). Current HP is never stored here. */
   statFlat?: CombatStatFlat
+  /**
+   * Permanent battle-long shred (Ghoul etc.): replaces catalog base for each
+   * field before temporary buffs (Rend, Guard, …).
+   */
+  statShred?: CombatStatShred
   /** Time Warp: extra turn after this stack's normal turn this round. */
   extraTurnThisRound?: boolean
   /** Unstable Rift: no longer fires, still occupies and blocks LOS. */
@@ -266,6 +269,15 @@ export type CombatStatFlat = {
   maxDmg: number
   maxRange: number
   health: number
+}
+
+/** Permanent shredded catalog bases (before temporary combat modifiers). */
+export type CombatStatShred = {
+  speed?: number
+  defense?: number
+  resistance?: number
+  minDmg?: number
+  maxDmg?: number
 }
 
 export function emptyStatFlat(): CombatStatFlat {
@@ -441,7 +453,11 @@ export function stackDefense(
   if (stack.defenseSet != null) {
     return Math.max(0, stack.defenseSet)
   }
-  const base = unitById(catalog, stack.unitId)?.defense ?? 0
+  const unit = unitById(catalog, stack.unitId)
+  const base =
+    stack.statShred?.defense != null
+      ? stack.statShred.defense
+      : (unit?.defense ?? 0)
   const flat = base + (stack.statFlat?.defense ?? 0)
   const bonus = stack.defenseBonus?.amount ?? 0
   const withBonus = flat + bonus
@@ -470,7 +486,11 @@ export function stackResistance(
   if (stack.resistanceSet != null) {
     return Math.max(0, stack.resistanceSet)
   }
-  const base = unitById(catalog, stack.unitId)?.resistance ?? 0
+  const unit = unitById(catalog, stack.unitId)
+  const base =
+    stack.statShred?.resistance != null
+      ? stack.statShred.resistance
+      : (unit?.resistance ?? 0)
   const flat = Math.max(
     0,
     base +
@@ -490,7 +510,11 @@ export function stackMinDmg(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
-  const base = unitById(catalog, stack.unitId)?.min_dmg ?? 0
+  const unit = unitById(catalog, stack.unitId)
+  const base =
+    stack.statShred?.minDmg != null
+      ? stack.statShred.minDmg
+      : (unit?.min_dmg ?? 0)
   const mult = stack.minDmgMult
   const scaled =
     mult != null && Number.isFinite(mult) && mult > 0
@@ -503,7 +527,11 @@ export function stackMaxDmg(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
-  const base = unitById(catalog, stack.unitId)?.max_dmg ?? 0
+  const unit = unitById(catalog, stack.unitId)
+  const base =
+    stack.statShred?.maxDmg != null
+      ? stack.statShred.maxDmg
+      : (unit?.max_dmg ?? 0)
   const mult = stack.maxDmgMult
   const scaled =
     mult != null && Number.isFinite(mult) && mult > 0
@@ -859,10 +887,13 @@ export function stackCombatSpeed(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number | null {
-  const base = unitById(catalog, stack.unitId)?.speed
-  if (base == null) {
+  const unit = unitById(catalog, stack.unitId)
+  const catalogSpeed = unit?.speed
+  if (catalogSpeed == null && stack.statShred?.speed == null) {
     return null
   }
+  const base =
+    stack.statShred?.speed != null ? stack.statShred.speed : catalogSpeed!
   if (stack.speedLock != null) {
     return Math.max(0, stack.speedLock.value)
   }

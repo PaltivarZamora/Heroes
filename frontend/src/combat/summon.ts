@@ -58,7 +58,7 @@ import {
   pickMostInjuredDamagedCreature,
   frontDeficit,
 } from './templePassive'
-import { isHeroClass } from './shadow'
+import { hasPassiveKey, PASSIVE_KEY } from '../town/heroPassiveKey'
 import { combatCanLandOn, combatEnterCost, moveKindForUnit, stackOccupyingHex } from './movement'
 import {
   footprintFits,
@@ -600,7 +600,7 @@ export function placeBlockerAtHex(
   )
 }
 
-function spawnSummonedStack(
+export function spawnSummonedStack(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
@@ -612,6 +612,7 @@ function spawnSummonedStack(
   hex: Axial | null = null,
   extras: Partial<CombatStack> = {},
   insertIntoRemaining = false,
+  options?: { omitDefaultLog?: boolean },
 ): SummonResolve {
   const at =
     hex ?? nearestOpenHexToHero(battle, catalog, tiles, casterSide, chosenUnit)
@@ -655,9 +656,13 @@ function spawnSummonedStack(
   if (insertIntoRemaining && unitTakesTurns(chosenUnit)) {
     next = insertIntoRemainingInitiative(next, catalog, id)
   }
+  const lines =
+    options?.omitDefaultLog === true
+      ? []
+      : [`${ability.name}: ${qty} ${chosenUnit.name} appear.`]
   return {
     battle: next,
-    lines: [`${ability.name}: ${qty} ${chosenUnit.name} appear.`],
+    lines,
     flashes: [{ keys: [occupancyKey(at.q, at.r)], color: 'green' }],
   }
 }
@@ -1291,7 +1296,7 @@ export function applyShamanBattleStartTotems(
 
   for (const side of sides) {
     const hero = heroes[side]
-    if (!hero || !isHeroClass(catalog, hero, 'Shaman')) {
+    if (!hero || !hasPassiveKey(catalog, hero, PASSIVE_KEY.SHAMAN_TOTEMS)) {
       continue
     }
     const want = shamanTotemCount(catalog, hero)
@@ -1391,7 +1396,7 @@ export function applyShamanEndOfRoundNatureHeals(
   const healKeys: string[] = []
   for (const side of ['atk', 'def'] as const) {
     const hero = heroForSide(side, heroes)
-    if (!hero || !isHeroClass(catalog, hero, 'Shaman')) {
+    if (!hero || !hasPassiveKey(catalog, hero, PASSIVE_KEY.SHAMAN_TOTEMS)) {
       continue
     }
     const stats = requirePassiveStats(catalog, hero, 'Shaman Nature totems')

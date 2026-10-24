@@ -5,7 +5,7 @@ import { HERO_MARKER_LABEL } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { forEachPassableHex, forEachTile, getTile, isPassable } from '../hex/world'
 import { mobAggroRange } from '../hex/mobAggro'
-import { getBaselineCatalog, getCachedCatalog, heroMovementPoints, heroResourcePools, sizeDim, startingStockpileFor, visionRange } from '../town/catalog'
+import { getBaselineCatalog, getCachedCatalog, heroMovementPoints, heroResourcePools, isHeroTypeOffered, sizeDim, startingStockpileFor, visionRange } from '../town/catalog'
 import type { ReferenceCatalog } from '../town/catalog'
 import {
   defaultGameConfig,
@@ -581,9 +581,14 @@ function spawnPlayerHero(
   let imagePath: string | null = null
   let heroArchId: number | null = null
   if (catalog) {
-    const types = catalog.hero_type
+    const types = catalog.hero_type.filter((row) =>
+      isHeroTypeOffered(catalog, row.id),
+    )
     if (classId == null && types.length > 0) {
       classId = types[Math.floor(Math.random() * types.length)]?.id ?? null
+    }
+    if (classId != null && !isHeroTypeOffered(catalog, classId)) {
+      classId = null
     }
     const type = types.find((row) => row.id === classId)
     const pool = catalog.hero_pool.filter(

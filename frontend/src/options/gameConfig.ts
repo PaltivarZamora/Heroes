@@ -9,6 +9,7 @@ import { DEFAULT_AI_ARCH_ID } from '../ai/types'
 import {
   defaultSizeName,
   mapCfgNumber,
+  isHeroTypeOffered,
   newHeroTypeId,
   playersMax,
   playersMin,
@@ -147,7 +148,11 @@ function heroTypeDefault(
   catalog: ReferenceCatalog | null | undefined,
   slotIndex: number,
 ): number | null {
-  return newHeroTypeId(catalog, slotIndex + 1)
+  const id = newHeroTypeId(catalog, slotIndex + 1)
+  if (id == null || !catalog) {
+    return null
+  }
+  return isHeroTypeOffered(catalog, id) ? id : null
 }
 
 export function defaultPlayerSlots(

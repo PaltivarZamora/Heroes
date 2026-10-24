@@ -328,12 +328,28 @@ export type UnitCombatAbilities = {
   selfRezCapPct: number | null
   /** Phoenix: multiply chance by Phoenix deaths this round (incl. wipe). */
   selfRezBasedOnKillsThisRound: boolean
+  /** Ghoul-style permanent stat shred on hit (see `stat_shred` JSON). */
+  statShred: UnitStatShredConfig | null
+  /** Summon this unit id after offensive kills (see summonOnKillStat/Div). */
+  summonOnKillUnitId: number | null
+  /** `stat.id` on the commanding hero for qty (e.g. 2 = STR). */
+  summonOnKillStat: number | null
+  /** Qty per kill: max(1, floor(heroStat / div)) × kills this attack. */
+  summonOnKillStatDiv: number | null
 }
 
 export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
   dmgPct: 'default',
   times: 1,
   preemptive: false,
+}
+
+export type StatShredTarget = 'speed' | 'defense' | 'resistance' | 'dmg'
+
+export type UnitStatShredConfig = {
+  targetStat: StatShredTarget
+  heroStatId: number
+  mult: number
 }
 
 export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
@@ -411,6 +427,10 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   selfRezChanceStatDiv: null,
   selfRezCapPct: null,
   selfRezBasedOnKillsThisRound: false,
+  statShred: null,
+  summonOnKillUnitId: null,
+  summonOnKillStat: null,
+  summonOnKillStatDiv: null,
 }
 
 export type MoveTypeRow = {
@@ -725,6 +745,8 @@ export type TownRow = {
   id: number
   name: string
   map: TownGroundPlan | null
+  /** When false, town is reference-only (not placed or offered in new games). */
+  enabled: boolean
 }
 
 /** `town_layout.hexes`: footprint (`blocked`) and visit hex (`door`). */
@@ -990,13 +1012,49 @@ function asTownRows(rows: unknown): TownRow[] {
     if (id <= 0) {
       continue
     }
+    const enabledRaw = raw.enabled
+    const enabled =
+      enabledRaw === false ||
+      enabledRaw === 0 ||
+      enabledRaw === 'false' ||
+      enabledRaw === 'f'
+        ? false
+        : true
     towns.push({
       id,
       name,
       map: asTownGroundPlan(raw.map),
+      enabled,
     })
   }
   return towns
+}
+
+export function isTownEnabled(
+  catalog: ReferenceCatalog,
+  townTypeId: number,
+): boolean {
+  const row = catalog.town.find((entry) => entry.id === townTypeId)
+  if (!row) {
+    return false
+  }
+  return row.enabled
+}
+
+export function enabledTownRows(catalog: ReferenceCatalog): TownRow[] {
+  return catalog.town.filter((row) => row.enabled)
+}
+
+/** Hero classes offered in taverns / new game (faction town must be enabled). */
+export function isHeroTypeOffered(
+  catalog: ReferenceCatalog,
+  classId: number,
+): boolean {
+  const row = catalog.hero_type.find((entry) => entry.id === classId)
+  if (!row) {
+    return false
+  }
+  return isTownEnabled(catalog, row.town_id)
 }
 
 function asTownLayoutHexes(value: unknown): TownLayoutHexes {
@@ -1900,20 +1958,7 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
         // 1%-rez-only payload. DB values override defaults when present.
         // Knight / Monk / Shaman: no loader pin — passive_stats is DB-only.
         passive_stats:
-          lower === 'cleric'
-            ? {
-                heal_stat_source: 'INT',
-                heal_town_filter: 'Temple',
-                heal_timing: 'end_of_round',
-                heal_target_rule: 'most_hurt_first',
-                rez_chance_pct: 1,
-                rez_town_filter: 'Temple',
-                rez_condition: 'casualties_gt_0',
-                rez_selection: 'random',
-                rez_scope: 'full_stack',
-                ...(asJsonObject(rec.passive_stats) ?? {}),
-              }
-            : lower === 'death knight'
+          lower === 'death knight'
               ? {
                   // Move reduction (existing) + S7-1 addendum Physical dmg on Shadow.
                   stat_source: 'STR',
@@ -3883,6 +3928,52 @@ function abilitiesConfigPresent(value: unknown): boolean {
   return Object.keys(rec).length > 0
 }
 
+const warnedStatShredTarget = new Set<string>()
+
+function parseStatShredTarget(raw: unknown): StatShredTarget | null {
+  if (typeof raw === 'string') {
+    const text = raw.trim().toLowerCase()
+    if (text === 'dmg' || text === 'damage') {
+      return 'dmg'
+    }
+  }
+  const id = Number(raw)
+  if (id === 1) {
+    return 'speed'
+  }
+  if (id === 4) {
+    return 'defense'
+  }
+  if (id === 5) {
+    return 'resistance'
+  }
+  const key = String(raw ?? '')
+  if (!warnedStatShredTarget.has(key)) {
+    warnedStatShredTarget.add(key)
+    console.warn(
+      `[stat_shred] unknown target_stat ${JSON.stringify(raw)} (use 1 Speed, 4 Defense, 5 Resistance, or "dmg"); ignored`,
+    )
+  }
+  return null
+}
+
+function asUnitStatShred(value: unknown): UnitStatShredConfig | null {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return null
+  }
+  const targetStat = parseStatShredTarget(rec.target_stat)
+  if (!targetStat) {
+    return null
+  }
+  const heroStatId = asOptionalId(rec.hero_stat)
+  const mult = Number(rec.mult)
+  if (heroStatId == null || !Number.isFinite(mult) || mult <= 0) {
+    return null
+  }
+  return { targetStat, heroStatId, mult }
+}
+
 function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
   const rec = asJsonObject(value)
   const shapeRaw =
@@ -4061,6 +4152,13 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     })(),
     selfRezBasedOnKillsThisRound:
       rec?.self_rez_based_on_kills_this_round === true,
+    statShred: asUnitStatShred(rec?.stat_shred),
+    summonOnKillUnitId: asOptionalId(rec?.summon_on_kill_unit_id),
+    summonOnKillStat: asOptionalId(rec?.summon_on_kill_stat),
+    summonOnKillStatDiv: (() => {
+      const n = Number(rec?.summon_on_kill_stat_div)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
   }
 }
 
@@ -5060,8 +5158,14 @@ export function tavernClassIds(
   catalog: ReferenceCatalog,
   townTypeId: number,
 ): number[] {
+  if (!isTownEnabled(catalog, townTypeId)) {
+    return []
+  }
   return catalog.hero_type
-    .filter((row) => row.town_id === townTypeId)
+    .filter(
+      (row) =>
+        row.town_id === townTypeId && isHeroTypeOffered(catalog, row.id),
+    )
     .map((row) => row.id)
 }
 

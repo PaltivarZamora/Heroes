@@ -411,3 +411,26 @@ export function combatEncounterSeed(
     0
   )
 }
+
+function mulberry32(seed: number): () => number {
+  let t = seed >>> 0
+  return () => {
+    t += 0x6d2b79f5
+    let r = Math.imul(t ^ (t >>> 15), 1 | t)
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r)
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** Deterministic RNG for a map encounter (terrain, post-battle procs, …). */
+export function combatEncounterRandom(
+  mapSeed: number,
+  attacker: Axial,
+  defender: Axial,
+  salt = 0,
+): () => number {
+  return mulberry32((combatEncounterSeed(mapSeed, attacker, defender) ^ salt) >>> 0)
+}
+
+/** Salt for Warlock / Heretic demon reinforcement unit pick. */
+export const DEMON_REINFORCEMENT_RNG_SALT = 0xdee031

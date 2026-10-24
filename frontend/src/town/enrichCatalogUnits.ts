@@ -1,5 +1,6 @@
 import {
   DEFAULT_UNIT_ABILITIES,
+  unitById,
   type ReferenceCatalog,
   type UnitCombatAbilities,
   type UnitRetaliation,
@@ -320,6 +321,22 @@ function enrichBlocksLos(
   return unitHasNamedTag(catalog, unit, 'terrain_los_blocker')
 }
 
+const warnedSummonOnKillUnit = new Set<string>()
+
+function warnSummonOnKillUnit(
+  ownerUnitId: number,
+  summonUnitId: number,
+): void {
+  const key = `${ownerUnitId}:${summonUnitId}`
+  if (warnedSummonOnKillUnit.has(key)) {
+    return
+  }
+  warnedSummonOnKillUnit.add(key)
+  console.warn(
+    `[summon_on_kill] unit.id=${ownerUnitId} references missing summon_on_kill_unit_id=${summonUnitId}`,
+  )
+}
+
 export function enrichCatalogUnits(catalog: ReferenceCatalog): void {
   catalog.unit = catalog.unit.map((unit) => {
     const retaliation = enrichRetaliation(catalog, unit, unit.retaliation)
@@ -346,4 +363,10 @@ export function enrichCatalogUnits(catalog: ReferenceCatalog): void {
       image_path_alt,
     }
   })
+  for (const unit of catalog.unit) {
+    const summonId = unit.abilities.summonOnKillUnitId
+    if (summonId != null && summonId > 0 && !unitById(catalog, summonId)) {
+      warnSummonOnKillUnit(unit.id, summonId)
+    }
+  }
 }

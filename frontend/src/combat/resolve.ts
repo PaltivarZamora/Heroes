@@ -19,6 +19,10 @@ import type { ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
 import { defenderArmyIsGarrison, isHeroStack } from './battle'
+import {
+  combatEncounterRandom,
+  DEMON_REINFORCEMENT_RNG_SALT,
+} from './battlefield'
 import { applyDemonReinforcement } from './demonReinforcement'
 import { applyClericEndOfBattlePassive } from './templePassive'
 import { isCreatureArmyUnit } from './siege'
@@ -378,6 +382,37 @@ function persistSummonedStacks(
   return { session: next, gains }
 }
 
+function demonReinforcementRandom(
+  session: GameSession,
+  attackerHeroId: string,
+  defenderHeroId: string | null,
+  defenderMobId?: string | null,
+  siegeTownId?: string | null,
+): () => number {
+  const atk = session.heroes.find((hero) => hero.id === attackerHeroId)?.position
+  if (!atk) {
+    return Math.random
+  }
+  let def: { q: number; r: number } | null = null
+  if (defenderHeroId) {
+    def =
+      session.heroes.find((hero) => hero.id === defenderHeroId)?.position ?? null
+  } else if (defenderMobId) {
+    def = session.mobs.find((mob) => mob.id === defenderMobId)?.position ?? null
+  } else if (siegeTownId) {
+    def = session.towns.find((town) => town.id === siegeTownId)?.position ?? null
+  }
+  if (!def) {
+    return Math.random
+  }
+  return combatEncounterRandom(
+    session.game.seed,
+    atk,
+    def,
+    DEMON_REINFORCEMENT_RNG_SALT,
+  )
+}
+
 function reselectHero(session: GameSession): void {
   const selected = getSelectedMapHeroId()
   if (selected && session.heroes.some((hero) => hero.id === selected)) {
@@ -499,6 +534,13 @@ export function applyCombatOutcome(
       battleResolved,
       opening,
       loserSide,
+      demonReinforcementRandom(
+        next,
+        attackerHeroId,
+        defenderHeroId,
+        defenderMobId,
+        siegeTownId,
+      ),
     )
     next = demons.session
     if (demons.gains.length > 0) {

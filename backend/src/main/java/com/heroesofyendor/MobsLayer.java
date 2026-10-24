@@ -33,6 +33,9 @@ final class MobsLayer {
                                         MapConfig.cfgDouble(
                                                 ctx.data, "mob_advanced_pct", ctx.sizeName(), 10))));
         int townType = Math.max(0, MapConfig.cfgInt(ctx.data, "mob_town_type", ctx.sizeName(), 0));
+        if (townType > 0 && !TestGrid.isPlayableTownType(ctx.data, townType)) {
+            townType = 0;
+        }
         double gapPct = MapConfig.cfgDouble(ctx.data, "gap_mob_pct", ctx.sizeName(), 50) / 100.0;
         double roadPct = MapConfig.cfgDouble(ctx.data, "road_mob_pct", ctx.sizeName(), 20) / 100.0;
         int total = MapConfig.scaledCfgInt(ctx.data, "mobs", ctx.sizeName(), 100);
@@ -574,10 +577,15 @@ final class MobsLayer {
     private static final class Catalog {
         final List<Unit> units;
         final Map<Integer, List<Integer>> chestTiersByLevel;
+        final Set<Integer> enabledTownIds;
 
-        Catalog(List<Unit> units, Map<Integer, List<Integer>> chestTiersByLevel) {
+        Catalog(
+                List<Unit> units,
+                Map<Integer, List<Integer>> chestTiersByLevel,
+                Set<Integer> enabledTownIds) {
             this.units = units;
             this.chestTiersByLevel = chestTiersByLevel;
+            this.enabledTownIds = enabledTownIds;
         }
 
         static Catalog load(ReferenceData data) {
@@ -622,7 +630,8 @@ final class MobsLayer {
                 units.add(new Unit(id, townId, rawTown, tier, rawClass, level, growth));
             }
             units.sort(Comparator.comparingInt(u -> u.id));
-            return new Catalog(units, loadChestTiers(data));
+            Set<Integer> enabledTownIds = new HashSet<>(TownEnablement.enabledTownTypeIds(data));
+            return new Catalog(units, loadChestTiers(data), enabledTownIds);
         }
 
         List<Integer> chestTiers(int level) {
@@ -638,6 +647,9 @@ final class MobsLayer {
                     continue;
                 }
                 if (!allowed.contains(unit.tier)) {
+                    continue;
+                }
+                if (unit.townId > 0 && !enabledTownIds.contains(unit.townId)) {
                     continue;
                 }
                 if (townType > 0 && unit.townId != townType) {

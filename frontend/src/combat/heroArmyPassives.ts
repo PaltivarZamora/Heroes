@@ -15,6 +15,7 @@ import {
   passiveStatString,
   requirePassiveStats,
 } from '../town/heroPassiveStats'
+import { hasPassiveKey, PASSIVE_KEY } from '../town/heroPassiveKey'
 import type {
   ArmyTownCounts,
   CombatBattle,
@@ -23,29 +24,15 @@ import type {
   CombatStack,
 } from './battle'
 import { emptyStatFlat, isHeroStack } from './battle'
+import {
+  isUnitOfHeroFaction,
+  isUnitOfTownId,
+  passiveTownIdFromFilter,
+} from './heroFactionUnits'
 import { poolMax } from './heroCast'
-import { isHeroClass } from './shadow'
 import { isCreatureArmyUnit } from './siege'
 
 const ENERGY_RESOURCE_ID = 1
-
-export type ArmyTownCountKey =
-  | 'grove'
-  | 'fortress'
-  | 'confluence'
-  | 'factory_nonliving'
-  | 'temple'
-
-function townIdByName(
-  catalog: ReferenceCatalog,
-  name: string,
-): number | null {
-  const needle = name.trim().toLowerCase()
-  return (
-    catalog.town.find((row) => row.name.trim().toLowerCase() === needle)?.id ??
-    null
-  )
-}
 
 function tagIdByName(
   catalog: ReferenceCatalog,
@@ -58,69 +45,22 @@ function tagIdByName(
   )
 }
 
-function unitOfTown(
-  catalog: ReferenceCatalog,
-  unitId: number,
-  townName: string,
-): boolean {
-  const unit = unitById(catalog, unitId)
-  if (!unit?.town_id) {
-    return false
-  }
-  const id = townIdByName(catalog, townName)
-  return id != null && unit.town_id === id
-}
-
-export function isGroveUnit(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  return unitOfTown(catalog, unitId, 'Grove')
-}
-
-export function isFortressUnit(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  return unitOfTown(catalog, unitId, 'Fortress')
-}
-
-export function isFactoryUnit(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  return unitOfTown(catalog, unitId, 'Factory')
-}
-
-export function isConfluenceUnit(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  return unitOfTown(catalog, unitId, 'Confluence')
-}
-
-export function isTempleUnit(
-  catalog: ReferenceCatalog,
-  unitId: number,
-): boolean {
-  return unitOfTown(catalog, unitId, 'Temple')
-}
-
 export function isNonLivingFactoryUnit(
   catalog: ReferenceCatalog,
   unitId: number,
 ): boolean {
-  if (!isFactoryUnit(catalog, unitId)) {
+  const unit = unitById(catalog, unitId)
+  if (!unit?.town_id) {
     return false
   }
   const nonLiving = tagIdByName(catalog, 'Non-Living')
   if (nonLiving == null) {
     return false
   }
-  return unitHasTag(unitById(catalog, unitId), nonLiving)
+  return unitHasTag(unit, nonLiving)
 }
 
-/** Match unit_filter like "Non-Living Factory" (tag + town). */
+/** Match unit_filter like "Non-Living Factory" (tag-based). */
 function matchesUnitFilter(
   catalog: ReferenceCatalog,
   unitId: number,
@@ -133,30 +73,7 @@ function matchesUnitFilter(
   if (lower === 'non-living factory') {
     return isNonLivingFactoryUnit(catalog, unitId)
   }
-  return unitOfTown(catalog, unitId, filter)
-}
-
-function townCountKeyForFilter(filter: string | null): ArmyTownCountKey | null {
-  if (!filter) {
-    return null
-  }
-  const lower = filter.trim().toLowerCase()
-  if (lower === 'grove') {
-    return 'grove'
-  }
-  if (lower === 'fortress') {
-    return 'fortress'
-  }
-  if (lower === 'confluence') {
-    return 'confluence'
-  }
-  if (lower === 'temple') {
-    return 'temple'
-  }
-  if (lower === 'non-living factory') {
-    return 'factory_nonliving'
-  }
-  return null
+  return false
 }
 
 /** Count matching army stacks (slots), not summed headcount within stacks. */
@@ -178,42 +95,41 @@ function countMatchingStacks(
   return total
 }
 
-/** Snapshot town/tag stack counts for S6-46 army passives — frozen at battle start. */
+/** Snapshot faction town stack counts — frozen at battle start. */
 export function freezeArmyTownCounts(
   stacks: CombatStack[],
   catalog: ReferenceCatalog,
 ): ArmyTownCounts {
+  const townIds = new Set<number>()
+  for (const stack of stacks) {
+    const unit = unitById(catalog, stack.unitId)
+    if (unit?.town_id) {
+      townIds.add(unit.town_id)
+    }
+  }
   const sides: CombatSide[] = ['atk', 'def']
   const out: ArmyTownCounts = {}
-  const keys: Array<{
-    key: ArmyTownCountKey
-    match: (unitId: number) => boolean
-  }> = [
-    { key: 'grove', match: (id) => isGroveUnit(catalog, id) },
-    { key: 'fortress', match: (id) => isFortressUnit(catalog, id) },
-    { key: 'confluence', match: (id) => isConfluenceUnit(catalog, id) },
-    {
-      key: 'factory_nonliving',
-      match: (id) => isNonLivingFactoryUnit(catalog, id),
-    },
-    { key: 'temple', match: (id) => isTempleUnit(catalog, id) },
-  ]
-  for (const { key, match } of keys) {
+  for (const townId of townIds) {
     const per: Partial<Record<CombatSide, number>> = {}
     for (const side of sides) {
-      per[side] = countMatchingStacks(stacks, side, match)
+      per[side] = countMatchingStacks(stacks, side, (unitId) =>
+        isUnitOfTownId(catalog, unitId, townId),
+      )
     }
-    out[key] = per
+    out[townId] = per
   }
   return out
 }
 
-export function frozenTownCount(
+export function frozenTownStackCount(
   counts: ArmyTownCounts | undefined,
-  key: ArmyTownCountKey,
+  townId: number | null,
   side: CombatSide,
 ): number {
-  return Math.max(0, counts?.[key]?.[side] ?? 0)
+  if (townId == null || townId <= 0) {
+    return 0
+  }
+  return Math.max(0, counts?.[townId]?.[side] ?? 0)
 }
 
 function emptyOutput(): CombatOutputMods {
@@ -261,16 +177,16 @@ export function applyBattleStartArmyPassives(
     }
     let next = stack
 
-    if (isHeroClass(catalog, hero, 'Barbarian')) {
+    if (hasPassiveKey(catalog, hero, PASSIVE_KEY.BARBARIAN_ARMY_PHYS)) {
       const stats = requirePassiveStats(catalog, hero, 'Barbarian army passive')
       const stackMult = passiveStatNumber(stats, 'stack_multiplier')
-      const townFilter = passiveStatString(stats, 'town_filter')
+      const townFilter = stats?.town_filter
       const statSource = passiveStatString(stats, 'stat_source')
       if (stackMult == null) {
         missingPassiveStatKey(catalog, hero, 'stack_multiplier', 'Barbarian')
       } else {
-        const countKey = townCountKeyForFilter(townFilter) ?? 'fortress'
-        const stacksN = frozenTownCount(townCounts, countKey, stack.side)
+        const townId = passiveTownIdFromFilter(catalog, hero, townFilter)
+        const stacksN = frozenTownStackCount(townCounts, townId, stack.side)
         const base = passiveStatSourceValue(catalog, hero, statSource ?? 'STR')
         const phys = Math.max(0, base + stacksN * stackMult)
         if (phys > 0) {
@@ -282,7 +198,7 @@ export function applyBattleStartArmyPassives(
       }
     }
 
-    if (isHeroClass(catalog, hero, 'Forge Master')) {
+    if (hasPassiveKey(catalog, hero, PASSIVE_KEY.FORGE_MASTER_ARMY_PHYS)) {
       const stats = requirePassiveStats(catalog, hero, 'Forge Master passive')
       const stackMult = passiveStatNumber(stats, 'stack_multiplier')
       const unitFilter = passiveStatString(stats, 'unit_filter')
@@ -290,10 +206,8 @@ export function applyBattleStartArmyPassives(
       if (stackMult == null) {
         missingPassiveStatKey(catalog, hero, 'stack_multiplier', 'Forge Master')
       } else if (matchesUnitFilter(catalog, stack.unitId, unitFilter)) {
-        const count = frozenTownCount(
-          townCounts,
-          'factory_nonliving',
-          stack.side,
+        const count = countMatchingStacks(stacks, stack.side, (unitId) =>
+          isNonLivingFactoryUnit(catalog, unitId),
         )
         const base = passiveStatSourceValue(catalog, hero, statSource ?? 'STR')
         const phys = Math.max(0, base + count * stackMult)
@@ -306,7 +220,7 @@ export function applyBattleStartArmyPassives(
       }
     }
 
-    if (isHeroClass(catalog, hero, 'Conjurer')) {
+    if (hasPassiveKey(catalog, hero, PASSIVE_KEY.CONJURER_ARMY_MAGIC)) {
       const stats = requirePassiveStats(catalog, hero, 'Conjurer passive')
       const stackMult = passiveStatNumber(stats, 'stack_multiplier')
       const unitFilter = passiveStatString(stats, 'unit_filter')
@@ -314,10 +228,8 @@ export function applyBattleStartArmyPassives(
       if (stackMult == null) {
         missingPassiveStatKey(catalog, hero, 'stack_multiplier', 'Conjurer')
       } else if (matchesUnitFilter(catalog, stack.unitId, unitFilter)) {
-        const count = frozenTownCount(
-          townCounts,
-          'factory_nonliving',
-          stack.side,
+        const count = countMatchingStacks(stacks, stack.side, (unitId) =>
+          isNonLivingFactoryUnit(catalog, unitId),
         )
         const base = passiveStatSourceValue(catalog, hero, statSource ?? 'INT')
         const mag = Math.max(0, base + count * stackMult)
@@ -330,19 +242,17 @@ export function applyBattleStartArmyPassives(
       }
     }
 
-    if (isHeroClass(catalog, hero, 'Paladin')) {
+    if (hasPassiveKey(catalog, hero, PASSIVE_KEY.PALADIN_ARMY_BONUS)) {
       const stats = requirePassiveStats(catalog, hero, 'Paladin passive')
       const stackMult = passiveStatNumber(stats, 'stack_multiplier')
-      const townFilter = passiveStatString(stats, 'town_filter')
+      const townFilter = stats?.town_filter
       const physSource = passiveStatString(stats, 'physical_stat_source')
       const magSource = passiveStatString(stats, 'magic_stat_source')
+      const factionTownId = passiveTownIdFromFilter(catalog, hero, townFilter)
       if (stackMult == null) {
         missingPassiveStatKey(catalog, hero, 'stack_multiplier', 'Paladin')
-      } else if (
-        matchesUnitFilter(catalog, stack.unitId, townFilter ?? 'Temple')
-      ) {
-        const countKey = townCountKeyForFilter(townFilter) ?? 'temple'
-        const temple = frozenTownCount(townCounts, countKey, stack.side)
+      } else if (isUnitOfTownId(catalog, stack.unitId, factionTownId)) {
+        const temple = frozenTownStackCount(townCounts, factionTownId, stack.side)
         const phys = Math.max(
           0,
           passiveStatSourceValue(catalog, hero, physSource ?? 'STR') +
@@ -373,7 +283,7 @@ export function rangerSuppressChancePct(
   battle: CombatBattle,
   side: CombatSide,
 ): number {
-  if (!isHeroClass(catalog, hero, 'Ranger') || !hero) {
+  if (!hasPassiveKey(catalog, hero, PASSIVE_KEY.RANGER_SURPRISE) || !hero) {
     return 0
   }
   const stats = requirePassiveStats(catalog, hero, 'Ranger passive')
@@ -383,7 +293,7 @@ export function rangerSuppressChancePct(
   const stackMult = passiveStatNumber(stats, 'stack_multiplier')
   const minPct = passiveStatNumber(stats, 'min_pct')
   const maxPct = passiveStatNumber(stats, 'max_pct')
-  const townFilter = passiveStatString(stats, 'town_filter')
+  const townFilter = stats.town_filter
   const statSource = passiveStatString(stats, 'stat_source')
   if (stackMult == null || minPct == null || maxPct == null) {
     if (stackMult == null) {
@@ -397,8 +307,8 @@ export function rangerSuppressChancePct(
     }
     return 0
   }
-  const countKey = townCountKeyForFilter(townFilter) ?? 'grove'
-  const grove = frozenTownCount(battle.armyTownCounts, countKey, side)
+  const townId = passiveTownIdFromFilter(catalog, hero, townFilter)
+  const grove = frozenTownStackCount(battle.armyTownCounts, townId, side)
   const base = passiveStatSourceValue(catalog, hero, statSource ?? 'STR')
   const raw = base + grove * stackMult
   return Math.min(maxPct, Math.max(minPct, raw))
@@ -406,16 +316,14 @@ export function rangerSuppressChancePct(
 
 export function groveUnitGetsPassives(
   catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
   stack: CombatStack | null | undefined,
 ): boolean {
-  return stack != null && isGroveUnit(catalog, stack.unitId)
-}
-
-export function fortressUnitGetsPassives(
-  catalog: ReferenceCatalog,
-  stack: CombatStack | null | undefined,
-): boolean {
-  return stack != null && isFortressUnit(catalog, stack.unitId)
+  return (
+    stack != null &&
+    hero != null &&
+    isUnitOfHeroFaction(catalog, hero, stack.unitId)
+  )
 }
 
 /** +amount Energy, capped at the Hero's max Energy pool. */
@@ -439,14 +347,14 @@ export function isRogueHero(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
 ): boolean {
-  return isHeroClass(catalog, hero, 'Rogue')
+  return hasPassiveKey(catalog, hero, PASSIVE_KEY.ROGUE_ENERGY)
 }
 
 export function isDruidHero(
   catalog: ReferenceCatalog,
   hero: Hero | null | undefined,
 ): boolean {
-  return isHeroClass(catalog, hero, 'Druid')
+  return hasPassiveKey(catalog, hero, PASSIVE_KEY.DRUID_MANA)
 }
 
 /** Rogue energy gain amount from passive_stats.energy_per_trigger. */
@@ -497,7 +405,7 @@ export function applyEvokerSpellBonus(
   casterSide: CombatSide,
   battle: CombatBattle,
 ): number {
-  if (raw <= 0 || !isHeroClass(catalog, caster, 'Evoker')) {
+  if (raw <= 0 || !hasPassiveKey(catalog, caster, PASSIVE_KEY.EVOKER_SPELL_BONUS)) {
     return raw
   }
   const stats = requirePassiveStats(catalog, caster, 'Evoker spell bonus')
@@ -511,10 +419,10 @@ export function applyEvokerSpellBonus(
   }
   const op = opRaw.trim().toLowerCase()
   const stackMult = passiveStatNumber(stats, 'stack_multiplier')
-  const townFilter = passiveStatString(stats, 'town_filter')
+  const townFilter = stats.town_filter
   const statSource = passiveStatString(stats, 'stat_source')
-  const countKey = townCountKeyForFilter(townFilter) ?? 'confluence'
-  const count = frozenTownCount(battle.armyTownCounts, countKey, casterSide)
+  const townId = passiveTownIdFromFilter(catalog, caster, townFilter)
+  const count = frozenTownStackCount(battle.armyTownCounts, townId, casterSide)
   const base = passiveStatSourceValue(catalog, caster, statSource ?? 'INT')
 
   let pct = 0

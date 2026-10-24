@@ -159,6 +159,27 @@ export function heroColumnForStatKey(key: string): HeroStatKey | null {
   return STAT_KEY_TO_HERO_COLUMN[key.trim().toUpperCase()] ?? null
 }
 
+/** Commanding-hero value for a catalog `stat.id` (0 when unknown / no column). */
+export function heroStatValueByStatId(
+  catalog: ReferenceCatalog | null | undefined,
+  stats: HeroStats,
+  statId: number | null | undefined,
+): number {
+  if (!catalog || statId == null || statId <= 0) {
+    return 0
+  }
+  const row = statById(catalog, statId)
+  if (!row) {
+    return 0
+  }
+  const column = heroColumnForStatKey(row.key)
+  if (!column) {
+    return 0
+  }
+  const n = stats[column]
+  return Number.isFinite(n) ? n : 0
+}
+
 export function statKeyForHeroColumn(column: HeroStatKey): string {
   return COLUMN_TO_STAT_KEY[column]
 }

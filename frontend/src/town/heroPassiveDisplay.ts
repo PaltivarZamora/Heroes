@@ -1,18 +1,17 @@
+import { isNonLivingFactoryUnit } from '../combat/heroArmyPassives'
 import {
-  isConfluenceUnit,
-  isFortressUnit,
-  isGroveUnit,
-  isNonLivingFactoryUnit,
-  isTempleUnit,
-  shamanTotemCount,
-} from '../combat/heroArmyPassives'
-import { isHeroClass } from '../combat/shadow'
+  heroClassTownId,
+  isUnitOfTownId,
+  passiveTownIdFromFilter,
+} from '../combat/heroFactionUnits'
+import { shamanTotemCount } from '../combat/heroArmyPassives'
 import type { Hero, GameSession, UnitStack } from '../session/types'
 import type { ReferenceCatalog } from './catalog'
 import {
   commandingHeroStats,
   heroTypeName,
 } from './catalog'
+import { hasPassiveKey, PASSIVE_KEY } from './heroPassiveKey'
 import {
   heroPassiveStats,
   passiveStatNumber,
@@ -66,7 +65,6 @@ function armyUnitStacks(
   return out
 }
 
-/** Evoker-style: count matching army stacks (slots), never summed headcount. */
 function countStacks(
   stacks: UnitStack[],
   match: (unitId: number) => boolean,
@@ -78,6 +76,16 @@ function countStacks(
     }
   }
   return n
+}
+
+function countFactionStacks(
+  catalog: ReferenceCatalog,
+  hero: Hero,
+  stacks: UnitStack[],
+  filter?: unknown,
+): number {
+  const townId = passiveTownIdFromFilter(catalog, hero, filter)
+  return countStacks(stacks, (id) => isUnitOfTownId(catalog, id, townId))
 }
 
 /**
@@ -93,22 +101,19 @@ export function heroPassiveLiveLines(
     return []
   }
   const stacks = armyUnitStacks(session, hero)
-  if (stacks.length === 0 && !hero.army.slots_1_to_6.some(Boolean)) {
-    // Empty army is still "knowable" — show 0-stack values for scaled passives.
-  }
   const { intel } = commandingHeroStats(catalog, hero)
   const lines: string[] = []
 
-  if (isHeroClass(catalog, hero, 'Druid')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.DRUID_MANA)) {
     const stats = heroPassiveStats(catalog, hero)
     const mana = passiveStatNumber(stats, 'mana_per_attack') ?? 1
     lines.push(
       `+${mana} Mana when a Grove stack attacks (capped at max)`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Ranger')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.RANGER_SURPRISE)) {
     const stats = heroPassiveStats(catalog, hero)
-    const grove = countStacks(stacks, (id) => isGroveUnit(catalog, id))
+    const grove = countFactionStacks(catalog, hero, stacks, stats?.town_filter)
     const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 5
     const minPct = passiveStatNumber(stats, 'min_pct') ?? 1
     const maxPct = passiveStatNumber(stats, 'max_pct') ?? 90
@@ -118,14 +123,20 @@ export function heroPassiveLiveLines(
       passiveStatString(stats, 'stat_source') ?? 'STR',
     )
     const pct = Math.min(maxPct, Math.max(minPct, base + grove * mult))
+    const townName =
+      catalog.town.find((row) => row.id === heroClassTownId(catalog, hero))
+        ?.name ?? 'faction'
     lines.push(
-      `Surprise Attack: ${formatPct(pct)}% (${grove} Grove stack${grove === 1 ? '' : 's'})`,
+      `Surprise Attack: ${formatPct(pct)}% (${grove} ${townName} stack${grove === 1 ? '' : 's'})`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Barbarian')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.BARBARIAN_ARMY_PHYS)) {
     const stats = heroPassiveStats(catalog, hero)
-    const fortress = countStacks(stacks, (id) =>
-      isFortressUnit(catalog, id),
+    const fortress = countFactionStacks(
+      catalog,
+      hero,
+      stacks,
+      stats?.town_filter,
     )
     const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 1
     const base = passiveStatSourceValue(
@@ -138,7 +149,7 @@ export function heroPassiveLiveLines(
       `Physical Bonus: +${formatPct(phys)}% (${fortress} stack${fortress === 1 ? '' : 's'})`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Forge Master')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.FORGE_MASTER_ARMY_PHYS)) {
     const stats = heroPassiveStats(catalog, hero)
     const count = countStacks(stacks, (id) =>
       isNonLivingFactoryUnit(catalog, id),
@@ -154,7 +165,7 @@ export function heroPassiveLiveLines(
       `Physical Bonus (Non-Living): +${formatPct(phys)}% (${count} stack${count === 1 ? '' : 's'})`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Conjurer')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.CONJURER_ARMY_MAGIC)) {
     const stats = heroPassiveStats(catalog, hero)
     const count = countStacks(stacks, (id) =>
       isNonLivingFactoryUnit(catalog, id),
@@ -170,23 +181,31 @@ export function heroPassiveLiveLines(
       `Magic Bonus (Non-Living): +${formatPct(mag)}% (${count} stack${count === 1 ? '' : 's'})`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Cleric')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.CLERIC_HEAL)) {
     const stats = heroPassiveStats(catalog, hero)
-    const temple = countStacks(stacks, (id) => isTempleUnit(catalog, id))
+    const faction = countFactionStacks(
+      catalog,
+      hero,
+      stacks,
+      stats?.heal_town_filter,
+    )
     const base = passiveStatSourceValue(
       catalog,
       hero,
       passiveStatString(stats, 'heal_stat_source') ?? 'INT',
     )
-    const pool = Math.max(0, Math.floor(base * temple))
+    const pool = Math.max(0, Math.floor(base * faction))
     const rezPct = passiveStatNumber(stats, 'rez_chance_pct') ?? 1
+    const townName =
+      catalog.town.find((row) => row.id === heroClassTownId(catalog, hero))
+        ?.name ?? 'faction'
     lines.push(
-      `End of round: heal pool ${pool} HP (${Math.floor(base)} INT × ${temple} stack${temple === 1 ? '' : 's'}); end of battle: ${formatPct(rezPct)}% full Temple rez (casualties)`,
+      `End of round: heal pool ${pool} HP (${Math.floor(base)} INT × ${faction} ${townName} stack${faction === 1 ? '' : 's'}); end of battle: ${formatPct(rezPct)}% full ${townName} rez (casualties)`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Paladin')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.PALADIN_ARMY_BONUS)) {
     const stats = heroPassiveStats(catalog, hero)
-    const temple = countStacks(stacks, (id) => isTempleUnit(catalog, id))
+    const faction = countFactionStacks(catalog, hero, stacks, stats?.town_filter)
     const mult = passiveStatNumber(stats, 'stack_multiplier') ?? 1
     const phys = Math.max(
       0,
@@ -195,7 +214,7 @@ export function heroPassiveLiveLines(
         hero,
         passiveStatString(stats, 'physical_stat_source') ?? 'STR',
       ) +
-        temple * mult,
+        faction * mult,
     )
     const mag = Math.max(
       0,
@@ -204,17 +223,18 @@ export function heroPassiveLiveLines(
         hero,
         passiveStatString(stats, 'magic_stat_source') ?? 'INT',
       ) +
-        temple * mult,
+        faction * mult,
     )
+    const townName =
+      catalog.town.find((row) => row.id === heroClassTownId(catalog, hero))
+        ?.name ?? 'faction'
     lines.push(
-      `Physical +${formatPct(phys)}% / Magic +${formatPct(mag)}% (${temple} Temple stack${temple === 1 ? '' : 's'})`,
+      `Physical +${formatPct(phys)}% / Magic +${formatPct(mag)}% (${faction} ${townName} stack${faction === 1 ? '' : 's'})`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Evoker')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.EVOKER_SPELL_BONUS)) {
     const stats = heroPassiveStats(catalog, hero)
-    const count = countStacks(stacks, (id) =>
-      isConfluenceUnit(catalog, id),
-    )
+    const count = countFactionStacks(catalog, hero, stacks, stats?.town_filter)
     const base = passiveStatSourceValue(
       catalog,
       hero,
@@ -228,11 +248,14 @@ export function heroPassiveLiveLines(
       op === 'add'
         ? Math.max(0, base + count * mult)
         : Math.max(0, base * count * mult)
+    const townName =
+      catalog.town.find((row) => row.id === heroClassTownId(catalog, hero))
+        ?.name ?? 'faction'
     lines.push(
-      `Spell Damage Bonus: +${formatPct(pct)}% (${count} Confluence stack${count === 1 ? '' : 's'})`,
+      `Spell Damage Bonus: +${formatPct(pct)}% (${count} ${townName} stack${count === 1 ? '' : 's'})`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Shaman')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.SHAMAN_TOTEMS)) {
     const totems = shamanTotemCount(catalog, hero)
     const stats = heroPassiveStats(catalog, hero)
     const div = passiveStatNumber(stats, 'totem_int_divisor') ?? 4
@@ -250,7 +273,10 @@ export function heroPassiveLiveLines(
       `Nature heal: ${Math.max(0, Math.floor(healBase * healMult))} (INT × ${healMult}) to most injured`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Heretic') || isHeroClass(catalog, hero, 'Warlock')) {
+  if (
+    hasPassiveKey(catalog, hero, PASSIVE_KEY.HERETIC_DEMON_REINFORCEMENT) ||
+    hasPassiveKey(catalog, hero, PASSIVE_KEY.WARLOCK_DEMON_REINFORCEMENT)
+  ) {
     const stats = heroPassiveStats(catalog, hero)
     const div = passiveStatNumber(stats, 'tier_divisor')
     if (div != null) {
@@ -259,7 +285,7 @@ export function heroPassiveLiveLines(
       )
     }
   }
-  if (isHeroClass(catalog, hero, 'Death Knight')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.DEATH_KNIGHT_SHADOW)) {
     const stats = heroPassiveStats(catalog, hero)
     const pctPer = passiveStatNumber(stats, 'pct_per_point') ?? 2
     const maxPct = passiveStatNumber(stats, 'max_reduction_pct') ?? 75
@@ -285,7 +311,7 @@ export function heroPassiveLiveLines(
       `On Shadow: +${formatPct(physBonus)}% Physical dmg (Ground)`,
     )
   }
-  if (isHeroClass(catalog, hero, 'Knight')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.KNIGHT_DOUBLE_RETALIATION)) {
     const stats = heroPassiveStats(catalog, hero)
     const mult = passiveStatNumber(stats, 'stat_multiplier') ?? 2.5
     const base = passiveStatSourceValue(
@@ -296,7 +322,7 @@ export function heroPassiveLiveLines(
     const chance = Math.max(0, base * mult)
     lines.push(`Retaliate twice: ${formatPct(chance)}% (STR × ${mult})`)
   }
-  if (isHeroClass(catalog, hero, 'Monk')) {
+  if (hasPassiveKey(catalog, hero, PASSIVE_KEY.MONK_REFLECT_RETALIATION)) {
     const stats = heroPassiveStats(catalog, hero)
     const mult = passiveStatNumber(stats, 'stat_multiplier') ?? 2.5
     const base = passiveStatSourceValue(

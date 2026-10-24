@@ -6,12 +6,14 @@ import {
   nextUnitStackId,
 } from '../session/accessors'
 import type { ReferenceCatalog } from '../town/catalog'
+import type { UnitRow } from '../town/catalog'
 import {
   isAdvancedUnit,
   unitById,
   unitEffectiveTier,
   unitHasTag,
 } from '../town/catalog'
+import { unitHasNamedTag } from '../town/unitTags'
 import {
   missingPassiveStatKey,
   passiveStatNumber,
@@ -20,23 +22,12 @@ import {
   passiveStatStringList,
   requirePassiveStats,
 } from '../town/heroPassiveStats'
-import { isHeroClass } from './shadow'
+import { hasPassiveKey, PASSIVE_KEY } from '../town/heroPassiveKey'
 import type { CombatBattle, CombatSide } from './battle'
 import { isCreatureArmyUnit } from './siege'
 
-/**
- * Pandemonium demon roster by creature tier (base + Advanced ids).
- * No Tier 2 unit exists — resolved Tier 2 rounds down to Tier 1.
- */
-const DEMON_IDS_BY_TIER: Readonly<Record<number, readonly number[]>> = {
-  1: [194, 195, 196, 197], // Homunculus / Imp
-  3: [204, 205], // Horned Hellion
-  4: [206, 207], // Succubus
-  5: [210, 211], // Efreti
-  6: [216, 217], // Pit Fiend Arch
-}
-
-const TIER1_BASE_CHOICES = [194, 196] as const // Homunculus, Imp
+/** `unit_tag.value` — Pandemonium demon reinforcement roster (see S9-54 SQL). */
+const DEMON_REINFORCEMENT_TAG = 'demon_reinforcement'
 
 export type DemonGainLine = {
   qty: number
@@ -52,8 +43,8 @@ export type DemonOpeningStack = {
 
 function isDemonHero(catalog: ReferenceCatalog, hero: Hero): boolean {
   return (
-    isHeroClass(catalog, hero, 'Warlock') ||
-    isHeroClass(catalog, hero, 'Heretic')
+    hasPassiveKey(catalog, hero, PASSIVE_KEY.WARLOCK_DEMON_REINFORCEMENT) ||
+    hasPassiveKey(catalog, hero, PASSIVE_KEY.HERETIC_DEMON_REINFORCEMENT)
   )
 }
 
@@ -111,11 +102,36 @@ function enemyKillParts(
     .filter((part) => part.killed > 0)
 }
 
-function roundDownToDemonTier(tier: number): number | null {
-  const available = Object.keys(DEMON_IDS_BY_TIER)
-    .map(Number)
-    .filter((n) => Number.isFinite(n) && n > 0)
-    .sort((a, b) => a - b)
+function demonReinforcementTiers(catalog: ReferenceCatalog): number[] {
+  const tiers = new Set<number>()
+  for (const unit of catalog.unit) {
+    if (!unitHasNamedTag(catalog, unit, DEMON_REINFORCEMENT_TAG)) {
+      continue
+    }
+    const t = unitEffectiveTier(catalog, unit)
+    if (t > 0) {
+      tiers.add(t)
+    }
+  }
+  return [...tiers].sort((a, b) => a - b)
+}
+
+/** Tagged roster for one creature tier (stable id order). No tier 2 in data — tier 2 rounds down. */
+function demonUnitsForTier(
+  catalog: ReferenceCatalog,
+  tier: number,
+): UnitRow[] {
+  return catalog.unit
+    .filter((unit) => unitHasNamedTag(catalog, unit, DEMON_REINFORCEMENT_TAG))
+    .filter((unit) => unitEffectiveTier(catalog, unit) === tier)
+    .sort((a, b) => a.id - b.id)
+}
+
+function roundDownToDemonTier(
+  catalog: ReferenceCatalog,
+  tier: number,
+): number | null {
+  const available = demonReinforcementTiers(catalog)
   let best: number | null = null
   for (const n of available) {
     if (n <= tier) {
@@ -156,8 +172,9 @@ function existingDemonUnitIds(
   session: GameSession,
   hero: Hero,
   tier: number,
+  catalog: ReferenceCatalog,
 ): number[] {
-  const pool = new Set(DEMON_IDS_BY_TIER[tier] ?? [])
+  const pool = new Set(demonUnitsForTier(catalog, tier).map((unit) => unit.id))
   const out: number[] = []
   for (const id of hero.army.slots_1_to_6) {
     if (!id) {
@@ -176,19 +193,14 @@ function pickNewDemonUnitId(
   tier: number,
   random: () => number,
 ): number | null {
-  const pool = DEMON_IDS_BY_TIER[tier] ?? []
-  if (tier === 1) {
-    const choices = TIER1_BASE_CHOICES.filter((id) => unitById(catalog, id))
-    if (choices.length > 0) {
-      const index = Math.floor(random() * choices.length) % choices.length
-      return choices[index] ?? null
-    }
+  const rows = demonUnitsForTier(catalog, tier)
+  const choices = rows.filter((row) => !isAdvancedUnit(catalog, row))
+  const pool = choices.length > 0 ? choices : rows
+  if (pool.length === 0) {
+    return null
   }
-  const rows = pool
-    .map((id) => unitById(catalog, id))
-    .filter((row): row is NonNullable<typeof row> => row != null)
-  const base = rows.find((row) => !isAdvancedUnit(catalog, row))
-  return (base ?? rows[0])?.id ?? null
+  const index = Math.floor(random() * pool.length) % pool.length
+  return pool[index]?.id ?? null
 }
 
 /**
@@ -290,7 +302,7 @@ export function applyDemonReinforcement(
   const qty = Math.max(0, Math.floor(qtyBase))
   const maxFromIntel = Math.floor(qtyBase / tierDivisor)
   const resolved = Math.min(maxFromIntel, highestEnemyTier)
-  const tier = roundDownToDemonTier(resolved)
+  const tier = roundDownToDemonTier(catalog, resolved)
   if (tier == null || qty <= 0) {
     return { session, gains: [] }
   }
@@ -298,7 +310,7 @@ export function applyDemonReinforcement(
   if (!liveHero) {
     return { session, gains: [] }
   }
-  const existing = existingDemonUnitIds(session, liveHero, tier)
+  const existing = existingDemonUnitIds(session, liveHero, tier, catalog)
   const unitId =
     existing[0] ?? pickNewDemonUnitId(catalog, tier, random)
   if (unitId == null) {

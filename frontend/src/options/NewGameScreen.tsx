@@ -10,6 +10,7 @@ import {
   difficultyDisplay,
   fetchCatalog,
   getCachedCatalog,
+  isHeroTypeOffered,
   subscribeCatalog,
 } from '../town/catalog'
 import {
@@ -177,7 +178,9 @@ export function NewGameScreen({
 
   // Intentionally sorted by hero_type.id (alphabetical renumber order).
   // Library tabs use hero_type.sort_order instead — do not unify these.
-  const heroTypes = [...(catalog?.hero_type ?? [])].sort((a, b) => a.id - b.id)
+  const heroTypes = [...(catalog?.hero_type ?? [])]
+    .filter((row) => !catalog || isHeroTypeOffered(catalog, row.id))
+    .sort((a, b) => a.id - b.id)
 
   const body = (
       <div className={`options-dialog new-game-dialog${embedded ? ' new-game-dialog-embedded' : ''}`}>

@@ -2,6 +2,8 @@ import { GOLD_RESOURCE_ID } from '../hex/resources'
 import type { OfferedAbilityRoll } from '../session/types'
 import {
   getCachedCatalog,
+  isHeroTypeOffered,
+  isTownEnabled,
   libraryGoldCost,
   type AbilityRow,
   type DisciplineRow,
@@ -32,8 +34,14 @@ export function townHeroClasses(
   catalog: ReferenceCatalog,
   townTypeId: number,
 ): HeroTypeRow[] {
+  if (!isTownEnabled(catalog, townTypeId)) {
+    return []
+  }
   return catalog.hero_type
-    .filter((row) => row.town_id === townTypeId)
+    .filter(
+      (row) =>
+        row.town_id === townTypeId && isHeroTypeOffered(catalog, row.id),
+    )
     .slice()
     .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
 }

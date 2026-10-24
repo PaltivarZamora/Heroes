@@ -22,18 +22,22 @@ import {
   type CombatSide,
   type CombatStack,
 } from './battle'
-import { frozenTownCount, isTempleUnit } from './heroArmyPassives'
+import { frozenTownStackCount } from './heroArmyPassives'
+import {
+  frozenFactionStackCount,
+  isUnitOfHeroFaction,
+  isUnitOfTownId,
+  passiveTownIdFromFilter,
+} from './heroFactionUnits'
+import { hasPassiveKey, PASSIVE_KEY } from '../town/heroPassiveKey'
 import { hexDistance } from '../hex/pathfinding'
 import { occupancyKey } from './occupancy'
-import { isHeroClass } from './shadow'
 import { isCreatureArmyUnit } from './siege'
 import {
   removeTombstone,
   stackFromTombstone,
   syncTombstonesFromWipes,
 } from './tombstone'
-
-export { isTempleUnit }
 
 /** Opening snapshot fields needed for Cleric casualty / full-rez checks. */
 export type ClericOpeningStack = {
@@ -97,35 +101,27 @@ function stackLabel(catalog: ReferenceCatalog, stack: CombatStack): string {
   return `${stack.qty} ${unitById(catalog, stack.unitId)?.name ?? 'unit'}`
 }
 
-function matchesTownFilter(
+function matchesFactionFilter(
   catalog: ReferenceCatalog,
+  hero: Hero,
   unitId: number,
-  filter: string | null,
+  filter: unknown,
 ): boolean {
-  if (!filter) {
-    return isTempleUnit(catalog, unitId)
-  }
-  const needle = filter.trim().toLowerCase()
-  if (needle === 'temple') {
-    return isTempleUnit(catalog, unitId)
-  }
-  const unit = unitById(catalog, unitId)
-  const townId = catalog.town.find(
-    (row) => row.name.trim().toLowerCase() === needle,
-  )?.id
-  return townId != null && unit?.town_id === townId
+  const townId = passiveTownIdFromFilter(catalog, hero, filter)
+  return isUnitOfTownId(catalog, unitId, townId)
 }
 
-function templeStackCountForHeal(
+function factionStackCountForHeal(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
+  hero: Hero,
   side: CombatSide,
-  filter: string | null,
+  filter: unknown,
   opening?: ClericOpeningStack[],
 ): number {
-  // Prefer battle-start frozen stack count (same as Barbarian/Paladin).
-  if (battle.armyTownCounts?.temple != null) {
-    return frozenTownCount(battle.armyTownCounts, 'temple', side)
+  const townId = passiveTownIdFromFilter(catalog, hero, filter)
+  if (battle.armyTownCounts != null) {
+    return frozenTownStackCount(battle.armyTownCounts, townId, side)
   }
   if (opening) {
     let n = 0
@@ -133,25 +129,13 @@ function templeStackCountForHeal(
       if (row.side !== side || row.qty <= 0) {
         continue
       }
-      if (matchesTownFilter(catalog, row.unitId, filter)) {
+      if (matchesFactionFilter(catalog, hero, row.unitId, filter)) {
         n += 1
       }
     }
     return n
   }
-  let n = 0
-  for (const row of battle.stacks) {
-    if (
-      row.side !== side ||
-      row.qty <= 0 ||
-      isHeroStack(row) ||
-      !matchesTownFilter(catalog, row.unitId, filter)
-    ) {
-      continue
-    }
-    n += 1
-  }
-  return n
+  return frozenFactionStackCount(battle, catalog, side, townId)
 }
 
 function liveQtyForOpening(
@@ -176,13 +160,14 @@ function applyClericHealPool(
   if (!stats) {
     return { battle, lines: [], healKeys: [] }
   }
-  const healTown = passiveStatString(stats, 'heal_town_filter')
+  const healTown = stats.heal_town_filter
   const healStat = passiveStatString(stats, 'heal_stat_source')
-  const stackCount = templeStackCountForHeal(
+  const stackCount = factionStackCountForHeal(
     battle,
     catalog,
+    hero,
     side,
-    healTown ?? 'Temple',
+    healTown,
   )
   const statValue = passiveStatSourceValue(catalog, hero, healStat ?? 'INT')
   let pool = Math.max(0, Math.floor(statValue * stackCount))
@@ -199,7 +184,7 @@ function applyClericHealPool(
       .filter(
         (row) =>
           row.side === side &&
-          matchesTownFilter(catalog, row.unitId, healTown ?? 'Temple') &&
+          matchesFactionFilter(catalog, hero, row.unitId, healTown) &&
           isDamagedCreature(row, catalog),
       )
       .sort((a, b) => {
@@ -258,7 +243,7 @@ export function applyClericEndOfBattlePassive(
   opening: ClericOpeningStack[],
   random: () => number = Math.random,
 ): { battle: CombatBattle; lines: string[] } {
-  if (!isHeroClass(catalog, hero, 'Cleric') || !hero) {
+  if (!hasPassiveKey(catalog, hero, PASSIVE_KEY.CLERIC_HEAL) || !hero) {
     return { battle, lines: [] }
   }
   const stats = requirePassiveStats(catalog, hero, 'Cleric end of battle')
@@ -266,7 +251,7 @@ export function applyClericEndOfBattlePassive(
     return { battle, lines: [] }
   }
 
-  const rezTown = passiveStatString(stats, 'rez_town_filter')
+  const rezTown = stats.rez_town_filter
   const rezChance = passiveStatNumber(stats, 'rez_chance_pct')
   if (rezChance == null) {
     missingPassiveStatKey(catalog, hero, 'rez_chance_pct', 'Cleric rez')
@@ -280,7 +265,7 @@ export function applyClericEndOfBattlePassive(
     if (row.side !== side || row.qty <= 0) {
       return false
     }
-    if (!matchesTownFilter(catalog, row.unitId, rezTown ?? 'Temple')) {
+    if (!matchesFactionFilter(catalog, hero, row.unitId, rezTown)) {
       return false
     }
     return liveQtyForOpening(battle, row) < row.qty
@@ -377,7 +362,7 @@ export function applyPaladinPooledExecute(
   side: CombatSide,
 ): { battle: CombatBattle; lines: string[]; hitKeys: string[] } {
   const hero = heroForSide(side, heroes)
-  if (!isHeroClass(catalog, hero, 'Paladin') || !hero) {
+  if (!hasPassiveKey(catalog, hero, PASSIVE_KEY.PALADIN_ARMY_BONUS) || !hero) {
     return { battle, lines: [], hitKeys: [] }
   }
   let templeCount = 0
@@ -386,7 +371,7 @@ export function applyPaladinPooledExecute(
       stack.side === side &&
       stack.qty > 0 &&
       !isHeroStack(stack) &&
-      isTempleUnit(catalog, stack.unitId)
+      isUnitOfHeroFaction(catalog, hero, stack.unitId)
     ) {
       templeCount += stack.qty
     }
@@ -477,7 +462,7 @@ export function applyTempleEndOfRoundPassives(
   const healKeys: string[] = []
   for (const side of ['atk', 'def'] as const) {
     const hero = heroForSide(side, heroes)
-    if (!isHeroClass(catalog, hero, 'Cleric') || !hero) {
+    if (!hasPassiveKey(catalog, hero, PASSIVE_KEY.CLERIC_HEAL) || !hero) {
       continue
     }
     const stats = requirePassiveStats(catalog, hero, 'Cleric heal timing')
@@ -520,7 +505,11 @@ export function applyHighPriestessHealOnKill(
         row.qty > 0 &&
         !isHeroStack(row) &&
         !row.indestructible &&
-        isTempleUnit(catalog, row.unitId) &&
+        isUnitOfTownId(
+          catalog,
+          row.unitId,
+          unitById(catalog, attacker.unitId)?.town_id ?? null,
+        ) &&
         isCreatureArmyUnit(unitById(catalog, row.unitId)) &&
         frontDeficit(row, catalog) > 0,
     )
@@ -573,7 +562,11 @@ export function auraExtraQty(
       row.side !== attacker.side ||
       row.qty <= 0 ||
       isHeroStack(row) ||
-      !isTempleUnit(catalog, row.unitId) ||
+      !isUnitOfTownId(
+        catalog,
+        row.unitId,
+        unitById(catalog, attacker.unitId)?.town_id ?? null,
+      ) ||
       !isCreatureArmyUnit(unitById(catalog, row.unitId))
     ) {
       continue

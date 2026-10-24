@@ -1,4 +1,5 @@
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
+import { formatInspectStatWithShred } from './statShred'
 import {
   scaleBySignedPct,
   stackCombatSpeed,
@@ -33,6 +34,20 @@ function formatModified(base: number, pct: number): string {
     return `${pct > 0 ? '+' : ''}${pct}%`
   }
   return String(scaleBySignedPct(base, pct))
+}
+
+function formatMitStatWithShred(
+  base: number,
+  mitPct: number,
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  field: 'defense' | 'resistance',
+): string {
+  if (mitPct && base <= 0) {
+    return formatModified(base, mitPct)
+  }
+  const effective = mitPct ? scaleBySignedPct(base, mitPct) : base
+  return formatInspectStatWithShred(effective, stack, catalog, field)
 }
 
 function formatRetaliation(row: UnitRetaliation): string {
@@ -650,21 +665,41 @@ export function inspectHoverRows(
     { label: 'name', value: unit.name },
     { label: 'qty', value: `${stack.qty} / ${stack.startingQty}` },
     { label: 'top HP', value: `${stack.topHealth} / ${maxHp}` },
-    { label: 'dmg', value: `${minDmg}–${maxDmg}` },
+    {
+      label: 'dmg',
+      value: `${formatInspectStatWithShred(minDmg, stack, catalog, 'minDmg')}–${formatInspectStatWithShred(maxDmg, stack, catalog, 'maxDmg')}`,
+    },
     {
       label: 'defense',
-      value: formatModified(stackDefense(stack, catalog), mit?.defense ?? 0),
+      value: formatMitStatWithShred(
+        stackDefense(stack, catalog),
+        mit?.defense ?? 0,
+        stack,
+        catalog,
+        'defense',
+      ),
     },
     {
       label: 'resistance',
-      value: formatModified(stackResistance(stack, catalog), mit?.resistance ?? 0),
+      value: formatMitStatWithShred(
+        stackResistance(stack, catalog),
+        mit?.resistance ?? 0,
+        stack,
+        catalog,
+        'resistance',
+      ),
     },
     {
       label: 'speed',
       value:
         unit.speed == null
           ? '—'
-          : String(stackCombatSpeed(stack, catalog) ?? unit.speed),
+          : formatInspectStatWithShred(
+              stackCombatSpeed(stack, catalog) ?? unit.speed,
+              stack,
+              catalog,
+              'speed',
+            ),
     },
     ...(move
       ? [
@@ -714,16 +749,48 @@ export function inspectRows(
     { label: 'health (max per creature)', value: String(maxHp) },
     { label: 'top HP', value: `${stack.topHealth} / ${maxHp}` },
     { label: 'dmg_type', value: unit.dmg_type ?? '—' },
-    { label: 'min_dmg', value: String(minDmg) },
-    { label: 'max_dmg', value: String(maxDmg) },
+    {
+      label: 'min_dmg',
+      value: formatInspectStatWithShred(minDmg, stack, catalog, 'minDmg'),
+    },
+    {
+      label: 'max_dmg',
+      value: formatInspectStatWithShred(maxDmg, stack, catalog, 'maxDmg'),
+    },
     { label: 'min_range', value: String(unit.min_range) },
     { label: 'max_range', value: String(stackMaxRange(stack, catalog)) },
-    { label: 'defense', value: formatModified(stackDefense(stack, catalog), mit?.defense ?? 0) },
+    {
+      label: 'defense',
+      value: formatMitStatWithShred(
+        stackDefense(stack, catalog),
+        mit?.defense ?? 0,
+        stack,
+        catalog,
+        'defense',
+      ),
+    },
     {
       label: 'resistance',
-      value: formatModified(stackResistance(stack, catalog), mit?.resistance ?? 0),
+      value: formatMitStatWithShred(
+        stackResistance(stack, catalog),
+        mit?.resistance ?? 0,
+        stack,
+        catalog,
+        'resistance',
+      ),
     },
-    { label: 'speed', value: unit.speed == null ? '—' : String(stackCombatSpeed(stack, catalog) ?? unit.speed) },
+    {
+      label: 'speed',
+      value:
+        unit.speed == null
+          ? '—'
+          : formatInspectStatWithShred(
+              stackCombatSpeed(stack, catalog) ?? unit.speed,
+              stack,
+              catalog,
+              'speed',
+            ),
+    },
     ...(move
       ? [
           {
