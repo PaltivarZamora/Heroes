@@ -45,7 +45,14 @@ import {
 import { applySpiralFireFromAttacker } from './spiral'
 import {
   clearGroundEffectTemplateHexes,
+  placeUnitTrapOnHex,
 } from './groundEffect'
+import {
+  canPlaceTrapAnyone,
+  isValidTrapPlacementHex,
+  rollTrapSnapshotDamage,
+  unitTrapConfig,
+} from './unitTrap'
 import {
   applyBreaksOnDamage,
   applyHitTickConditions,
@@ -144,7 +151,7 @@ function reduceByPct(n: number, pct: number): number {
   return Math.max(0, Math.floor((n * (100 - cut)) / 100))
 }
 
-function outputMinPct(stack: CombatStack, kind: DmgKind): number {
+export function outputMinPct(stack: CombatStack, kind: DmgKind): number {
   const mods = stack.outputMods
   if (!mods) {
     return 0
@@ -152,7 +159,7 @@ function outputMinPct(stack: CombatStack, kind: DmgKind): number {
   return kind === 'magic' ? mods.magicMin : mods.physicalMin
 }
 
-function outputMaxPct(stack: CombatStack, kind: DmgKind): number {
+export function outputMaxPct(stack: CombatStack, kind: DmgKind): number {
   const mods = stack.outputMods
   if (!mods) {
     return 0
@@ -160,7 +167,7 @@ function outputMaxPct(stack: CombatStack, kind: DmgKind): number {
   return kind === 'magic' ? mods.magicMax : mods.physicalMax
 }
 
-function outputTotalPct(stack: CombatStack, kind: DmgKind): number {
+export function outputTotalPct(stack: CombatStack, kind: DmgKind): number {
   const mods = stack.outputMods
   const base = !mods
     ? 0
@@ -404,6 +411,9 @@ export function canAttackAnyone(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
 ): boolean {
+  if (canPlaceTrapAnyone(attacker, battle, catalog, tiles)) {
+    return true
+  }
   return battle.stacks.some((row) =>
     isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
   )
@@ -1653,7 +1663,7 @@ export function resolveAttack(
   allowFriendly = false,
 ): {
   battle: CombatBattle
-  log: { lines: string[] }
+  log: { lines: string[]; trapSetLine?: string }
   hitKeys: string[]
   healKeys: string[]
   hitColor: HitFlashColor
@@ -1684,6 +1694,8 @@ export function resolveAttack(
     strike || rushMods ? { ...rushMods, ...strike } : undefined
   const atkUnit = unitById(catalog, attacker.unitId)
   const spec = unitAttackShape(atkUnit)
+  const trapCfg = unitTrapConfig(atkUnit)
+  const placingTrap = spec.placesTrap && trapCfg != null
   const noAim =
     shapeIsUntargeted(spec.shape) || shapePulsesOnMove(spec.shape)
   const aimed =
@@ -1697,7 +1709,21 @@ export function resolveAttack(
 
   const maxRange = stackMaxRange(attacker, catalog)
   const aimDist = hexDistance(attacker, aim.hex)
-  if (!noAim) {
+  if (placingTrap) {
+    const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
+    if (
+      !isValidTrapPlacementHex(
+        stand,
+        aim.hex,
+        attacker,
+        battle,
+        catalog,
+        tiles,
+      )
+    ) {
+      return null
+    }
+  } else if (!noAim) {
     if (spec.shape === 'beam' || spec.shape === 'aoe' || spec.shape === 'line') {
       if (aimDist < 1 || aimDist > maxRange) {
         return null
@@ -1790,6 +1816,56 @@ export function resolveAttack(
       random,
     )
     strikeModsLive = { ...(strikeModsLive ?? {}), guaranteedDamage: escalated }
+  }
+
+  if (placingTrap && trapCfg) {
+    const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
+    if (
+      !isValidTrapPlacementHex(
+        stand,
+        aim.hex,
+        attacker,
+        battle,
+        catalog,
+        tiles,
+      )
+    ) {
+      return null
+    }
+    const snap = rollTrapSnapshotDamage(
+      attacker,
+      catalog,
+      random,
+      strikeModsLive ?? undefined,
+    )
+    const placed = placeUnitTrapOnHex(
+      battle,
+      catalog,
+      trapCfg.templateId,
+      aim.hex,
+      attacker.side,
+      snap.damage,
+      snap.kind,
+      trapCfg.blastRadius,
+    )
+    if (!placed) {
+      return null
+    }
+    const stacks = writeStack(placed.stacks, attackerId, {
+      ...attacker,
+      hasActedThisRound: true,
+    })
+    const name = stackName(catalog, attacker.unitId)
+    return {
+      battle: { ...placed, stacks },
+      log: {
+        lines: [],
+        trapSetLine: `${attacker.qty} ${name} set a trap`,
+      },
+      hitKeys: [occupancyKey(aim.hex.q, aim.hex.r)],
+      healKeys: [],
+      hitColor: 'yellow',
+    }
   }
 
   const hits = resolveShapeHits(

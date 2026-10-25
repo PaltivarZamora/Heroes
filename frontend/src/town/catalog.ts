@@ -336,6 +336,14 @@ export type UnitCombatAbilities = {
   summonOnKillStat: number | null
   /** Qty per kill: max(1, floor(heroStat / div)) × kills this attack. */
   summonOnKillStatDiv: number | null
+  /** Attack places a hidden trap on an empty in-range hex (no direct damage). */
+  placesTrap: boolean
+  /** `ground_effect` template for `places_trap` (e.g. Explosive Trap). */
+  trapGroundEffectId: number | null
+  /** Blast radius when the trap triggers. */
+  trapRadius: number
+  /** Start of own turn: heal front creature by this % of missing HP (100 = full). */
+  regenPct: number | null
 }
 
 export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
@@ -431,6 +439,10 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   summonOnKillUnitId: null,
   summonOnKillStat: null,
   summonOnKillStatDiv: null,
+  placesTrap: false,
+  trapGroundEffectId: null,
+  trapRadius: 0,
+  regenPct: null,
 }
 
 export type MoveTypeRow = {
@@ -4158,6 +4170,16 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     summonOnKillStatDiv: (() => {
       const n = Number(rec?.summon_on_kill_stat_div)
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    })(),
+    placesTrap: rec?.places_trap === true,
+    trapGroundEffectId: asOptionalId(rec?.trap_ground_effect_id),
+    trapRadius: (() => {
+      const n = Number(rec?.trap_radius)
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
+    })(),
+    regenPct: (() => {
+      const n = Number(rec?.regen_pct)
+      return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null
     })(),
   }
 }

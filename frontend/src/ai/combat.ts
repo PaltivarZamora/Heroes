@@ -32,6 +32,7 @@ import {
   isDefenderSiegeEgress,
 } from '../combat/siege'
 import { actingStand, bestApproachToward, combatHover, type CombatHover } from '../combat/target'
+import { pickUnitTrapAimHex, unitPlacesTrap } from '../combat/unitTrap'
 import { findTauntingStack } from '../combat/condition'
 import {
   COMBAT_ACTION_DECISION,
@@ -316,6 +317,27 @@ export function decideCombatAction(
   }
 
   const here = { q: stack.q, r: stack.r }
+  const unitRow = unitById(catalog, stack.unitId)
+  if (unitPlacesTrap(unitRow)) {
+    const pick = pickUnitTrapAimHex(stack, battle, catalog, tiles)
+    if (pick) {
+      const intent = combatHover(
+        stack,
+        pick.aim,
+        battle,
+        tiles,
+        catalog,
+        'center',
+        heroes,
+      )
+      if (intent?.fire) {
+        appendAiTrace(
+          `AI combat_action — ${stack.qty} ${stackName(catalog, stack)} sets trap at ${pick.aim.q},${pick.aim.r}`,
+        )
+        return intent
+      }
+    }
+  }
   // Standing in a damaging Moat: exit immediately over any other action.
   if (isHazardousMoatHex(here, battle, catalog, tiles)) {
     const reachable = reachableOf(stack, battle, tiles, catalog, heroes)

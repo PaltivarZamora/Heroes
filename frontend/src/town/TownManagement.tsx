@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { isDevPopupKeybindOpen } from '../layout/devKeybindBridge'
 import {
   formatAmount,
   GOLD_RESOURCE_ID,
@@ -136,6 +137,9 @@ export function TownManagement({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.repeat) {
+        return
+      }
+      if (isDevPopupKeybindOpen()) {
         return
       }
       event.preventDefault()

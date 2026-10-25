@@ -42,6 +42,12 @@ import {
   openBridgeMoatKeys,
 } from './siege'
 import { pickNearestUnitAnySide, isVanished, isMagicAttackSilenced } from './condition'
+import {
+  bestTrapPlacementStand,
+  canPlaceTrapAnyone,
+  trapBlastImpactKeys,
+  unitTrapConfig,
+} from './unitTrap'
 
 export type TargetIconKind = 'move' | 'aoe' | 'hero' | 'invalid' | AttackIconKind
 
@@ -339,6 +345,9 @@ export function canStrikeThisTurn(
     return false
   }
   const unit = unitById(catalog, attacker.unitId)
+  if (unitTrapConfig(unit)) {
+    return canPlaceTrapAnyone(attacker, battle, catalog, tiles)
+  }
   const spec = unitAttackShape(unit)
   if (unitAutoTarget(unit)) {
     return battle.stacks.some((row) =>
@@ -654,6 +663,67 @@ export function combatHover(
     costAdjust,
   )
   const maxRange = stackMaxRange(attacker, catalog)
+  const trapCfg = unitTrapConfig(unit)
+  if (trapCfg) {
+    if (occupant && !isSelf) {
+      const steps = stepsToward(
+        hover,
+        reachable,
+        from,
+        budget,
+        tiles,
+        kind,
+        occupied,
+        spec,
+        passableMoat,
+        stopOnly,
+        landOccupied,
+        costAdjust,
+        geBlocks,
+      )
+      return steps ? moveTowardHover(from, steps) : null
+    }
+    const placement = bestTrapPlacementStand(
+      attacker,
+      hover,
+      reachable,
+      from,
+      battle,
+      catalog,
+      tiles,
+    )
+    if (placement) {
+      return {
+        ...attackHover(
+          attacker,
+          hover,
+          placement.steps,
+          null,
+          battle,
+          catalog,
+          tiles,
+        ),
+        impactKeys: trapBlastImpactKeys(hover, trapCfg.blastRadius, tiles),
+        aimHex: hover,
+      }
+    }
+    const steps = stepsToward(
+      hover,
+      reachable,
+      from,
+      budget,
+      tiles,
+      kind,
+      occupied,
+      spec,
+      passableMoat,
+      stopOnly,
+      landOccupied,
+      costAdjust,
+      geBlocks,
+    )
+    return steps ? moveTowardHover(from, steps) : null
+  }
 
   if (isSelf) {
     if (shapePulsesOnMove(shape.shape)) {

@@ -13,7 +13,6 @@ import {
   designedTempleAbilities,
   designedTempleRetaliation,
   designedWeepingAngelRetaliation,
-  s75UnitConditionNorm,
 } from './unitDesignedOverrides'
 import {
   TAG_FIRE_TOTEM,
@@ -78,15 +77,6 @@ function enrichAbilities(
   }
   if (unitHasNamedTag(catalog, unit, 'designed_vines_resist')) {
     next = { ...next, resistStat: next.resistStat ?? 'resistance' }
-  }
-
-  const s75 = s75UnitConditionNorm(catalog, unit)
-  if (s75) {
-    next = {
-      ...next,
-      ...s75,
-      resistStat: s75.resistStat ?? next.resistStat ?? 'resistance',
-    }
   }
 
   if (!unit.has_abilities) {

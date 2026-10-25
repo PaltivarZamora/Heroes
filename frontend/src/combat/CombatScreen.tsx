@@ -171,6 +171,7 @@ import {
 } from './ability'
 import { applyStandingHazards, type HazardTick } from './hazards'
 import { applyTerrainGrowth, tryTempestStormScatter } from './confluence'
+import { applyUnitRegenAtTurnStart } from './unitRegen'
 import { visibleGroundEffects } from './groundEvasion'
 import { tryAutoSplitOnTurn } from './mudSplit'
 import {
@@ -2081,8 +2082,38 @@ export function CombatScreen({
     if (groups.length > 0) {
       setHitFlash({ n: Date.now(), groups })
     }
+    const trapSet = resolved.log.trapSetLine
+    const trapSetLines: string[] = []
+    if (trapSet && actor) {
+      const atkPlayer = attacker
+        ? session.players.find((row) => row.id === attacker.player_id)
+        : null
+      const defPlayer = defender
+        ? session.players.find((row) => row.id === defender.player_id)
+        : null
+      let viewerSide: 'atk' | 'def' = actor.side
+      if (atkPlayer && !atkPlayer.is_ai && defPlayer && !defPlayer.is_ai) {
+        viewerSide = actor.side
+      } else if (
+        defPlayer &&
+        !defPlayer.is_ai &&
+        (!atkPlayer || atkPlayer.is_ai)
+      ) {
+        viewerSide = 'def'
+      } else if (
+        atkPlayer &&
+        !atkPlayer.is_ai &&
+        (!defPlayer || defPlayer.is_ai)
+      ) {
+        viewerSide = 'atk'
+      }
+      if (viewerSide === actor.side) {
+        trapSetLines.push(trapSet)
+      }
+    }
     const lines = [
       ...extraLines,
+      ...trapSetLines,
       ...resolved.log.lines,
       ...tick.lines,
       ...(silenced.line ? [silenced.line] : []),
@@ -2721,7 +2752,12 @@ export function CombatScreen({
       catalog,
       field.tiles,
     )
-    const lines = [...tick.lines, ...growth.lines]
+    const regen = applyUnitRegenAtTurnStart(
+      growth.battle,
+      stack.id,
+      catalog,
+    )
+    const lines = [...tick.lines, ...growth.lines, ...regen.lines]
     if (lines.length === 0) {
       return
     }
@@ -2731,10 +2767,10 @@ export function CombatScreen({
         groups: [{ keys: tick.hitKeys, color: 'red' }],
       })
     }
-    const next = { ...growth.battle, moatStartKey: key }
+    const next = { ...regen.battle, moatStartKey: key }
     setBattle(next)
     applyOutcomeIfOver(next)
-    const still = growth.battle.stacks.find((row) => row.id === stack.id)
+    const still = regen.battle.stacks.find((row) => row.id === stack.id)
     queueBattleLog({
       lines,
       holdTurn: still != null && still.qty > 0,

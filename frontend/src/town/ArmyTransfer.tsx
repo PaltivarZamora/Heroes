@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { isDevPopupKeybindOpen } from '../layout/devKeybindBridge'
 import { getSession, updateSession } from '../session/store'
 import {
   dropHeldArmyStack,
@@ -389,6 +390,9 @@ export function ArmyTransfer({
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') {
+        return
+      }
+      if (isDevPopupKeybindOpen()) {
         return
       }
       const busy =

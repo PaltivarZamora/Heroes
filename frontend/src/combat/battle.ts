@@ -601,6 +601,8 @@ export type CombatGroundEffect = {
   consumeOnTrigger: boolean
   /** When false, detonation never damages/stuns the caster's side. */
   friendlyTakesDmg: boolean
+  /** Unit trap (S9-56): mitigation uses this instead of physical when set. */
+  trapDamageKind?: 'physical' | 'magic'
   /** Barricade-style: hexes block standing / pathing. */
   blocksMovement?: boolean
   /** Barricade-style: hexes block line of sight. */

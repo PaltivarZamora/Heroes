@@ -32,8 +32,11 @@ import { syncTombstonesFromWipes } from './tombstone'
 import { applySelfRezThenTombstones } from './confluence'
 import { isSiegeEngineUnit, isWallSegmentUnit } from './siege'
 import { smokeBombEvasionPct } from './abilityStatMath'
+import type { DmgKind } from './attack'
 
 export { zoneEvasionPctForStack, visibleGroundEffects } from './groundEvasion'
+
+export const UNIT_TRAP_BLAST_EFFECT = 'unit_trap_blast'
 
 let groundEffectSeq = 0
 
@@ -1512,6 +1515,17 @@ export function tryTriggerGroundEffectsOnEnter(
       nextBattle = boom.battle
       lines.push(...boom.lines)
       hitKeys.push(...boom.hitKeys)
+    } else if (zone.effect === UNIT_TRAP_BLAST_EFFECT) {
+      const boom = detonateUnitTrap(
+        nextBattle,
+        zone,
+        catalog,
+        tiles,
+        heroes,
+      )
+      nextBattle = boom.battle
+      lines.push(...boom.lines)
+      hitKeys.push(...boom.hitKeys)
     }
     if (zone.consumeOnTrigger) {
       toRemove.add(zone.id)
@@ -1527,6 +1541,129 @@ export function tryTriggerGroundEffectsOnEnter(
     }
   }
   return { battle: nextBattle, lines, hitKeys: [...new Set(hitKeys)] }
+}
+
+export function placeUnitTrapOnHex(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  templateId: number,
+  hex: Axial,
+  casterSide: CombatSide,
+  snapshotDamage: number,
+  damageKind: DmgKind,
+  blastRadius: number,
+): CombatBattle | null {
+  const template = resolveGroundEffectTemplate(catalog, templateId)
+  const mechanic = asRecord(template.mechanic)
+  if (!mechanic) {
+    return null
+  }
+  const mechanicType =
+    typeof mechanic.type === 'string' ? mechanic.type : 'trigger_zone'
+  const zone: CombatGroundEffect = {
+    id: nextGroundId(),
+    templateId,
+    name: template.name || 'Trap',
+    imagePath: template.image_path,
+    layer: template.display_rules?.layer ?? 'below_units',
+    hexKeys: [occupancyKey(hex.q, hex.r)],
+    casterSide,
+    hidden: template.hidden === true,
+    roundsLeft: null,
+    mechanicType,
+    effect: UNIT_TRAP_BLAST_EFFECT,
+    triggerMoveTypes: parseMoveKinds(mechanic.trigger_move_types),
+    evasionPct: 0,
+    flatDmg: snapshotDamage,
+    explodeRadius: Math.max(0, Math.floor(blastRadius)),
+    stunChancePct: 0,
+    stunConditionId: 0,
+    resistStat: null,
+    consumeOnTrigger: true,
+    friendlyTakesDmg: false,
+    trapDamageKind: damageKind,
+  }
+  return {
+    ...battle,
+    groundEffects: [...(battle.groundEffects ?? []), zone],
+  }
+}
+
+function detonateUnitTrap(
+  battle: CombatBattle,
+  zone: CombatGroundEffect,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes: CombatHeroes | undefined,
+): GroundTriggerResult {
+  const centers = zone.hexKeys.map((key) => {
+    const [qs, rs] = key.split(',')
+    return { q: Number(qs), r: Number(rs) }
+  })
+  const radius = Math.max(0, zone.explodeRadius)
+  const blastKeys = new Set<string>()
+  for (const center of centers) {
+    for (const key of diskKeys(center, radius, tiles)) {
+      blastKeys.add(key)
+    }
+  }
+  const kind = zone.trapDamageKind ?? 'physical'
+  const baseDmg = Math.max(0, zone.flatDmg)
+  let stacks = battle.stacks
+  let nextBattle = battle
+  const lines: string[] = []
+  const hitKeys: string[] = []
+  const parts: string[] = []
+
+  for (const target of [...stacks]) {
+    if (target.qty <= 0 || isHeroStack(target) || target.indestructible) {
+      continue
+    }
+    if (target.side === zone.casterSide) {
+      continue
+    }
+    const inBlast = stackFootprint(target, catalog).some((hex) =>
+      blastKeys.has(occupancyKey(hex.q, hex.r)),
+    )
+    if (!inBlast) {
+      continue
+    }
+    const live = stacks.find((row) => row.id === target.id)
+    if (!live || live.qty <= 0) {
+      continue
+    }
+    const defender = heroes ? heroForSide(live.side, heroes) : undefined
+    const mit = mitigateIncoming(baseDmg, live, catalog, kind, defender)
+    const full = stackMaxHealth(live, catalog)
+    const applied = applyStackDamage(live, mit.damage, full)
+    stacks = stacks.map((row) =>
+      row.id === live.id ? (applied.stack ?? { ...live, qty: 0 }) : row,
+    )
+    if (applied.killed > 0) {
+      nextBattle = noteUnitDeaths(
+        { ...nextBattle, stacks },
+        live.unitId,
+        applied.killed,
+      )
+      stacks = nextBattle.stacks
+    }
+    hitKeys.push(occupancyKey(live.q, live.r))
+    const name = stackName(catalog, live)
+    parts.push(`${mit.damage} to ${live.qty} ${name}`)
+  }
+
+  if (parts.length > 0) {
+    lines.push(`Trap exploded: ${parts.join('; ')}.`)
+  } else {
+    lines.push('Trap exploded.')
+  }
+
+  nextBattle = syncTombstonesFromWipes(
+    battle,
+    { ...nextBattle, stacks },
+    catalog,
+  )
+  return { battle: nextBattle, lines, hitKeys }
 }
 
 function detonateTrap(

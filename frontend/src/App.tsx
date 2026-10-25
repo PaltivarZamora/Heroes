@@ -18,6 +18,7 @@ import {
 } from './hex/debug'
 import { MainMenu, type MainMenuFlow } from './layout/MainMenu'
 import { DevPopup } from './layout/DevPopup'
+import { setDevPopupKeybindOpen } from './layout/devKeybindBridge'
 import { SettingsScreen } from './settings/SettingsScreen'
 import { useGameKeybindHandler } from './input/useGameKeybindHandler'
 import { tooltipWithKey } from './input/keybindEngine'
@@ -1281,6 +1282,10 @@ function App() {
     }
   }, [mapViewOpen])
 
+  useEffect(() => {
+    setDevPopupKeybindOpen(devOpen)
+  }, [devOpen])
+
   const keybindPopupOpen =
     mainMenuOpen ||
     settingsOpen ||
@@ -1303,16 +1308,16 @@ function App() {
     isArmyPopupOpen()
 
   const onKeybindBack = useCallback(() => {
+    if (devOpen) {
+      setDevOpen(false)
+      return
+    }
     if (mainMenuOpen) {
       setMainMenuOpen(false)
       return
     }
     if (settingsOpen) {
       setSettingsOpen(false)
-      return
-    }
-    if (devOpen) {
-      setDevOpen(false)
       return
     }
     if (gameFlowPanel) {

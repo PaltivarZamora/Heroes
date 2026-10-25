@@ -38,6 +38,103 @@ import { devToolsEnabled } from '../settings/playerSettings'
 type DevItemsPanelProps = {
   inCombat: boolean
   onNotice: (text: string) => void
+  section: 'items' | 'world' | 'all'
+}
+
+function DevWorldItemsList({
+  session,
+  catalog,
+  onNotice,
+}: {
+  session: GameSession
+  catalog: ReferenceCatalog
+  onNotice: (text: string) => void
+}) {
+  return (
+    <div className="dev-items-world-list">
+      {(session.features ?? [])
+        .filter(
+          (
+            row,
+          ): row is Extract<MapFeature, { kind: 'chest' }> =>
+            row.kind === 'chest' && row.item != null,
+        )
+        .map((chest) => {
+          const item = chest.item!
+          const name = rolledItemDisplayName(catalog, item)
+          const stats = rolledItemStatLines(catalog, item)
+          return (
+            <button
+              key={chest.id}
+              type="button"
+              className="dev-popup-btn dev-items-world-row"
+              onClick={() => {
+                centerMapOnHex(chest.position.q, chest.position.r)
+                onNotice(`Centered on chest @ ${chest.position.q},${chest.position.r}`)
+              }}
+            >
+              <div>
+                ({chest.position.q},{chest.position.r}) L{chest.level}
+                {chest.open ? ' · Open' : ''}
+              </div>
+              <div style={{ color: rolledItemRarityColor(catalog, item) }}>
+                {name}
+              </div>
+              <div className="dev-items-meta">
+                {rolledItemRarityName(catalog, item)}
+              </div>
+              {stats.map((line) => (
+                <div key={line} className="dev-items-stat-line">{line}</div>
+              ))}
+            </button>
+          )
+        })}
+      {(session.features ?? [])
+        .filter(
+          (
+            row,
+          ): row is Extract<MapFeature, { kind: 'ground_item' }> =>
+            row.kind === 'ground_item',
+        )
+        .map((ground) => {
+          const item = ground.item
+          const name = rolledItemDisplayName(catalog, item)
+          const stats = rolledItemStatLines(catalog, item)
+          const placement =
+            ground.pocket_id != null
+              ? `pocket #${ground.pocket_id} T${ground.pocket_tier ?? '?'}`
+              : ground.guard
+                ? `standalone · guard (${ground.guard.q},${ground.guard.r}) T${ground.guard_tier ?? '?'}`
+                : 'standalone'
+          return (
+            <button
+              key={ground.id}
+              type="button"
+              className="dev-popup-btn dev-items-world-row"
+              onClick={() => {
+                centerMapOnHex(ground.position.q, ground.position.r)
+                onNotice(
+                  `Centered on ground item @ ${ground.position.q},${ground.position.r}`,
+                )
+              }}
+            >
+              <div>
+                ({ground.position.q},{ground.position.r}) · {placement}
+              </div>
+              <div style={{ color: rolledItemRarityColor(catalog, item) }}>
+                {name}
+              </div>
+              <div className="dev-items-meta">
+                {rolledItemRarityName(catalog, item)}
+              </div>
+              {stats.map((line) => (
+                <div key={line} className="dev-items-stat-line">{line}</div>
+              ))}
+            </button>
+          )
+        })}
+    </div>
+  )
 }
 
 function defaultHeroId(session: GameSession): string | null {
@@ -69,7 +166,11 @@ function renderItemBlock(
   )
 }
 
-export function DevItemsPanel({ inCombat, onNotice }: DevItemsPanelProps) {
+export function DevItemsPanel({
+  inCombat,
+  onNotice,
+  section,
+}: DevItemsPanelProps) {
   const session = useSyncExternalStore(subscribe, getSession)
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [rollCount, setRollCount] = useState(20)
@@ -176,9 +277,14 @@ export function DevItemsPanel({ inCombat, onNotice }: DevItemsPanelProps) {
   const regenItems = hero ? heroDailyRegenFromItems(catalog, hero) : null
   const regenEffective = hero ? heroDailyRegenEffective(catalog, hero) : null
 
+  if (section === 'world') {
+    return (
+      <DevWorldItemsList session={session} catalog={catalog} onNotice={onNotice} />
+    )
+  }
+
   return (
-    <section className="dev-items-section" aria-labelledby="dev-items-title">
-      <h2 id="dev-items-title">Items</h2>
+    <>
       <div className="dev-items-controls">
         <label>
           Count
@@ -198,7 +304,7 @@ export function DevItemsPanel({ inCombat, onNotice }: DevItemsPanelProps) {
             onChange={(e) => setRollSeed(Number(e.target.value) || 0)}
           />
         </label>
-        <button type="button" onClick={() => void onRoll()}>
+        <button type="button" className="dev-popup-btn" onClick={() => void onRoll()}>
           Roll
         </button>
       </div>
@@ -241,6 +347,7 @@ export function DevItemsPanel({ inCombat, onNotice }: DevItemsPanelProps) {
         </label>
         <button
           type="button"
+          className="dev-popup-btn"
           onClick={() => void onGrant()}
           disabled={heroReadOnly}
         >
@@ -256,97 +363,18 @@ export function DevItemsPanel({ inCombat, onNotice }: DevItemsPanelProps) {
           To
           <input value={moveTo} onChange={(e) => setMoveTo(e.target.value)} />
         </label>
-        <button type="button" onClick={onMove} disabled={heroReadOnly}>
+        <button
+          type="button"
+          className="dev-popup-btn"
+          onClick={onMove}
+          disabled={heroReadOnly}
+        >
           Move
         </button>
       </div>
-      <h3>World items (chests + ground)</h3>
-      <div className="dev-items-world-list">
-        {(session.features ?? [])
-          .filter(
-            (
-              row,
-            ): row is Extract<MapFeature, { kind: 'chest' }> =>
-              row.kind === 'chest' && row.item != null,
-          )
-          .map((chest) => {
-            const item = chest.item!
-            const name = rolledItemDisplayName(catalog, item)
-            const stats = rolledItemStatLines(catalog, item)
-            return (
-              <button
-                key={chest.id}
-                type="button"
-                className="dev-items-world-row"
-                onClick={() => {
-                  centerMapOnHex(chest.position.q, chest.position.r)
-                  onNotice(`Centered on chest @ ${chest.position.q},${chest.position.r}`)
-                }}
-              >
-                <div>
-                  ({chest.position.q},{chest.position.r}) L{chest.level}
-                  {chest.open ? ' · Open' : ''}
-                </div>
-                <div style={{ color: rolledItemRarityColor(catalog, item) }}>
-                  {name}
-                </div>
-                <div className="dev-items-meta">
-                  {rolledItemRarityName(catalog, item)}
-                </div>
-                {stats.map((line) => (
-                  <div key={line} className="dev-items-stat-line">{line}</div>
-                ))}
-              </button>
-            )
-          })}
-        {(session.features ?? [])
-          .filter(
-            (
-              row,
-            ): row is Extract<MapFeature, { kind: 'ground_item' }> =>
-              row.kind === 'ground_item',
-          )
-          .map((ground) => {
-            const item = ground.item
-            const name = rolledItemDisplayName(catalog, item)
-            const stats = rolledItemStatLines(catalog, item)
-            const placement =
-              ground.pocket_id != null
-                ? `pocket #${ground.pocket_id} T${ground.pocket_tier ?? '?'}`
-                : ground.guard
-                  ? `standalone · guard (${ground.guard.q},${ground.guard.r}) T${ground.guard_tier ?? '?'}`
-                  : 'standalone'
-            return (
-              <button
-                key={ground.id}
-                type="button"
-                className="dev-items-world-row"
-                onClick={() => {
-                  centerMapOnHex(ground.position.q, ground.position.r)
-                  onNotice(
-                    `Centered on ground item @ ${ground.position.q},${ground.position.r}`,
-                  )
-                }}
-              >
-                <div>
-                  ({ground.position.q},{ground.position.r}) · {placement}
-                </div>
-                <div style={{ color: rolledItemRarityColor(catalog, item) }}>
-                  {name}
-                </div>
-                <div className="dev-items-meta">
-                  {rolledItemRarityName(catalog, item)}
-                </div>
-                {stats.map((line) => (
-                  <div key={line} className="dev-items-stat-line">{line}</div>
-                ))}
-              </button>
-            )
-          })}
-      </div>
       {hero ? (
         <>
-          <h3>Hero items — {hero.name}</h3>
+          <h3 className="dev-items-subhead">Hero items — {hero.name}</h3>
           <div className="dev-items-inventory">
             {EQUIPMENT_SLOT_IDS.map((slotId) => {
               const item = hero.equipment[slotId]
@@ -417,8 +445,18 @@ export function DevItemsPanel({ inCombat, onNotice }: DevItemsPanelProps) {
           </table>
         </>
       ) : (
-        <p>No hero on the map.</p>
+        <p className="dev-items-meta">No hero on the map.</p>
       )}
-    </section>
+      {section === 'all' ? (
+        <>
+          <h3 className="dev-items-subhead">World items (chests + ground)</h3>
+          <DevWorldItemsList
+            session={session}
+            catalog={catalog}
+            onNotice={onNotice}
+          />
+        </>
+      ) : null}
+    </>
   )
 }
