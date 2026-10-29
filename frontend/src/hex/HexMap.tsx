@@ -21,14 +21,46 @@ import { ambushMobOnHex, pathStepShowsAmbushDanger } from './mobAggro'
 import {
   boatEnterCost,
   boatOccupiedByHero,
+  boatSlideTimingCost,
   canSailOnto,
   enemyBoatOccupantAt,
   findBoatAt,
   isDisembarkLandHex,
 } from './boat'
-import { heroTravelSprite, loadTravelTexture, preloadHeroTravelSprites, HERO_TRAVEL_FILES } from './heroTravelSprite'
+import {
+  beginMountMoveSoundForStem,
+  setMountMoveSoundRate,
+  stopMountMoveSound,
+  warnMountMoveSoundMissingStem,
+} from '../audio/heroMountMoveSound'
+import { heroTravelSprite, loadTravelTexture, preloadHeroTravelSprites, HERO_TRAVEL_FILES, facingFromMove } from './heroTravelSprite'
+import {
+  ensureMountMoveConfigWarnings,
+  ensureMoveSheetStemLoading,
+  flipMountForFacing,
+  moveStepTimingCost,
+  mountMoveSettings,
+  preloadAllMountMoveSheets,
+  reportMountMoveSheetMissingStem,
+  textureFromMountMoveSheet,
+  worldHeroMoveVisibleToHuman,
+  type MountMoveSheet,
+  type MountMoveSheetLoadResult,
+} from './heroMountMoveAnim'
+import {
+  applyWorldSpriteScale,
+  ensureWorldSpriteScaleWarning,
+  worldHeroRingScaleFactor,
+  worldSpriteTargetHeight,
+} from './worldSpriteScale'
+import {
+  heroWorldPathCostOptions,
+  hexHeroMovementEnterCost,
+  shouldBlockMapNodeForPath,
+} from './worldHeroPath'
 import { strokeDashedPolyline, strokeRoadSegments } from './roadRender'
 import { flightSegmentSteps, townCircleLapSteps } from './flight'
+import { heroMoveSheetStem, preloadTransportMoveSheetStems } from './flightTransport'
 import {
   createWaypointPlan,
   tryAppendWaypoint,
@@ -83,9 +115,6 @@ import {
   townFootprintBottomRow,
   townFootprintOrigin,
 } from './townFootprint'
-import {
-  hexTransitionMoveCost,
-} from './terrainTransition'
 import { clientPointInElement } from '../layout/clientPointer'
 import { buildWorld, fetchTestGridOnce, forEachTile, getTile, getExploredHexes, isBridgeHex, isExplored, markExplored, restoreExplored } from './world'
 import { worldHoverTooltipText } from './worldTooltip'
@@ -340,15 +369,20 @@ function gridHasResourceIds(grid: TestGridResponse): boolean {
  * Explored map objects to path around. Heroes are always blocked.
  * Defended enemy towns stay blocked (approach adjacent; never walk on).
  * Undefended enemy towns, own/unowned towns, resource nodes, and fountains
- * are blocked unless they are `walkOnto` (the clicked destination).
+ * are blocked unless they are `walkOnto` (the clicked destination). Own mines
+ * are walkable for transit (destination capture unchanged).
  */
-function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
+function obstacleHexes(
+  mover: Axial,
+  walkOnto?: Axial | null,
+  moverPlayerId?: string | null,
+): Set<string> {
   const blocked = new Set<string>()
   const ontoKey =
     walkOnto != null ? `${walkOnto.q},${walkOnto.r}` : ''
   const session = getSession()
-  const self = session.heroes.find((hero) => hero.id === selectedMapHeroId)
-  const playerId = self?.player_id ?? null
+  const moverHero = session.heroes.find((hero) => hero.id === selectedMapHeroId)
+  const playerId = moverPlayerId ?? moverHero?.player_id ?? null
   const add = (q: number, r: number) => {
     if (q === mover.q && r === mover.r) {
       return
@@ -380,7 +414,7 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
       town.player_id != null &&
       playerId != null &&
       town.player_id !== playerId
-    if (enemyOwned && !townIsUndefended(session, town, self?.id)) {
+    if (enemyOwned && !townIsUndefended(session, town, moverHero?.id)) {
       if (!(entry.q === mover.q && entry.r === mover.r)) {
         blocked.add(`${entry.q},${entry.r}`)
       }
@@ -389,7 +423,7 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     add(entry.q, entry.r)
   }
   for (const node of session.nodes) {
-    if (node.kind === 'pickup' && node.collected) {
+    if (!shouldBlockMapNodeForPath(session, node, playerId)) {
       continue
     }
     add(node.position.q, node.position.r)
@@ -405,6 +439,15 @@ function obstacleHexes(mover: Axial, walkOnto?: Axial | null): Set<string> {
     add(boat.position.q, boat.position.r)
   }
   return blocked
+}
+
+function pathCostForMovingHero(moverPlayerId?: string | null) {
+  const session = getSession()
+  const playerId =
+    moverPlayerId ??
+    session.heroes.find((hero) => hero.id === selectedMapHeroId)?.player_id ??
+    null
+  return heroWorldPathCostOptions(session, playerId)
 }
 
 function sailDestForLandGoal(
@@ -1327,7 +1370,48 @@ export function HexMap({
       >()
       const travelArtByFile = new Map<string, Texture | null>()
       const travelArtLoading = new Set<string>()
+      const moveSheetsByStem = new Map<string, MountMoveSheet | null>()
+      const moveSheetLoadingStems = new Set<string>()
+      type HeroMoveVisual = {
+        x: number
+        y: number
+        flipX: boolean
+        moving: boolean
+        animFrameAcc: number
+        moveSheetStem: string
+      }
+      const heroMoveVisuals = new Map<string, HeroMoveVisual>()
+      let mountMoveConfigChecked = false
+      let worldSpriteScaleChecked = false
       preloadHeroTravelSprites(getCachedCatalog())
+      const moveSheetKey = (stem: string) => stem.toLowerCase()
+      const refreshMoveSheetLoad = (
+        result: MountMoveSheetLoadResult,
+        stem: string,
+      ) => {
+        if (result.sheet == null && result.fail) {
+          updateSession((current) =>
+            reportMountMoveSheetMissingStem(current, stem, result.fail!),
+          )
+        }
+        if (!cancelled) {
+          placeHeroMarkers()
+        }
+      }
+      preloadAllMountMoveSheets(
+        getCachedCatalog(),
+        moveSheetsByStem,
+        moveSheetLoadingStems,
+        refreshMoveSheetLoad,
+      )
+      preloadTransportMoveSheetStems(getCachedCatalog(), (stem) => {
+        ensureMoveSheetStemLoading(
+          stem,
+          moveSheetsByStem,
+          moveSheetLoadingStems,
+          (result) => refreshMoveSheetLoad(result, stem),
+        )
+      })
       const mobMarkers = new Map<
         string,
         {
@@ -2594,21 +2678,29 @@ export function HexMap({
           if (!marker?.view.visible) {
             continue
           }
+          const slide = heroMoveVisuals.get(hero.id)
           const hex =
             grid.getHex(hero.position) ?? grid.createHex(hero.position)
           const c = hexCenter(hex, offsetX, offsetY)
-          const same = getSession().heroes.filter(
-            (h) =>
-              heroVisibleOnMap(h) &&
-              h.position.q === hero.position.q &&
-              h.position.r === hero.position.r,
-          )
-          let spread = 0
-          if (same.length > 1) {
-            const index = same.findIndex((h) => h.id === hero.id)
-            spread = (index - (same.length - 1) / 2) * hexSize * 0.45
+          let worldX = c.x
+          let worldY = c.y
+          if (slide) {
+            worldX = slide.x
+            worldY = slide.y
+          } else {
+            const same = getSession().heroes.filter(
+              (h) =>
+                heroVisibleOnMap(h) &&
+                h.position.q === hero.position.q &&
+                h.position.r === hero.position.r,
+            )
+            if (same.length > 1) {
+              const index = same.findIndex((h) => h.id === hero.id)
+              worldX +=
+                (index - (same.length - 1) / 2) * hexSize * 0.45
+            }
           }
-          placeUnit(marker.view, hero.position, c.x + spread, c.y)
+          placeUnit(marker.view, hero.position, worldX, worldY)
         }
         for (const mob of getSession().mobs) {
           const marker = mobMarkers.get(mob.id)
@@ -2676,7 +2768,8 @@ export function HexMap({
 
       const placeEmptyBoatMarkers = () => {
         const session = getSession()
-        const token = hexSize * 0.5 * 2
+        const catalog = getCachedCatalog()
+        const targetH = worldSpriteTargetHeight(hexSize, catalog)
         const seen = new Set<string>()
         for (const boat of session.boats ?? []) {
           if (boat.occupant_hero_id != null) {
@@ -2703,7 +2796,7 @@ export function HexMap({
             const view = new Container()
             const badge = new Graphics()
             const sprite = new Sprite()
-            sprite.anchor.set(0.5)
+            sprite.anchor.set(0.5, 0.5)
             view.addChild(badge, sprite)
             heroLayer.addChild(view)
             entry = { view, badge, sprite }
@@ -2718,9 +2811,8 @@ export function HexMap({
           entry.sprite.visible = hasArt
           entry.badge.visible = !hasArt
           if (hasArt && texture) {
-            const scale = Math.min(token / texture.width, token / texture.height)
             entry.sprite.texture = texture
-            entry.sprite.scale.set(scale)
+            applyWorldSpriteScale(entry.sprite, texture, targetH)
           } else {
             entry.badge.clear()
             entry.badge.circle(0, 0, hexSize * 0.35)
@@ -2746,6 +2838,22 @@ export function HexMap({
 
       const placeHeroMarkers = () => {
         const session = getSession()
+        const catalog = getCachedCatalog()
+        if (!mountMoveConfigChecked) {
+          mountMoveConfigChecked = true
+          updateSession((current) =>
+            ensureMountMoveConfigWarnings(current, catalog),
+          )
+        }
+        if (!worldSpriteScaleChecked) {
+          worldSpriteScaleChecked = true
+          updateSession((current) =>
+            ensureWorldSpriteScaleWarning(current, catalog),
+          )
+        }
+        const moveSettings = mountMoveSettings(catalog)
+        const targetH = worldSpriteTargetHeight(hexSize, catalog)
+        const ringFactor = worldHeroRingScaleFactor(targetH, hexSize)
         const sessionHeroes = session.heroes
         const counts = new Map<string, number>()
         const indexOnHex = new Map<string, number>()
@@ -2762,8 +2870,35 @@ export function HexMap({
         for (const hero of sessionHeroes) {
           seen.add(hero.id)
           const travel = heroTravelSprite(hero, session)
+          const moveStem = heroMoveSheetStem(hero, session, catalog)
+          const moveVisual = heroMoveVisuals.get(hero.id)
           let texture: Texture | null = null
-          if (travel) {
+          let flipX = travel.flipX
+          if (moveStem) {
+            ensureMoveSheetStemLoading(
+              moveStem,
+              moveSheetsByStem,
+              moveSheetLoadingStems,
+              (result) => refreshMoveSheetLoad(result, moveStem),
+            )
+            const sheet = moveSheetsByStem.get(moveSheetKey(moveStem))
+            if (sheet && sheet.stand.width >= 1) {
+              const picked = textureFromMountMoveSheet(sheet, {
+                moving: moveVisual?.moving === true,
+                animFrameAcc: moveVisual?.animFrameAcc ?? 0,
+                animFps: moveSettings.animFps,
+                flipXMoving: moveVisual?.flipX ?? travel.flipX,
+                flipXStanding: travel.flipX,
+              })
+              texture = picked.texture
+              flipX = picked.flipX
+            }
+          }
+          const sheetFailed =
+            moveStem != null &&
+            moveSheetsByStem.has(moveSheetKey(moveStem)) &&
+            moveSheetsByStem.get(moveSheetKey(moveStem)) == null
+          if (!texture && travel && (!moveStem || sheetFailed)) {
             const file = travel.file
             if (travelArtByFile.has(file)) {
               texture = travelArtByFile.get(file) ?? null
@@ -2783,7 +2918,7 @@ export function HexMap({
             const view = new Container()
             const badge = new Graphics()
             const sprite = new Sprite()
-            sprite.anchor.set(0.5)
+            sprite.anchor.set(0.5, 0.5)
             const label = new Text({
               text: hero.name,
               style: {
@@ -2806,44 +2941,44 @@ export function HexMap({
           if (!visible) {
             continue
           }
-          const selected = heroRef.current?.id === hero.id
-          // Fit travel art to roughly one hex (same budget as feature tokens).
-          const token = hexSize * 0.9 * 2
+          const selected =
+            heroRef.current?.id === hero.id || selectedMapHeroId === hero.id
           const hasArt =
             texture != null && texture.width >= 1 && texture.height >= 1
           entry.sprite.visible = hasArt
           entry.badge.visible = true
-          entry.label.visible = true
+          entry.label.visible = selected
           const ownerColor =
             ownerTint(hero.player_id) ?? NEUTRAL_OBJECT_COLOR
           if (hasArt && texture) {
-            const scale = Math.min(token / texture.width, token / texture.height)
             entry.sprite.texture = texture
-            entry.sprite.scale.set(
-              travel.flipX ? -Math.abs(scale) : Math.abs(scale),
-              Math.abs(scale),
-            )
-            // Owner-coloured base under the sprite + ring for selection.
+            applyWorldSpriteScale(entry.sprite, texture, targetH, flipX)
             entry.badge.clear()
-            entry.badge.circle(0, hexSize * 0.12, hexSize * 0.38)
-            entry.badge.fill({ color: ownerColor, alpha: 0.85 })
-            entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
+            entry.badge.circle(
+              0,
+              0,
+              hexSize * (selected ? 0.62 : 0.55) * ringFactor,
+            )
             entry.badge.stroke({
               width: selected ? 3 : 2,
               color: selected ? 0xffffff : ownerColor,
             })
-            entry.label.position.set(0, hexSize * 0.78)
+            entry.label.position.set(0, hexSize + Math.max(4, hexSize * 0.06))
             entry.label.style.fill = 0xffffff
           } else {
             // Missing-art fallback: original circle + name token.
             entry.badge.clear()
-            entry.badge.circle(0, 0, hexSize * (selected ? 0.62 : 0.55))
+            entry.badge.circle(
+              0,
+              0,
+              hexSize * (selected ? 0.62 : 0.55) * ringFactor,
+            )
             entry.badge.fill({ color: ownerColor })
             entry.badge.stroke({
               width: selected ? 3 : 2,
               color: selected ? 0xffffff : 0x111111,
             })
-            entry.label.position.set(0, 0)
+            entry.label.position.set(0, hexSize + Math.max(4, hexSize * 0.06))
           }
           const hex = grid.getHex(hero.position) ?? grid.createHex(hero.position)
           const center = hexCenter(hex, offsetX, offsetY)
@@ -2852,7 +2987,11 @@ export function HexMap({
           const index = indexOnHex.get(hero.id) ?? 0
           const spread =
             count > 1 ? (index - (count - 1) / 2) * hexSize * 0.45 : 0
-          entry.view.position.set(center.x + spread, center.y)
+          if (moveVisual) {
+            entry.view.position.set(moveVisual.x, moveVisual.y)
+          } else {
+            entry.view.position.set(center.x + spread, center.y)
+          }
         }
         for (const [id, entry] of heroMarkers) {
           if (seen.has(id)) {
@@ -2869,7 +3008,7 @@ export function HexMap({
       const placeMobMarkers = () => {
         const session = getSession()
         const catalog = getCachedCatalog()
-        const token = hexSize * 0.42 * 2
+        const targetH = worldSpriteTargetHeight(hexSize, catalog)
         const seen = new Set<string>()
         for (const mob of session.mobs) {
           seen.add(mob.id)
@@ -2899,7 +3038,7 @@ export function HexMap({
             const view = new Container()
             const badge = new Graphics()
             const sprite = new Sprite()
-            sprite.anchor.set(0.5)
+            sprite.anchor.set(0.5, 0.5)
             const label = new Text({
               text: mobLabel(session, catalog, mob),
               style: {
@@ -2937,13 +3076,17 @@ export function HexMap({
           entry.label.visible = !hasArt
           entry.qty.visible = hasArt
           if (hasArt && texture) {
-            const scale = Math.min(token / texture.width, token / texture.height)
             entry.sprite.texture = texture
-            entry.sprite.scale.set(scale)
+            applyWorldSpriteScale(entry.sprite, texture, targetH)
             entry.qty.text = formatAmount(
               lead ? mobUnitQty(session, mob, lead.unit_id) : 0,
             )
-            entry.qty.position.set(token / 2, token / 2)
+            const halfW = Math.abs(entry.sprite.width) * 0.5
+            const halfH = Math.abs(entry.sprite.height) * 0.5
+            entry.qty.position.set(
+              halfW - 2,
+              -halfH + Math.max(6, hexSize * 0.12),
+            )
           } else {
             entry.badge.clear()
             entry.badge.circle(0, 0, hexSize * 0.42)
@@ -2971,12 +3114,16 @@ export function HexMap({
         placeEmptyBoatMarkers()
       }
 
+      const panToWorldPoint = (worldX: number, worldY: number) => {
+        camera.x = worldX - instance.screen.width / 2
+        camera.y = worldY - instance.screen.height / 2
+        applyCamera()
+      }
+
       const panToHex = (q: number, r: number) => {
         const hex = grid.getHex({ q, r }) ?? grid.createHex({ q, r })
         const center = hexCenter(hex, offsetX, offsetY)
-        camera.x = center.x - instance.screen.width / 2
-        camera.y = center.y - instance.screen.height / 2
-        applyCamera()
+        panToWorldPoint(center.x, center.y)
       }
       panMapToHex = panToHex
       readMapCameraHex = () => {
@@ -2995,6 +3142,11 @@ export function HexMap({
         }
         const hero = heroRef.current
         if (!hero) {
+          return
+        }
+        const slide = heroMoveVisuals.get(hero.id)
+        if (slide) {
+          panToWorldPoint(slide.x, slide.y)
           return
         }
         panToHex(hero.q, hero.r)
@@ -3318,6 +3470,9 @@ export function HexMap({
         moveGen += 1
         moving = false
         waypointPlan = null
+        heroMoveVisuals.clear()
+        stopMountMoveSound(200)
+        placeHeroMarkers()
       }
       syncSelectedHeroFromSessionFn = () => {
         const id = selectedMapHeroId ?? heroRef.current?.id
@@ -3661,12 +3816,68 @@ export function HexMap({
                 budget,
                 hoverBlocked,
               )
-            : movementSteps(grid, from, dest, budget, hoverBlocked)
+            : movementSteps(
+                grid,
+                from,
+                dest,
+                budget,
+                hoverBlocked,
+                pathCostForMovingHero(),
+              )
         if (steps.length === 0 && !(waypointPlan && waypointPlan.steps.length > 0)) {
           preview.clear()
           return
         }
         drawPreview([...(waypointPlan?.steps ?? []), ...steps], mob ?? null)
+      }
+
+      const slideHeroSegment = async (
+        heroId: string,
+        moveSheetStem: string,
+        from: Axial,
+        to: Axial,
+        secPerHex: number,
+        stepCost: number,
+        animFps: number | null,
+        signal: AbortSignal,
+      ): Promise<void> => {
+        const fromHex = grid.getHex(from) ?? grid.createHex(from)
+        const toHex = grid.getHex(to) ?? grid.createHex(to)
+        const startCenter = hexCenter(fromHex, offsetX, offsetY)
+        const endCenter = hexCenter(toHex, offsetX, offsetY)
+        const facing = facingFromMove(from, to) ?? 'right'
+        const flipX = flipMountForFacing(facing)
+        const durationMs = secPerHex * stepCost * 1000
+        const prevVisual = heroMoveVisuals.get(heroId)
+        let animFrameAcc = prevVisual?.animFrameAcc ?? 0
+        let lastTick = performance.now()
+        const started = performance.now()
+        while (true) {
+          if (signal.aborted) {
+            return
+          }
+          const now = performance.now()
+          const deltaMs = now - lastTick
+          lastTick = now
+          if (animFps != null && animFps > 0 && stepCost > 0) {
+            animFrameAcc += (deltaMs / 1000) * (animFps / stepCost)
+          }
+          const t = Math.min(1, (now - started) / durationMs)
+          heroMoveVisuals.set(heroId, {
+            x: startCenter.x + (endCenter.x - startCenter.x) * t,
+            y: startCenter.y + (endCenter.y - startCenter.y) * t,
+            flipX,
+            moving: true,
+            animFrameAcc,
+            moveSheetStem,
+          })
+          placeHeroMarkers()
+          followHero()
+          if (t >= 1) {
+            break
+          }
+          await sleep(16, signal)
+        }
       }
 
       const tryMoveTo = (
@@ -3753,60 +3964,107 @@ export function HexMap({
           clearPreview()
           return new Promise((resolve) => {
             void (async () => {
+              const catalog = getCachedCatalog()
+              const moveCfg = mountMoveSettings(catalog)
+              const useSlide =
+                moveCfg.secPerHex != null &&
+                liveHero != null &&
+                worldHeroMoveVisibleToHuman(getSession(), liveHero)
+              const moveStem = liveHero
+                ? heroMoveSheetStem(liveHero, getSession(), catalog)
+                : null
+              let prev: Axial = { q: hero.q, r: hero.r }
               let stepsTaken = 0
-              for (let stepIndex = 0; stepIndex < sailSteps.length; stepIndex += 1) {
-                const hex = sailSteps[stepIndex]!
-                if (signal.aborted || gen !== moveGen || !heroRef.current) {
-                  break
+              let mountSoundOn = false
+              try {
+                for (let stepIndex = 0; stepIndex < sailSteps.length; stepIndex += 1) {
+                  const hex = sailSteps[stepIndex]!
+                  if (signal.aborted || gen !== moveGen || !heroRef.current) {
+                    break
+                  }
+                  const lastStep = stepIndex === sailSteps.length - 1
+                  if (lastStep && isBridgeHex(hex.q, hex.r)) {
+                    break
+                  }
+                  const naval = enemyBoatOccupantAt(
+                    getSession(),
+                    hex.q,
+                    hex.r,
+                    moverPlayerId,
+                  )
+                  if (naval) {
+                    break
+                  }
+                  const timingCost = boatSlideTimingCost(catalog, hex.q, hex.r)
+                  if (useSlide && moveStem && moveCfg.secPerHex != null) {
+                    const playbackRate = 1 / timingCost
+                    if (!mountSoundOn) {
+                      const soundStart = await beginMountMoveSoundForStem(
+                        moveStem,
+                        playbackRate,
+                      )
+                      if (soundStart === 'missing') {
+                        updateSession((current) =>
+                          warnMountMoveSoundMissingStem(current, moveStem),
+                        )
+                      } else if (soundStart === 'playing') {
+                        mountSoundOn = true
+                      }
+                    } else {
+                      setMountMoveSoundRate(playbackRate)
+                    }
+                    await slideHeroSegment(
+                      hero.id,
+                      moveStem,
+                      prev,
+                      hex,
+                      moveCfg.secPerHex,
+                      timingCost,
+                      moveCfg.animFps,
+                      signal,
+                    )
+                  } else {
+                    await sleep(MOVE_STEP_MS, signal)
+                  }
+                  heroRef.current.q = hex.q
+                  heroRef.current.r = hex.r
+                  const cost = boatEnterCost(hex.q, hex.r)
+                  if (cost == null) {
+                    break
+                  }
+                  heroRef.current.remaining = spendMovement(
+                    heroRef.current.remaining,
+                    cost,
+                  )
+                  onHeroState({
+                    id: heroRef.current.id,
+                    q: heroRef.current.q,
+                    r: heroRef.current.r,
+                    remaining: heroRef.current.remaining,
+                  })
+                  const moved = heroRef.current
+                  updateSession((current) =>
+                    syncHeroBoatPosition(
+                      current,
+                      moved.id,
+                      { q: moved.q, r: moved.r },
+                      moved.remaining,
+                    ),
+                  )
+                  placeHeroMarkers()
+                  placeMobMarkers()
+                  exploreAround(heroRef.current)
+                  followHero()
+                  stepsTaken += 1
+                  prev = { q: hex.q, r: hex.r }
+                  if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
+                    break
+                  }
                 }
-                const lastStep = stepIndex === sailSteps.length - 1
-                if (lastStep && isBridgeHex(hex.q, hex.r)) {
-                  break
-                }
-                const naval = enemyBoatOccupantAt(
-                  getSession(),
-                  hex.q,
-                  hex.r,
-                  moverPlayerId,
-                )
-                if (naval) {
-                  // Stop adjacent; combat is started by the caller (click / AI attack).
-                  break
-                }
-                heroRef.current.q = hex.q
-                heroRef.current.r = hex.r
-                const cost = boatEnterCost(hex.q, hex.r)
-                if (cost == null) {
-                  break
-                }
-                heroRef.current.remaining = spendMovement(
-                  heroRef.current.remaining,
-                  cost,
-                )
-                onHeroState({
-                  id: heroRef.current.id,
-                  q: heroRef.current.q,
-                  r: heroRef.current.r,
-                  remaining: heroRef.current.remaining,
-                })
-                const moved = heroRef.current
-                updateSession((current) =>
-                  syncHeroBoatPosition(
-                    current,
-                    moved.id,
-                    { q: moved.q, r: moved.r },
-                    moved.remaining,
-                  ),
-                )
+              } finally {
+                stopMountMoveSound(200)
+                heroMoveVisuals.delete(hero.id)
                 placeHeroMarkers()
-                placeMobMarkers()
-                exploreAround(heroRef.current)
-                followHero()
-                stepsTaken += 1
-                if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
-                  break
-                }
-                await sleep(MOVE_STEP_MS, signal)
               }
               if (gen === moveGen) {
                 moving = false
@@ -3857,6 +4115,7 @@ export function HexMap({
                   to,
                   hero.remaining,
                   obstacleHexes(hero, walkOnto),
+                  pathCostForMovingHero(),
                 ).map((hex) => ({ q: hex.q, r: hex.r }))
         if (steps.length === 0) {
           return Promise.resolve(false)
@@ -3866,65 +4125,138 @@ export function HexMap({
         clearPreview()
         return new Promise((resolve) => {
           void (async () => {
+            const catalog = getCachedCatalog()
+            const sessionHero =
+              liveHero ?? getSession().heroes.find((row) => row.id === hero.id)
+            const moveCfg = mountMoveSettings(catalog)
+            const useSlide =
+              moveCfg.secPerHex != null &&
+              sessionHero != null &&
+              worldHeroMoveVisibleToHuman(getSession(), sessionHero)
+            let prev: Axial = { q: hero.q, r: hero.r }
             let stepsTaken = 0
-            for (const hex of steps) {
-              if (signal.aborted || gen !== moveGen || !heroRef.current) {
-                break
-              }
-              heroRef.current.q = hex.q
-              heroRef.current.r = hex.r
-              const cost =
-                boardingBoat &&
-                walkOnto &&
-                hex.q === walkOnto.q &&
-                hex.r === walkOnto.r
-                  ? 1
-                  : hexTransitionMoveCost(getCachedCatalog(), hex.q, hex.r)
-              if (cost == null) {
-                break
-              }
-              heroRef.current.remaining = spendMovement(
-                heroRef.current.remaining,
-                cost,
-              )
-              onHeroState({
-                id: heroRef.current.id,
-                q: heroRef.current.q,
-                r: heroRef.current.r,
-                remaining: heroRef.current.remaining,
-              })
-              const moved = heroRef.current
-              if (!moved) {
-                break
-              }
-              updateSession((current) =>
-                syncHero(
-                  current,
-                  { q: moved.q, r: moved.r },
-                  moved.remaining,
-                  moved.id,
-                ),
-              )
-              placeHeroMarkers()
-              placeMobMarkers()
-              exploreAround(heroRef.current)
-              followHero()
-              stepsTaken += 1
-              if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
-                break
-              }
-              if (
-                walkOnto &&
-                hex.q === walkOnto.q &&
-                hex.r === walkOnto.r &&
-                findGroundItemAt(getSession(), hex.q, hex.r)
-              ) {
-                if (await checkGroundItemGuard({ q: hex.q, r: hex.r })) {
+            let mountSoundOn = false
+            try {
+              for (const hex of steps) {
+                if (signal.aborted || gen !== moveGen || !heroRef.current) {
                   break
                 }
+                const cost =
+                  boardingBoat &&
+                  walkOnto &&
+                  hex.q === walkOnto.q &&
+                  hex.r === walkOnto.r
+                    ? 1
+                    : hexHeroMovementEnterCost(
+                        catalog,
+                        getSession(),
+                        hex.q,
+                        hex.r,
+                        sessionHero?.player_id,
+                      )
+                if (cost == null) {
+                  break
+                }
+                let timingCost = cost
+                if (useSlide) {
+                  updateSession((current) => {
+                    const timing = moveStepTimingCost(
+                      current,
+                      hex.q,
+                      hex.r,
+                      cost,
+                    )
+                    timingCost = timing.timingCost
+                    return timing.session
+                  })
+                }
+                if (useSlide && sessionHero && moveCfg.secPerHex != null) {
+                  const moveStem = heroMoveSheetStem(
+                    sessionHero,
+                    getSession(),
+                    catalog,
+                  )
+                  if (moveStem) {
+                    const playbackRate = 1 / timingCost
+                    if (!mountSoundOn) {
+                      const soundStart = await beginMountMoveSoundForStem(
+                        moveStem,
+                        playbackRate,
+                      )
+                      if (soundStart === 'missing') {
+                        updateSession((current) =>
+                          warnMountMoveSoundMissingStem(current, moveStem),
+                        )
+                      } else if (soundStart === 'playing') {
+                        mountSoundOn = true
+                      }
+                    } else {
+                      setMountMoveSoundRate(playbackRate)
+                    }
+                    await slideHeroSegment(
+                      hero.id,
+                      moveStem,
+                      prev,
+                      hex,
+                      moveCfg.secPerHex,
+                      timingCost,
+                      moveCfg.animFps,
+                      signal,
+                    )
+                  }
+                }
+                heroRef.current.q = hex.q
+                heroRef.current.r = hex.r
+                heroRef.current.remaining = spendMovement(
+                  heroRef.current.remaining,
+                  cost,
+                )
+                onHeroState({
+                  id: heroRef.current.id,
+                  q: heroRef.current.q,
+                  r: heroRef.current.r,
+                  remaining: heroRef.current.remaining,
+                })
+                const moved = heroRef.current
+                if (!moved) {
+                  break
+                }
+                updateSession((current) =>
+                  syncHero(
+                    current,
+                    { q: moved.q, r: moved.r },
+                    moved.remaining,
+                    moved.id,
+                  ),
+                )
+                placeHeroMarkers()
+                placeMobMarkers()
+                exploreAround(heroRef.current)
+                followHero()
+                stepsTaken += 1
+                prev = { q: hex.q, r: hex.r }
+                if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
+                  break
+                }
+                if (
+                  walkOnto &&
+                  hex.q === walkOnto.q &&
+                  hex.r === walkOnto.r &&
+                  findGroundItemAt(getSession(), hex.q, hex.r)
+                ) {
+                  if (await checkGroundItemGuard({ q: hex.q, r: hex.r })) {
+                    break
+                  }
+                }
+                if (!useSlide) {
+                  await sleep(MOVE_STEP_MS, signal)
+                }
               }
-              await sleep(MOVE_STEP_MS, signal)
+            } finally {
+              stopMountMoveSound(200)
             }
+            heroMoveVisuals.delete(hero.id)
+            placeHeroMarkers()
             if (gen === moveGen) {
               moving = false
               const mover = heroRef.current
@@ -3978,34 +4310,83 @@ export function HexMap({
         const followWas = cameraFollowMoves
         cameraFollowMoves = true
 
+        const catalog = getCachedCatalog()
+        const moveCfg = mountMoveSettings(catalog)
+        const moveStem = heroMoveSheetStem(live, getSession(), catalog)
+        const useSlide =
+          moveCfg.secPerHex != null &&
+          worldHeroMoveVisibleToHuman(getSession(), live)
+
         const walkPath = async (steps: Axial[]) => {
-          for (const hex of steps) {
-            if (signal.aborted || gen !== moveGen || !heroRef.current) {
-              return
+          let prev: Axial = {
+            q: heroRef.current?.q ?? live.position.q,
+            r: heroRef.current?.r ?? live.position.r,
+          }
+          let mountSoundOn = false
+          try {
+            for (const hex of steps) {
+              if (signal.aborted || gen !== moveGen || !heroRef.current) {
+                return
+              }
+              const stepCost = 1
+              if (useSlide && moveStem && moveCfg.secPerHex != null) {
+                const playbackRate = 1 / stepCost
+                if (!mountSoundOn) {
+                  const soundStart = await beginMountMoveSoundForStem(
+                    moveStem,
+                    playbackRate,
+                  )
+                  if (soundStart === 'missing') {
+                    updateSession((current) =>
+                      warnMountMoveSoundMissingStem(current, moveStem),
+                    )
+                  } else if (soundStart === 'playing') {
+                    mountSoundOn = true
+                  }
+                } else {
+                  setMountMoveSoundRate(playbackRate)
+                }
+                await slideHeroSegment(
+                  heroId,
+                  moveStem,
+                  prev,
+                  hex,
+                  moveCfg.secPerHex,
+                  stepCost,
+                  moveCfg.animFps,
+                  signal,
+                )
+              } else {
+                await sleep(MOVE_STEP_MS, signal)
+              }
+              heroRef.current.q = hex.q
+              heroRef.current.r = hex.r
+              heroRef.current.remaining = 0
+              onHeroState({
+                id: heroRef.current.id,
+                q: heroRef.current.q,
+                r: heroRef.current.r,
+                remaining: 0,
+              })
+              updateSession((current) =>
+                syncHeroFlightPosition(
+                  current,
+                  { q: hex.q, r: hex.r },
+                  heroId,
+                ),
+              )
+              placeHeroMarkers()
+              placeMobMarkers()
+              followHero()
+              prev = { q: hex.q, r: hex.r }
+              if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
+                break
+              }
             }
-            heroRef.current.q = hex.q
-            heroRef.current.r = hex.r
-            heroRef.current.remaining = 0
-            onHeroState({
-              id: heroRef.current.id,
-              q: heroRef.current.q,
-              r: heroRef.current.r,
-              remaining: 0,
-            })
-            updateSession((current) =>
-              syncHeroFlightPosition(
-                current,
-                { q: hex.q, r: hex.r },
-                heroId,
-              ),
-            )
+          } finally {
+            stopMountMoveSound(200)
+            heroMoveVisuals.delete(heroId)
             placeHeroMarkers()
-            placeMobMarkers()
-            followHero()
-            if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
-              break
-            }
-            await sleep(MOVE_STEP_MS, signal)
           }
         }
 
@@ -4155,12 +4536,14 @@ export function HexMap({
             return
           }
           const blocked = obstacleHexes(hero, walkOnto)
+          const pathOpts = pathCostForMovingHero()
           const leg = resolveWorldWaypointLeg(
             grid,
             waypointPlan.end,
             dest,
             waypointPlan.remaining,
             blocked,
+            pathOpts,
           )
           if (!leg) {
             clearWaypoints()
@@ -4271,6 +4654,7 @@ export function HexMap({
               ? hex
               : null
           const blocked = obstacleHexes(hero, walkOnto)
+          const pathOpts = pathCostForMovingHero()
           const base =
             waypointPlan &&
             waypointPlan.origin.q === hero.q &&
@@ -4281,7 +4665,7 @@ export function HexMap({
                   hero.remaining,
                 )
           const next = tryAppendWaypoint(base, hex, (from, to, budget) =>
-            resolveWorldWaypointLeg(grid, from, to, budget, blocked),
+            resolveWorldWaypointLeg(grid, from, to, budget, blocked, pathOpts),
           )
           if (!next) {
             return

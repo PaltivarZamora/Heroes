@@ -145,15 +145,17 @@ import { warRoomSiegeMult } from '../town/townUniques'
 import { resolveAttack, pickAutoAttackTarget, heroForSide, type HitFlashColor } from './attack'
 import { combatOwnerPlayer, decideCombatAction } from '../ai/combat'
 import { decideHeroAbility } from '../ai/heroAbility'
+import { allyHealMissingConfigLogLine } from '../ai/allyHealCombat'
 import {
   applyConsumedCondition,
   confuseConditionId,
   fearConditionId,
   isConfused,
   isFeared,
-  isMagicAttackSilenced,
+  unitAttackBlockLogLine,
   isPolymorphed,
   isStunned,
+  isUnitAttackBlocked,
   pickFleeSteps,
   pickRetreatSteps,
   polymorphConditionName,
@@ -817,7 +819,10 @@ export function CombatScreen({
     if (!catalog || !field) {
       return false
     }
-    const fire = intent.fire || intent.afterMove === 'pulse'
+    const live = current.stacks.find((row) => row.id === stack.id) ?? stack
+    const attackBlocked = isUnitAttackBlocked(live, catalog)
+    const fire =
+      (intent.fire || intent.afterMove === 'pulse') && !attackBlocked
     const allowFriendly = intent.allowFriendly === true
     const prefix = intent.logPrefix ?? []
     const stand = actingStand({ q: stack.q, r: stack.r }, intent.steps)
@@ -878,6 +883,7 @@ export function CombatScreen({
             field.tiles,
           )
           latest = left.battle
+          trapLines.push(...left.lines)
           if (left.tiles && left.tiles !== field.tiles) {
             setField((prev) =>
               prev ? { ...prev, tiles: left.tiles! } : prev,
@@ -902,6 +908,7 @@ export function CombatScreen({
             field.tiles,
           )
           latest = left.battle
+          trapLines.push(...left.lines)
           if (left.tiles && left.tiles !== field.tiles) {
             setField((prev) =>
               prev ? { ...prev, tiles: left.tiles! } : prev,
@@ -1953,9 +1960,10 @@ export function CombatScreen({
           hitKeys: [] as string[],
         }
       : applyStandingHazards(current, stackId, cat, tiles, combatHeroesRef.current)
-    const ended = alreadyActed
-      ? tick.battle
-      : endStackTurn(tick.battle, stackId, wasteExtraTurn)
+    const endedTurn = alreadyActed
+      ? { battle: tick.battle, lines: [] as string[] }
+      : endStackTurn(tick.battle, stackId, wasteExtraTurn, cat ?? undefined)
+    const ended = endedTurn.battle
     const silenced = applyOwnSilenceAfterTurn(ended, stackId, cat)
     let next = silenced.battle
     const actor = next.stacks.find((row) => row.id === stackId) ?? null
@@ -1988,6 +1996,7 @@ export function CombatScreen({
     const lines = [
       ...extraLines,
       ...tick.lines,
+      ...endedTurn.lines,
       ...(silenced.line ? [silenced.line] : []),
       ...fervorLines,
     ]
@@ -2040,9 +2049,10 @@ export function CombatScreen({
             combatHeroesRef.current,
           )
         : { battle: resolved.battle, lines: [] as string[], hitKeys: [] as string[] }
-    const ended = actor
-      ? endStackTurn(tick.battle, actor.id)
-      : tick.battle
+    const endedTurn = actor
+      ? endStackTurn(tick.battle, actor.id, false, cat ?? undefined)
+      : { battle: tick.battle, lines: [] as string[] }
+    const ended = endedTurn.battle
     const silenced =
       cat && actor
         ? applyOwnSilenceAfterTurn(ended, actor.id, cat)
@@ -2116,6 +2126,7 @@ export function CombatScreen({
       ...trapSetLines,
       ...resolved.log.lines,
       ...tick.lines,
+      ...endedTurn.lines,
       ...(silenced.line ? [silenced.line] : []),
       ...fervorLines,
     ]
@@ -2930,6 +2941,7 @@ export function CombatScreen({
                 field.tiles,
               )
               latest = left.battle
+              trapLines.push(...left.lines)
               if (left.tiles && left.tiles !== field.tiles) {
                 setField((prev) =>
                   prev ? { ...prev, tiles: left.tiles! } : prev,
@@ -2952,6 +2964,7 @@ export function CombatScreen({
                 field.tiles,
               )
               latest = left.battle
+              trapLines.push(...left.lines)
               if (left.tiles && left.tiles !== field.tiles) {
                 setField((prev) =>
                   prev ? { ...prev, tiles: left.tiles! } : prev,
@@ -3084,13 +3097,12 @@ export function CombatScreen({
         const name = unit?.name ?? 'Unknown'
         const confuseId = confuseConditionId(catalog)
         const cleared = applyConsumedCondition(battle, stack.id, confuseId)
-        if (isMagicAttackSilenced(stack, catalog)) {
+        const blockLine = unitAttackBlockLogLine(stack, catalog)
+        if (blockLine) {
           presentTurnEndRef.current(
             cleared,
             stack.id,
-            [
-              `${stack.qty} ${name} are silenced and cannot use Magic attacks.`,
-            ],
+            [blockLine],
             false,
             true,
             true,
@@ -3176,6 +3188,7 @@ export function CombatScreen({
                 field.tiles,
               )
               latest = left.battle
+              trapLines.push(...left.lines)
               if (left.tiles && left.tiles !== field.tiles) {
                 setField((prev) =>
                   prev ? { ...prev, tiles: left.tiles! } : prev,
@@ -3198,6 +3211,7 @@ export function CombatScreen({
                 field.tiles,
               )
               latest = left.battle
+              trapLines.push(...left.lines)
               if (left.tiles && left.tiles !== field.tiles) {
                 setField((prev) =>
                   prev ? { ...prev, tiles: left.tiles! } : prev,
@@ -3310,13 +3324,12 @@ export function CombatScreen({
       }
       if (unitAutoTarget(unit)) {
         const name = unit?.name ?? 'Unknown'
-        if (isMagicAttackSilenced(stack, catalog)) {
+        const blockLine = unitAttackBlockLogLine(stack, catalog)
+        if (blockLine) {
           presentTurnEndRef.current(
             battle,
             stack.id,
-            [
-              `${stack.qty} ${name} are silenced and cannot use Magic attacks.`,
-            ],
+            [blockLine],
             false,
             true,
           )
@@ -3517,6 +3530,7 @@ export function CombatScreen({
       if (tryAiHeroAbilityRef.current()) {
         return
       }
+      const configWarn = allyHealMissingConfigLogLine(catalog, stack)
       const intent = decideCombatAction(
         stack,
         battle,
@@ -3528,11 +3542,19 @@ export function CombatScreen({
       )
       if (!intent) {
         presentTurnEndRef.current(battle, stack.id, [
+          ...(configWarn ? [configWarn] : []),
           movementLogLine(stack, catalog, 0),
         ])
         return
       }
-      const started = performCombatIntentRef.current(intent, stack, battle)
+      const intentWithLog = configWarn
+        ? { ...intent, logPrefix: [...(intent.logPrefix ?? []), configWarn] }
+        : intent
+      const started = performCombatIntentRef.current(
+        intentWithLog,
+        stack,
+        battle,
+      )
       if (!started) {
         presentTurnEndRef.current(battle, stack.id, [
           movementLogLine(stack, catalog, 0),
@@ -4576,7 +4598,10 @@ export function CombatScreen({
             hexKey(step.q, step.r),
           ),
         ]
-        drawReach(gold, preview?.impactKeys ?? [])
+        drawReach(
+          [...gold, ...(preview?.pullLandingKeys ?? [])],
+          preview?.impactKeys ?? [],
+        )
         if (preview || plan) {
           onHoverRef.current(
             preview

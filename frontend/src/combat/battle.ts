@@ -10,8 +10,14 @@ import {
   SLOW_SPEED_REDUCTION_PCT,
   type ConditionExtra,
 } from './condition'
+import {
+  snapshotActiveTurnStartHex,
+  snapshotTurnStartHex,
+} from './retreatAfterAttack'
+import { tryVanishOnMoveNoAttack } from './vanishOnMove'
 import { applyStackHeal } from './attack'
 import type { CombatHeroes } from './attack'
+import { layerFieldValue } from './combatStatLayer'
 import { tickShadowGrowth } from './shadow'
 import { freezeArmyTagCounts, HUMANOID_TAG } from './armyTags'
 import {
@@ -77,6 +83,10 @@ export type CombatStack = {
   q: number
   r: number
   hasActedThisRound: boolean
+  /** Moved at least once during the current activation (before turn ends). */
+  movedThisTurn?: boolean
+  /** Resolved an attack during the current activation. */
+  attackedThisTurn?: boolean
   /** Remaining retaliations this round. Infinity = unlimited. */
   retaliationsLeft: number
   /** Wall-column ends. Never damaged. */
@@ -97,6 +107,8 @@ export type CombatStack = {
   persistOnSummon?: boolean
   /** Creation order for post-battle summon reconciliation. */
   summonSeq?: number
+  /** Permanent army raised by summon_on_kill (not a hero-ability temp summon). */
+  fromSummonOnKill?: boolean
   /** Remaining forced turns by catalog condition.id. */
   conditions?: Record<number, number>
   /** Polymorph-style extras keyed by condition.id. */
@@ -204,6 +216,8 @@ export type CombatStack = {
   exposed?: boolean
   /** Battle-start hex (Forced Retreat paths back here). */
   startHex?: { q: number; r: number }
+  /** Hex when this activation began (retreat_after_attack). */
+  turnStartHex?: { q: number; r: number }
   /** Forced Retreat: on next turn, walk toward startHex and end turn. */
   forcedRetreatPending?: boolean
   /**
@@ -235,8 +249,12 @@ export type CombatStack = {
    * field before temporary buffs (Rend, Guard, …).
    */
   statShred?: CombatStatShred
+  /** Permanent battle-long self-buff layer (S9-59). */
+  statBuff?: CombatStatShred
   /** Time Warp: extra turn after this stack's normal turn this round. */
   extraTurnThisRound?: boolean
+  /** extra_turn_chance: consecutive bonus turns granted this activation. */
+  extraTurnChanceChain?: number
   /** Unstable Rift: no longer fires, still occupies and blocks LOS. */
   silenced?: boolean
   /** Battle round when this stack was summoned. */
@@ -278,6 +296,9 @@ export type CombatStatShred = {
   resistance?: number
   minDmg?: number
   maxDmg?: number
+  maxHp?: number
+  critPct?: number
+  critAmt?: number
 }
 
 export function emptyStatFlat(): CombatStatFlat {
@@ -421,7 +442,7 @@ export function stackMaxHealth(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
-  const base = unitById(catalog, stack.unitId)?.health ?? 1
+  const base = layerFieldValue(stack, catalog, 'maxHp')
   return Math.max(1, base + (stack.statFlat?.health ?? 0))
 }
 
@@ -453,11 +474,7 @@ export function stackDefense(
   if (stack.defenseSet != null) {
     return Math.max(0, stack.defenseSet)
   }
-  const unit = unitById(catalog, stack.unitId)
-  const base =
-    stack.statShred?.defense != null
-      ? stack.statShred.defense
-      : (unit?.defense ?? 0)
+  const base = layerFieldValue(stack, catalog, 'defense')
   const flat = base + (stack.statFlat?.defense ?? 0)
   const bonus = stack.defenseBonus?.amount ?? 0
   const withBonus = flat + bonus
@@ -486,11 +503,7 @@ export function stackResistance(
   if (stack.resistanceSet != null) {
     return Math.max(0, stack.resistanceSet)
   }
-  const unit = unitById(catalog, stack.unitId)
-  const base =
-    stack.statShred?.resistance != null
-      ? stack.statShred.resistance
-      : (unit?.resistance ?? 0)
+  const base = layerFieldValue(stack, catalog, 'resistance')
   const flat = Math.max(
     0,
     base +
@@ -510,11 +523,7 @@ export function stackMinDmg(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
-  const unit = unitById(catalog, stack.unitId)
-  const base =
-    stack.statShred?.minDmg != null
-      ? stack.statShred.minDmg
-      : (unit?.min_dmg ?? 0)
+  const base = layerFieldValue(stack, catalog, 'minDmg')
   const mult = stack.minDmgMult
   const scaled =
     mult != null && Number.isFinite(mult) && mult > 0
@@ -527,11 +536,7 @@ export function stackMaxDmg(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
-  const unit = unitById(catalog, stack.unitId)
-  const base =
-    stack.statShred?.maxDmg != null
-      ? stack.statShred.maxDmg
-      : (unit?.max_dmg ?? 0)
+  const base = layerFieldValue(stack, catalog, 'maxDmg')
   const mult = stack.maxDmgMult
   const scaled =
     mult != null && Number.isFinite(mult) && mult > 0
@@ -891,11 +896,14 @@ export function stackCombatSpeed(
 ): number | null {
   const unit = unitById(catalog, stack.unitId)
   const catalogSpeed = unit?.speed
-  if (catalogSpeed == null && stack.statShred?.speed == null) {
+  if (
+    catalogSpeed == null &&
+    stack.statShred?.speed == null &&
+    stack.statBuff?.speed == null
+  ) {
     return null
   }
-  const base =
-    stack.statShred?.speed != null ? stack.statShred.speed : catalogSpeed!
+  const base = layerFieldValue(stack, catalog, 'speed')
   if (stack.speedLock != null) {
     return Math.max(0, stack.speedLock.value)
   }
@@ -914,6 +922,13 @@ export function stackCombatSpeed(
       cut = 1
     }
     speed = Math.max(0, speed - cut)
+  }
+  if (
+    catalogSpeed != null ||
+    stack.statShred?.speed != null ||
+    stack.statBuff?.speed != null
+  ) {
+    speed = Math.max(1, speed)
   }
   return speed
 }
@@ -1426,6 +1441,10 @@ export function startRound(
       ...stack,
       hasActedThisRound: false,
       extraTurnThisRound: false,
+      extraTurnChanceChain: undefined,
+      movedThisTurn: undefined,
+      attackedThisTurn: undefined,
+      turnStartHex: undefined,
       retaliationsLeft: retaliationCharges(unitById(catalog, stack.unitId)),
     }
     return skipTicks ? reset : tickDurationBuffs(reset)
@@ -1441,7 +1460,7 @@ export function startRound(
       )
       .filter((row) => row.roundsLeft == null || row.roundsLeft > 0)
   }
-  return {
+  return snapshotActiveTurnStartHex({
     ...battle,
     round: newRound,
     stacks,
@@ -1450,7 +1469,7 @@ export function startRound(
     roundLog: ticked.lines,
     groundEffects,
     roundUnitDeaths: {},
-  }
+  })
 }
 
 /** End-of-round recurring heals (Brisk Renewal), then start the next round. */
@@ -1524,7 +1543,11 @@ export function advanceTurn(
       heroes: opts?.heroes,
     })
   }
-  return { ...battle, activeIndex: next, roundLog: [] }
+  return snapshotActiveTurnStartHex({
+    ...battle,
+    activeIndex: next,
+    roundLog: [],
+  })
 }
 
 /** Jump straight to the next round (Rally). Optionally skip duration ticks. */
@@ -1749,9 +1772,18 @@ export function moveStack(
   }
   return {
     ...battle,
-    stacks: battle.stacks.map((stack) =>
-      stack.id === stackId ? { ...stack, q, r } : stack,
-    ),
+    stacks: battle.stacks.map((stack) => {
+      if (stack.id !== stackId) {
+        return stack
+      }
+      const moved = stack.q !== q || stack.r !== r
+      return {
+        ...stack,
+        q,
+        r,
+        ...(moved ? { movedThisTurn: true } : {}),
+      }
+    }),
   }
 }
 
@@ -1759,21 +1791,44 @@ export function endStackTurn(
   battle: CombatBattle,
   stackId: string,
   wasteExtraTurn = false,
-): CombatBattle {
+  catalog?: ReferenceCatalog,
+): { battle: CombatBattle; lines: string[] } {
+  let lines: string[] = []
+  if (catalog) {
+    const vanished = tryVanishOnMoveNoAttack(battle, stackId, catalog)
+    battle = vanished.battle
+    lines = vanished.lines
+  }
   const current = battle.stacks.find((stack) => stack.id === stackId)
   const grantExtra = !wasteExtraTurn && current?.extraTurnThisRound === true
   return {
-    ...battle,
-    stacks: battle.stacks.map((stack) => {
-      if (stack.id !== stackId) {
-        return stack
-      }
-      const spent = consumeTurnUses(stack)
-      if (grantExtra) {
-        return { ...spent, hasActedThisRound: false, extraTurnThisRound: false }
-      }
-      return { ...spent, hasActedThisRound: true, extraTurnThisRound: false }
-    }),
+    battle: {
+      ...battle,
+      stacks: battle.stacks.map((stack) => {
+        if (stack.id !== stackId) {
+          return stack
+        }
+        const spent = consumeTurnUses(stack)
+        const cleared = {
+          ...spent,
+          movedThisTurn: undefined,
+          attackedThisTurn: undefined,
+        }
+        if (grantExtra) {
+          return {
+            ...cleared,
+            hasActedThisRound: false,
+            extraTurnThisRound: false,
+          }
+        }
+        return {
+          ...cleared,
+          hasActedThisRound: true,
+          extraTurnThisRound: false,
+        }
+      }),
+    },
+    lines,
   }
 }
 
@@ -1808,7 +1863,7 @@ export function grantFervorExtraTurn(
   battle: CombatBattle,
   stackId: string,
 ): CombatBattle {
-  return {
+  const next: CombatBattle = {
     ...battle,
     stacks: battle.stacks.map((row) => {
       if (row.id !== stackId) {
@@ -1818,12 +1873,15 @@ export function grantFervorExtraTurn(
       return {
         ...row,
         hasActedThisRound: false,
+        movedThisTurn: undefined,
+        attackedThisTurn: undefined,
         fervor: buff
           ? { ...buff, streak: (buff.streak ?? 0) + 1 }
           : undefined,
       }
     }),
   }
+  return snapshotTurnStartHex(next, stackId)
 }
 
 export function clearFervorStreak(
@@ -1874,6 +1932,8 @@ export function applyMove(
   stackId: string,
   q: number,
   r: number,
+  catalog?: ReferenceCatalog,
 ): CombatBattle {
-  return endStackTurn(moveStack(battle, stackId, q, r), stackId)
+  return endStackTurn(moveStack(battle, stackId, q, r), stackId, false, catalog)
+    .battle
 }

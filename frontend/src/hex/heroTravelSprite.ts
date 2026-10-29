@@ -3,9 +3,16 @@ import type { AxialPos, GameSession, Hero } from '../session/types'
 import { getCachedCatalog, heroTypeName, type ReferenceCatalog } from '../town/catalog'
 import { boatOccupiedByHero } from './boat'
 import {
-  flightTransportSpriteFile,
-  TRANSPORT_BOAT_FILE,
+  BOAT_MOVE_STEM,
+  moveSheetStaticFile,
+  preloadTransportMoveSheetStems,
+  WORLD_MOVE_STEM,
+  flightMoveSheetStem,
 } from './flightTransport'
+import {
+  loadMountMoveSheetByStem,
+  preloadMountMoveSheets,
+} from './heroMountMoveAnim'
 
 /**
  * World-map hero travel sprites (BR S9-7 / S9-27).
@@ -39,7 +46,7 @@ export function mountSpriteFileForHero(
 
 /** Filenames only (preload). */
 export const HERO_TRAVEL_FILES = {
-  boat: TRANSPORT_BOAT_FILE,
+  boat: moveSheetStaticFile(BOAT_MOVE_STEM),
 } as const
 
 export type HeroTravelFacing = 'left' | 'right'
@@ -64,13 +71,15 @@ export function heroTravelSprite(
     session != null && boatOccupiedByHero(session, hero.id) != null
   if (boarded) {
     return {
-      file: TRANSPORT_BOAT_FILE,
+      file: moveSheetStaticFile(BOAT_MOVE_STEM),
       flipX: facing !== TRAVEL_ART.transport.artFaces,
     }
   }
   if (hero.flight) {
+    const catalog = getCachedCatalog()
+    const stem = flightMoveSheetStem(hero.flight, catalog)
     return {
-      file: flightTransportSpriteFile(hero.flight),
+      file: moveSheetStaticFile(stem),
       flipX: facing !== TRAVEL_ART.transport.artFaces,
     }
   }
@@ -169,23 +178,21 @@ export async function loadTravelTexture(
   }
 }
 
-/** Warm transport boat, world, town types, and class mounts. */
+/** Warm transport move sheets, world/town static pngs, and class mounts. */
 export function preloadHeroTravelSprites(catalog?: ReferenceCatalog | null): void {
-  void loadTravelTexture(TRANSPORT_BOAT_FILE)
-  void loadTravelTexture('Transport_World.png')
   const ref = catalog ?? getCachedCatalog()
+  void loadTravelTexture(moveSheetStaticFile(BOAT_MOVE_STEM))
+  void loadTravelTexture(moveSheetStaticFile(WORLD_MOVE_STEM))
+  preloadTransportMoveSheetStems(ref, (stem) => {
+    void loadMountMoveSheetByStem(stem)
+    void loadTravelTexture(moveSheetStaticFile(stem))
+  })
   if (ref) {
-    for (const row of ref.town) {
-      if (row.name?.trim()) {
-        void loadTravelTexture(
-          `Transport_${row.name.trim().replace(/\s+/g, '_')}.png`,
-        )
-      }
-    }
     for (const row of ref.hero_type) {
       if (row.name?.trim()) {
         void loadTravelTexture(mountSpriteFile(row.name))
       }
     }
+    preloadMountMoveSheets(ref)
   }
 }

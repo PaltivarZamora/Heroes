@@ -85,26 +85,45 @@ export function syncTombstonesFromWipes(
   after: CombatBattle,
   catalog: ReferenceCatalog,
 ): CombatBattle {
-  const stillLive = new Set(after.stacks.map((stack) => stack.id))
-  const existing = new Set((after.tombstones ?? before.tombstones ?? []).map((t) => t.id))
+  const livingIds = new Set(
+    after.stacks.filter((stack) => stack.qty > 0).map((stack) => stack.id),
+  )
+  const existing = new Set(
+    (after.tombstones ?? before.tombstones ?? []).map((t) => t.id),
+  )
   const added: CombatTombstone[] = []
-  for (const stack of before.stacks) {
-    if (stillLive.has(stack.id) || existing.has(stack.id)) {
-      continue
+  const consider = (stack: CombatStack) => {
+    if (livingIds.has(stack.id) || existing.has(stack.id)) {
+      return
+    }
+    if (added.some((tomb) => tomb.id === stack.id)) {
+      return
     }
     if (!canLeaveTombstone(stack, catalog)) {
-      continue
+      return
     }
     added.push(makeTombstone(stack))
+    existing.add(stack.id)
   }
+  for (const stack of before.stacks) {
+    consider(stack)
+  }
+  for (const stack of after.stacks) {
+    if (stack.qty <= 0) {
+      consider(stack)
+    }
+  }
+  const stacks = after.stacks.filter((stack) => stack.qty > 0)
   if (added.length === 0) {
     return {
       ...after,
+      stacks,
       tombstones: after.tombstones ?? before.tombstones ?? [],
     }
   }
   return {
     ...after,
+    stacks,
     tombstones: [...(after.tombstones ?? before.tombstones ?? []), ...added],
   }
 }

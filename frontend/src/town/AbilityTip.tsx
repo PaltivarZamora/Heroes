@@ -10,21 +10,21 @@ const PAD = 8
 const GAP = 6
 
 function tipInnerBounds(anchor: HTMLElement): ClientRect | null {
+  const contain = anchor.closest('[data-tip-contain]')
+  if (contain instanceof HTMLElement) {
+    const box = contain.getBoundingClientRect()
+    return {
+      left: box.left + PAD,
+      top: box.top + PAD,
+      right: box.right - PAD,
+      bottom: box.bottom - PAD,
+    }
+  }
   const game = gameWindowTipInnerRect(anchor)
   if (game) {
     return game
   }
-  const contain = anchor.closest('[data-tip-contain]')
-  if (!(contain instanceof HTMLElement)) {
-    return null
-  }
-  const box = contain.getBoundingClientRect()
-  return {
-    left: box.left + contain.clientLeft + PAD,
-    top: box.top + contain.clientTop + PAD,
-    right: box.left + contain.clientLeft + contain.clientWidth - PAD,
-    bottom: box.top + contain.clientTop + contain.clientHeight - PAD,
-  }
+  return null
 }
 
 function placeTipBeside(anchor: HTMLElement, body: HTMLElement, side: 'right' | 'left') {
@@ -100,13 +100,12 @@ function clearTip(body: HTMLElement) {
 }
 
 function placeTipPortal(anchor: HTMLElement, body: HTMLElement, side: 'right' | 'left') {
-  const inner =
-    gameWindowTipInnerRect(anchor) ?? {
-      left: PAD,
-      top: PAD,
-      right: window.innerWidth - PAD,
-      bottom: window.innerHeight - PAD,
-    }
+  const inner = tipInnerBounds(anchor) ?? {
+    left: PAD,
+    top: PAD,
+    right: window.innerWidth - PAD,
+    bottom: window.innerHeight - PAD,
+  }
   const trigger = anchor.getBoundingClientRect()
   body.style.display = 'block'
   body.style.position = 'fixed'
@@ -116,12 +115,21 @@ function placeTipPortal(anchor: HTMLElement, body: HTMLElement, side: 'right' | 
   if (size.width === 0 || size.height === 0) {
     return
   }
-  let left =
-    side === 'right'
-      ? trigger.right + GAP
-      : trigger.left - GAP - size.width
-  let top = trigger.top + trigger.height / 2 - size.height / 2
-  const clamped = clampBoxInRect(left, top, size.width, size.height, inner)
+  const place = (prefer: 'right' | 'left') => {
+    let left =
+      prefer === 'right'
+        ? trigger.right + GAP
+        : trigger.left - GAP - size.width
+    let top = trigger.top + trigger.height / 2 - size.height / 2
+    return clampBoxInRect(left, top, size.width, size.height, inner)
+  }
+  let clamped = place(side)
+  if (clamped.left + size.width > inner.right - 1) {
+    clamped = place('left')
+  }
+  if (clamped.left < inner.left + 1) {
+    clamped = place('right')
+  }
   body.style.left = `${clamped.left}px`
   body.style.top = `${clamped.top}px`
 }

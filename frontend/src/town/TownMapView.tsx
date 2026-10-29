@@ -24,9 +24,21 @@ import {
 import { parseCssHexColor } from '../hex/terrainTransition'
 import { loadPropTexture, layoutWorldMapPropSprite } from '../hex/propTextures'
 import { strokeRoadSegments } from '../hex/roadRender'
+import { boatOccupiedByHero } from '../hex/boat'
 import { heroTravelSprite, loadTravelTexture } from '../hex/heroTravelSprite'
+import { getSelectedMapHeroId } from '../hex/HexMap'
+import {
+  applyWorldSpriteScale,
+  ensureWorldSpriteScaleWarning,
+  worldSpriteTargetHeight,
+} from '../hex/worldSpriteScale'
+import {
+  loadMountMoveSheetForClass,
+  mountMoveSettings,
+  textureFromMountMoveSheet,
+} from '../hex/heroMountMoveAnim'
 import { findTownById } from '../session/accessors'
-import { getSession, subscribe } from '../session/store'
+import { getSession, subscribe, updateSession } from '../session/store'
 import {
   getCachedCatalog,
   hexTerrainByName,
@@ -39,6 +51,7 @@ import { planTownMap, type TownMapPlan } from './townMapPlan'
 import {
   hexesBoundingBox,
   townHexAtPoint,
+  TOWN_MAP_HEX_SIZE,
   type TownMapCell,
 } from './townMapGrid'
 
@@ -174,6 +187,10 @@ async function paintTownMapBase(
   rt.roadLayer.clear()
   rt.heroLayer.removeChildren()
 
+  updateSession((current) => ensureWorldSpriteScaleWarning(current, cat))
+  const targetH = worldSpriteTargetHeight(TOWN_MAP_HEX_SIZE, cat)
+  const selectedHeroId = getSelectedMapHeroId()
+
   const useImages = mapUseTerrainImages(cat)
   const textures = useImages
     ? await loadHexTerrainTextures(cat.terrain)
@@ -235,7 +252,6 @@ async function paintTownMapBase(
     },
   )
 
-  const token = 42 * 1.8
   for (let i = 0; i < shown.heroes.length; i += 1) {
     const hero = shown.heroes[i]!
     const hexN = shown.heroHexes[i] ?? 0
@@ -244,7 +260,30 @@ async function paintTownMapBase(
       continue
     }
     const travel = heroTravelSprite(hero, getSession())
-    const texture = await loadTravelTexture(travel.file)
+    const catalog = getCachedCatalog()
+    const aboard = boatOccupiedByHero(getSession(), hero.id)
+    const landMount =
+      !hero.flight && !aboard && travel.file.startsWith('Mount_')
+    let flipX = travel.flipX
+    let texture: Texture | null = null
+    if (landMount && hero.class_id != null && catalog) {
+      const result = await loadMountMoveSheetForClass(catalog, hero.class_id)
+      if (result.sheet && result.sheet.stand.width >= 1) {
+        const picked = textureFromMountMoveSheet(result.sheet, {
+          moving: false,
+          animFrameAcc: 0,
+          animFps: mountMoveSettings(catalog).animFps,
+          flipXMoving: travel.flipX,
+          flipXStanding: travel.flipX,
+        })
+        texture = picked.texture
+        flipX = picked.flipX
+      } else if (result.sheet == null) {
+        texture = await loadTravelTexture(travel.file)
+      }
+    } else {
+      texture = await loadTravelTexture(travel.file)
+    }
     const view = new Container()
     view.zIndex = Math.round(cell.center.y * 1000)
     const same = shown.heroHexes.filter((n) => n === hexN).length
@@ -253,10 +292,8 @@ async function paintTownMapBase(
     const spread = same > 1 ? (index - (same - 1) / 2) * 18 : 0
     view.position.set(cell.center.x + spread, cell.center.y)
     if (texture && texture.width >= 1) {
-      const scale = Math.min(token / texture.width, token / texture.height)
       const sprite = new Sprite(texture)
-      sprite.anchor.set(0.5, 0.5)
-      sprite.scale.set(travel.flipX ? -scale : scale, scale)
+      applyWorldSpriteScale(sprite, texture, targetH, flipX)
       view.addChild(sprite)
     } else {
       const badge = new Graphics()
@@ -264,19 +301,25 @@ async function paintTownMapBase(
       badge.fill({ color: ownerTint(hero.player_id) ?? 0xc4a574 })
       view.addChild(badge)
     }
-    const name = new Text({
-      text: hero.name,
-      style: {
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-        fontSize: 14,
-        fontWeight: '700',
-        fill: 0xffffff,
-        stroke: { color: 0x111111, width: 3 },
-      },
-      anchor: 0.5,
-    })
-    name.position.set(0, 28)
-    view.addChild(name)
+    const showName = selectedHeroId === hero.id
+    if (showName) {
+      const name = new Text({
+        text: hero.name,
+        style: {
+          fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+          fontSize: 14,
+          fontWeight: '700',
+          fill: 0xffffff,
+          stroke: { color: 0x111111, width: 3 },
+        },
+        anchor: 0.5,
+      })
+      name.position.set(
+        0,
+        TOWN_MAP_HEX_SIZE + Math.max(4, TOWN_MAP_HEX_SIZE * 0.06),
+      )
+      view.addChild(name)
+    }
     rt.heroLayer.addChild(view)
   }
 }
@@ -459,6 +502,7 @@ export function TownMapView({
           hero.player_id,
         ]),
         heroHexes: plan.heroHexes,
+        selectedHeroId: getSelectedMapHeroId(),
         props: plan.props,
       })
     : `${townId}:empty`

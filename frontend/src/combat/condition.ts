@@ -148,7 +148,11 @@ export function isSilenced(
   return conditionRemaining(stack, id) > 0
 }
 
-/** True when this stack cannot fire its unit attack because of Silence. */
+/**
+ * Silence blocks this stack's unit attacks. Default (and
+ * `silence_blocks_magic_attack_only: true`): Magic dmg only. When the flag is
+ * explicitly false on the silenced unit, all attacks are blocked (legacy).
+ */
 export function isMagicAttackSilenced(
   stack: CombatStack,
   catalog: ReferenceCatalog,
@@ -157,7 +161,77 @@ export function isMagicAttackSilenced(
     return false
   }
   const unit = unitById(catalog, stack.unitId)
+  const spec = unitAttackShape(unit)
+  if (spec.silenceBlocksMagicAttackOnly === false) {
+    return true
+  }
   return (unit?.dmg_type ?? '').trim().toLowerCase() === 'magic'
+}
+
+export function disarmConditionId(catalog: ReferenceCatalog): number {
+  const named = catalog.condition.find(
+    (row) => row.value.trim().toLowerCase() === 'disarm',
+  )
+  return named?.id ?? 0
+}
+
+/** Disarm condition — blocks Physical unit attacks (and physical retaliation). */
+export function isDisarmed(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  const id = disarmConditionId(catalog)
+  return id > 0 && conditionRemaining(stack, id) > 0
+}
+
+/** True when this stack cannot fire its unit attack because of Disarm. */
+export function isPhysicalAttackDisarmed(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  if (!isDisarmed(stack, catalog)) {
+    return false
+  }
+  const unit = unitById(catalog, stack.unitId)
+  return (unit?.dmg_type ?? '').trim().toLowerCase() !== 'magic'
+}
+
+/** Unit attack blocked by Silence (magic) or Disarm (physical). */
+export function isUnitAttackBlocked(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  return (
+    isMagicAttackSilenced(stack, catalog) ||
+    isPhysicalAttackDisarmed(stack, catalog)
+  )
+}
+
+export function unitAttackBlockHoverLabel(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): 'Silenced' | 'Disarmed' | null {
+  if (isMagicAttackSilenced(stack, catalog)) {
+    return 'Silenced'
+  }
+  if (isPhysicalAttackDisarmed(stack, catalog)) {
+    return 'Disarmed'
+  }
+  return null
+}
+
+export function unitAttackBlockLogLine(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): string | null {
+  const name = unitById(catalog, stack.unitId)?.name ?? 'Unknown'
+  if (isMagicAttackSilenced(stack, catalog)) {
+    return `${stack.qty} ${name} are silenced and cannot use Magic attacks.`
+  }
+  if (isPhysicalAttackDisarmed(stack, catalog)) {
+    return `${stack.qty} ${name} are disarmed and cannot use Physical attacks.`
+  }
+  return null
 }
 
 export function vanishConditionId(catalog: ReferenceCatalog): number {

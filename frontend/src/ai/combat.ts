@@ -32,8 +32,13 @@ import {
   isDefenderSiegeEgress,
 } from '../combat/siege'
 import { actingStand, bestApproachToward, combatHover, type CombatHover } from '../combat/target'
+import {
+  computePullLandingHex,
+  isValidPullAttackTarget,
+} from '../combat/pullTarget'
 import { pickUnitTrapAimHex, unitPlacesTrap } from '../combat/unitTrap'
 import { findTauntingStack } from '../combat/condition'
+import { pickAllyHealCombatIntent } from './allyHealCombat'
 import {
   COMBAT_ACTION_DECISION,
   COMBAT_ACTION_FACTORS,
@@ -390,6 +395,20 @@ export function decideCombatAction(
   }
 
   const enemies = livingEnemies(stack, battle, catalog)
+  const allyHeal = pickAllyHealCombatIntent(
+    stack,
+    battle,
+    tiles,
+    catalog,
+    heroes,
+    hero,
+  )
+  if (allyHeal) {
+    appendAiTrace(
+      `AI combat_action — ${stack.qty} ${stackName(catalog, stack)} repairs ally`,
+    )
+    return allyHeal
+  }
   // Taunt: if any living enemy is bait, ignore all other combat_action scoring.
   const taunter = findTauntingStack(enemies, catalog)
   if (taunter) {
@@ -453,9 +472,12 @@ export function decideCombatAction(
     return null
   }
 
+  const atkSpec = unitAttackShape(unitRow)
   const maxThreat = Math.max(0, ...enemies.map((row) => stackThreat(row, catalog)))
   const inRange = enemies.filter((row) =>
-    isValidAttackTarget(stack, row, catalog, tiles, battle.stacks),
+    atkSpec.pullTarget
+      ? isValidPullAttackTarget(stack, row, catalog, tiles, battle.stacks)
+      : isValidAttackTarget(stack, row, catalog, tiles, battle.stacks),
   )
 
   const options: ScoredOption<CombatCandidate>[] = []
@@ -483,6 +505,35 @@ export function decideCombatAction(
       : 0
     factors.target_weakness = 1 - stackHpPct(enemy, catalog)
     factors.target_threat = maxThreat > 0 ? clamp01(stackThreat(enemy, catalog) / maxThreat) : 0
+    if (atkSpec.pullTarget) {
+      const enemyUnit = unitById(catalog, enemy.unitId)
+      if ((enemyUnit?.max_range ?? 1) > 1) {
+        factors.target_threat = Math.min(1, factors.target_threat + 0.22)
+      }
+      const landing = computePullLandingHex(
+        battle,
+        { ...stack, q: stand.q, r: stand.r },
+        enemy,
+        catalog,
+        tiles,
+      )
+      if (landing) {
+        const cluster = neighborHexes(landing).filter((hex) =>
+          enemies.some(
+            (row) =>
+              row.id !== enemy.id &&
+              row.q === hex.q &&
+              row.r === hex.r,
+          ),
+        ).length
+        if (cluster > 0) {
+          factors.kill_potential = Math.min(
+            1,
+            factors.kill_potential + cluster * 0.14,
+          )
+        }
+      }
+    }
     // Prefer Drawbridge / dry paths over dumping into the Moat when both exist.
     if (pathCrossesHazardousMoat(here, intent.steps, battle, catalog, tiles)) {
       factors.kill_potential *= 0.15

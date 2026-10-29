@@ -3385,7 +3385,8 @@ button.hero-ability-name:disabled {
   position: relative;
   width: min(560px, calc(100% - 32px));
   max-height: min(80vh, 720px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 20px 24px 24px;
   border: 1px solid #555;
   border-radius: 6px;

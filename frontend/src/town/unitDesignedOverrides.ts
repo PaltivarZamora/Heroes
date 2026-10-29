@@ -19,7 +19,7 @@ export function designedFactoryAbilities(
   unit: UnitRow,
   _advanced: boolean,
 ): Partial<UnitCombatAbilities> | null {
-  if (has(catalog, unit, 'designed_factory_ninja')) {
+  if (has(catalog, unit, 'designed_ninja')) {
     return {
       shape: 'single',
       blinkMovement: true,
@@ -30,15 +30,7 @@ export function designedFactoryAbilities(
       chanceHalvesEachAttempt: true,
     }
   }
-  if (has(catalog, unit, 'designed_factory_hammersmith')) {
-    return {
-      shape: 'single',
-      canTargetAllyIfTag: 8,
-      healOnAllyTarget: true,
-      healAmtPerUnit: 1,
-    }
-  }
-  if (has(catalog, unit, 'designed_factory_void')) {
+  if (has(catalog, unit, 'designed_void')) {
     return {
       shape: 'pulse',
       radius: 1,
@@ -46,18 +38,18 @@ export function designedFactoryAbilities(
       groundEffectId: 5,
     }
   }
-  if (has(catalog, unit, 'designed_factory_bouncy_bomb')) {
+  if (has(catalog, unit, 'designed_bouncy_bomb')) {
     return { shape: 'pulse', radius: 1, killChainPulse: true }
   }
-  if (has(catalog, unit, 'designed_factory_flesh_golem')) {
+  if (has(catalog, unit, 'designed_flesh_golem')) {
     return {
       shape: 'single',
       killAbsorbChancePct: 33,
-      killAbsorbTagRequired: 10,
+      killAbsorbTagsRequired: [10],
       growsQtyOnKill: 1,
     }
   }
-  if (has(catalog, unit, 'designed_factory_pit_fiend_arch')) {
+  if (has(catalog, unit, 'designed_princess_of_darkness')) {
     return {
       shape: 'single',
       killAbsorbRequiresTier: 6,
@@ -67,10 +59,10 @@ export function designedFactoryAbilities(
       immuneToFire: true,
     }
   }
-  if (has(catalog, unit, 'designed_factory_fire_immune')) {
+  if (has(catalog, unit, 'designed_fire_immune')) {
     return { immuneToFire: true }
   }
-  if (has(catalog, unit, 'designed_factory_weeping_angel')) {
+  if (has(catalog, unit, 'designed_weeping_angel')) {
     return {
       blinkMovement: true,
       requiresLos: true,
@@ -84,58 +76,54 @@ export function designedFactoryAbilities(
       no_enemy_retaliation: true,
     }
   }
-  if (has(catalog, unit, 'designed_factory_blink_dog')) {
+  if (has(catalog, unit, 'designed_blink_dog')) {
     return { blinkMovement: true, requiresLos: true, respectsHexSize: true }
   }
-  if (has(catalog, unit, 'designed_factory_chronomancer')) {
+  if (has(catalog, unit, 'designed_chronomancer')) {
     return {
       shape: 'single',
       speedSwapIfTargetFaster: true,
       speedSwapDuration: 1,
     }
   }
-  if (has(catalog, unit, 'designed_factory_imp_trail')) {
+  if (has(catalog, unit, 'designed_imp_trail')) {
     return {
       shape: 'aoe',
       radius: 1,
       leavesGroundEffectOnAttack: true,
       groundEffectId: 6,
-      chancePct: 40,
       immuneToFire: true,
       fizzleTerrainIds: [3, 20, 21],
     }
   }
-  if (has(catalog, unit, 'designed_factory_smoldering_ooze_trail')) {
+  if (has(catalog, unit, 'designed_smoldering_ooze_trail')) {
     return {
       shape: 'pulse',
       radius: 1,
       leavesGroundEffectOnAttack: true,
       groundEffectId: 6,
-      chancePct: 40,
       immuneToFire: true,
       fizzleTerrainIds: [3, 20, 21],
     }
   }
-  if (has(catalog, unit, 'designed_factory_cerberus_trail')) {
+  if (has(catalog, unit, 'designed_cerberus_trail')) {
     return {
       shape: 'breath',
       rows: 2,
       leavesGroundEffectOnAttack: true,
       groundEffectId: 6,
-      chancePct: 40,
       fizzleTerrainIds: [3, 20, 21],
     }
   }
-  if (has(catalog, unit, 'designed_factory_efreeti_trail')) {
+  if (has(catalog, unit, 'designed_efreeti_trail')) {
     return {
       shape: 'single',
       leavesGroundEffectOnAttack: true,
       groundEffectId: 6,
-      chancePct: 100,
       fizzleTerrainIds: [3, 20, 21],
     }
   }
-  if (has(catalog, unit, 'designed_factory_jouster_charge')) {
+  if (has(catalog, unit, 'designed_inquisitor_charge')) {
     return {
       shape: 'single',
       chargeDmgEscalation: true,
@@ -144,7 +132,7 @@ export function designedFactoryAbilities(
       escalationMinIncrease: 1,
     }
   }
-  if (has(catalog, unit, 'designed_factory_war_mammoth_charge')) {
+  if (has(catalog, unit, 'designed_war_mammoth_charge')) {
     return {
       shape: 'cleave',
       chargeDmgEscalation: true,
@@ -153,7 +141,7 @@ export function designedFactoryAbilities(
       escalationMinIncrease: 1,
     }
   }
-  if (has(catalog, unit, 'designed_factory_gladiator_slow')) {
+  if (has(catalog, unit, 'designed_gladiator_slow')) {
     return {
       shape: 'single',
       chancePct: 80,
@@ -168,66 +156,27 @@ export function designedFactoryAbilities(
 export function designedConfluenceAbilities(
   catalog: ReferenceCatalog,
   unit: UnitRow,
-  advanced: boolean,
+  _advanced: boolean,
 ): Partial<UnitCombatAbilities> | null {
-  if (has(catalog, unit, 'designed_confluence_mud_sprite')) {
+  if (has(catalog, unit, 'designed_mud_spawn')) {
     return { shape: 'single', absorbTerrainIds: [5] }
   }
-  if (has(catalog, unit, 'designed_confluence_spark')) {
-    return {
-      shape: 'single',
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 7,
-      chancePct: 100,
-      immuneToLightning: true,
-    }
-  }
-  if (has(catalog, unit, 'designed_confluence_tidal_caller')) {
+  if (has(catalog, unit, 'designed_tidal_caller')) {
     return {
       shape: 'line',
       dmgIncreasePerHex: 1,
       clearsGroundEffectId: 6,
     }
   }
-  if (has(catalog, unit, 'designed_confluence_thunder_lizard')) {
+  if (has(catalog, unit, 'designed_thunder_lizard')) {
     return {
       shape: 'beam',
       leavesGroundEffectOnAttack: true,
       groundEffectId: 7,
-      chancePctIntelStat: 4,
       immuneToLightning: true,
     }
   }
-  if (has(catalog, unit, 'designed_confluence_tempest')) {
-    return {
-      shape: 'aoe',
-      radius: advanced ? 3 : 2,
-      scatterGroundEffectOnMoveStop: true,
-      groundEffectId: 7,
-      chancePctIntelStat: 4,
-      immuneToLightning: true,
-    }
-  }
-  if (has(catalog, unit, 'designed_confluence_pyromaniac')) {
-    return {
-      shape: 'spiral',
-      radius: advanced ? 3 : 2,
-      spiralChanceDecayPct: advanced ? 5 : 10,
-      groundEffectId: 6,
-      fizzleTerrainIds: [3, 20, 21],
-    }
-  }
-  if (has(catalog, unit, 'designed_confluence_tesla_coil')) {
-    return {
-      shape: 'multi',
-      targets: advanced ? 3 : 2,
-      leavesGroundEffectOnAttack: true,
-      groundEffectId: 7,
-      chancePct: 80,
-      immuneToLightning: true,
-    }
-  }
-  if (has(catalog, unit, 'designed_confluence_phoenix')) {
+  if (has(catalog, unit, 'designed_phoenix')) {
     return {
       shape: 'single',
       selfRezOnWipe: true,
@@ -236,16 +185,13 @@ export function designedConfluenceAbilities(
       selfRezBasedOnKillsThisRound: true,
     }
   }
-  if (has(catalog, unit, 'designed_confluence_cloud_panther')) {
+  if (has(catalog, unit, 'designed_cloud_panther')) {
     return { shape: 'single', immuneToLightning: true }
   }
-  if (has(catalog, unit, 'designed_confluence_channeler')) {
-    return { shape: 'chain', immuneToLightning: true }
-  }
-  if (has(catalog, unit, 'designed_confluence_void_immune')) {
+  if (has(catalog, unit, 'designed_void_immune')) {
     return { immuneToLightning: true, immuneToFire: true }
   }
-  if (has(catalog, unit, 'designed_confluence_lightning_totem')) {
+  if (has(catalog, unit, 'designed_lightning_totem')) {
     return { immuneToLightning: true }
   }
   return null
@@ -256,24 +202,17 @@ export function designedTempleAbilities(
   unit: UnitRow,
   advanced: boolean,
 ): Partial<UnitCombatAbilities> | null {
-  if (has(catalog, unit, 'designed_temple_zealot')) {
+  if (has(catalog, unit, 'designed_abbott')) {
     return { shape: 'single' }
   }
-  if (has(catalog, unit, 'designed_temple_high_priestess')) {
+  if (has(catalog, unit, 'designed_high_priestess')) {
     return {
       shape: 'single',
       healMostInjuredOnKill: true,
       healFull: true,
     }
   }
-  if (has(catalog, unit, 'designed_temple_inquisitor')) {
-    return {
-      shape: 'single',
-      extraTurnOnKill: true,
-      chancePctFlatStat: 1,
-    }
-  }
-  if (has(catalog, unit, 'designed_temple_angelic_warrior')) {
+  if (has(catalog, unit, 'designed_angelic_warrior')) {
     return {
       shape: 'cleave',
       dualAttack: true,
@@ -281,13 +220,6 @@ export function designedTempleAbilities(
       secondAttackMinDmg: advanced ? 36 : 35,
       secondAttackMaxDmg: advanced ? 46 : 45,
       retaliateOnceAfterBoth: true,
-    }
-  }
-  if (has(catalog, unit, 'designed_temple_divine_aura')) {
-    return {
-      shape: 'single',
-      auraRadius: advanced ? 2 : 1,
-      auraCountsAlliesAsExtraQty: true,
     }
   }
   return null
@@ -298,7 +230,7 @@ export function designedTempleRetaliation(
   unit: UnitRow,
   advanced: boolean,
 ): Partial<UnitRetaliation> | null {
-  if (has(catalog, unit, 'designed_temple_zealot')) {
+  if (has(catalog, unit, 'designed_abbott')) {
     return {
       shape: 'chain',
       jumps: advanced ? 3 : 2,
@@ -315,7 +247,7 @@ export function designedChronomancerRetaliation(
   unit: UnitRow,
   advanced: boolean,
 ): Partial<UnitRetaliation> | null {
-  if (!has(catalog, unit, 'designed_factory_chronomancer')) {
+  if (!has(catalog, unit, 'designed_chronomancer')) {
     return null
   }
   return {
@@ -330,7 +262,7 @@ export function designedWeepingAngelRetaliation(
   catalog: ReferenceCatalog,
   unit: UnitRow,
 ): Partial<UnitRetaliation> | null {
-  if (!has(catalog, unit, 'designed_factory_weeping_angel')) {
+  if (!has(catalog, unit, 'designed_weeping_angel')) {
     return null
   }
   return { times: 0 }

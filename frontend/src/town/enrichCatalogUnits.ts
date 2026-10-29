@@ -85,7 +85,7 @@ function enrichAbilities(
       designedConfluenceAbilities(catalog, unit, advanced) ??
       designedFactoryAbilities(catalog, unit, advanced)
     if (designed) {
-      next = { ...DEFAULT_UNIT_ABILITIES, ...designed }
+      next = { ...DEFAULT_UNIT_ABILITIES, ...designed, ...base }
     }
   }
 
@@ -133,8 +133,6 @@ function enrichAbilities(
             scatterGroundEffectOnMoveStop: true,
             groundEffectId:
               next.groundEffectId ?? confluence.groundEffectId,
-            chancePctIntelStat:
-              next.chancePctIntelStat ?? confluence.chancePctIntelStat,
             radius: Math.max(next.radius ?? 0, confluence.radius ?? 0),
           }
         : {}),
@@ -143,9 +141,6 @@ function enrichAbilities(
             leavesGroundEffectOnAttack: true,
             groundEffectId:
               next.groundEffectId ?? confluence.groundEffectId,
-            chancePct: next.chancePct ?? confluence.chancePct,
-            chancePctIntelStat:
-              next.chancePctIntelStat ?? confluence.chancePctIntelStat,
             fizzleTerrainIds:
               next.fizzleTerrainIds.length > 0
                 ? next.fizzleTerrainIds
@@ -204,7 +199,7 @@ function enrichAbilities(
     next = { ...next, fizzleTerrainIds: [3, 20, 21] }
   }
 
-  if (unitHasNamedTag(catalog, unit, 'designed_factory_fire_immune')) {
+  if (unitHasNamedTag(catalog, unit, 'designed_fire_immune')) {
     next = { ...next, immuneToFire: true }
   }
   if (unitHasNamedTag(catalog, unit, 'designed_arcane_illusion')) {
@@ -214,7 +209,7 @@ function enrichAbilities(
     next = { ...next, immuneToMagicDmg: true }
   }
   if (
-    unitHasNamedTag(catalog, unit, 'designed_arcane_animated_weapon') &&
+    unitHasNamedTag(catalog, unit, 'designed_animated_weapon') &&
     next.autoTarget == null
   ) {
     next = { ...next, autoTarget: 'random_enemy' }
@@ -239,7 +234,7 @@ function enrichAbilities(
 
   const factory = designedFactoryAbilities(catalog, unit, advanced)
   if (factory) {
-    if (unitHasNamedTag(catalog, unit, 'designed_factory_weeping_angel')) {
+    if (unitHasNamedTag(catalog, unit, 'designed_weeping_angel')) {
       next = {
         ...next,
         blinkMovement: true,
@@ -254,7 +249,7 @@ function enrichAbilities(
         no_enemy_retaliation: true,
       }
     }
-    if (unitHasNamedTag(catalog, unit, 'designed_factory_blink_dog')) {
+    if (unitHasNamedTag(catalog, unit, 'designed_blink_dog')) {
       next = {
         ...next,
         blinkMovement: true,
@@ -262,7 +257,7 @@ function enrichAbilities(
         respectsHexSize: true,
       }
     }
-    if (unitHasNamedTag(catalog, unit, 'designed_factory_ninja')) {
+    if (unitHasNamedTag(catalog, unit, 'designed_ninja')) {
       next = {
         ...next,
         blinkMovement: true,
@@ -274,7 +269,7 @@ function enrichAbilities(
         extraAttackOnAttackOnly: false,
       }
     }
-    if (unitHasNamedTag(catalog, unit, 'designed_factory_chronomancer')) {
+    if (unitHasNamedTag(catalog, unit, 'designed_chronomancer')) {
       next = {
         ...next,
         speedSwapIfTargetFaster: true,
@@ -287,16 +282,10 @@ function enrichAbilities(
 }
 
 function enrichMaxRange(
-  catalog: ReferenceCatalog,
-  unit: UnitRow,
+  _catalog: ReferenceCatalog,
+  _unit: UnitRow,
   parsed: number,
 ): number {
-  if (
-    unitHasNamedTag(catalog, unit, 'designed_halberdier_reach') &&
-    parsed < 2
-  ) {
-    return 2
-  }
   return parsed
 }
 

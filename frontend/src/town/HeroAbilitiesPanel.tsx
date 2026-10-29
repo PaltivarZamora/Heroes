@@ -21,6 +21,8 @@ type HeroAbilitiesPanelProps = {
   canSelectAbility?: (ability: AbilityRow) => boolean
   /** Shown on a disabled cast button; cooldown text must not reuse afford messaging. */
   unavailableMessage?: (ability: AbilityRow) => string | null
+  /** Combat popup: portal tooltips clamped inside `[data-tip-contain]`. */
+  abilityTipPlacement?: 'default' | 'portal-right' | 'portal-left'
 }
 
 export function HeroAbilitiesPanel({
@@ -33,6 +35,7 @@ export function HeroAbilitiesPanel({
   onSelectAbility,
   canSelectAbility,
   unavailableMessage,
+  abilityTipPlacement = 'default',
 }: HeroAbilitiesPanelProps) {
   return (
     <>
@@ -90,6 +93,7 @@ export function HeroAbilitiesPanel({
                         <li key={ability.id}>
                           <AbilityTip
                             description={abilityTooltip(catalog, ability, hero)}
+                            placement={abilityTipPlacement}
                           >
                             {onSelectAbility ? (
                               <button

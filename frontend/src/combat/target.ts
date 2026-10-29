@@ -41,7 +41,17 @@ import {
   isValidSiegeWallAttackStand,
   openBridgeMoatKeys,
 } from './siege'
-import { pickNearestUnitAnySide, isVanished, isMagicAttackSilenced } from './condition'
+import {
+  pickNearestUnitAnySide,
+  isVanished,
+  isUnitAttackBlocked,
+  unitAttackBlockHoverLabel,
+} from './condition'
+import {
+  isValidPullAttackTarget,
+  pullLandingPreviewKeys,
+  targetInNormalAttackReach,
+} from './pullTarget'
 import {
   bestTrapPlacementStand,
   canPlaceTrapAnyone,
@@ -73,6 +83,8 @@ export type CombatHover = {
   allowFriendly?: boolean
   /** Prepended to the attack / turn-end log. */
   logPrefix?: string[]
+  /** Pull_target: hex the victim lands on before the pulse. */
+  pullLandingKeys?: string[]
 }
 
 /**
@@ -341,7 +353,7 @@ export function canStrikeThisTurn(
   catalog: ReferenceCatalog,
   heroes?: CombatHeroes,
 ): boolean {
-  if (isMagicAttackSilenced(attacker, catalog)) {
+  if (isUnitAttackBlocked(attacker, catalog)) {
     return false
   }
   const unit = unitById(catalog, attacker.unitId)
@@ -354,8 +366,19 @@ export function canStrikeThisTurn(
       isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
     )
   }
-  if (shapePulsesOnMove(spec.shape)) {
+  if (shapePulsesOnMove(spec.shape) && !spec.pullTarget) {
     return false
+  }
+  if (spec.pullTarget) {
+    return battle.stacks.some((row) =>
+      isValidPullAttackTarget(
+        attacker,
+        row,
+        catalog,
+        tiles,
+        battle.stacks,
+      ),
+    )
   }
   if (shapeIsUntargeted(spec.shape)) {
     return battle.stacks.some(
@@ -483,7 +506,22 @@ function attackHover(
   tiles: CombatTile[],
   icon?: TargetIconKind,
 ): CombatHover {
-  if (isMagicAttackSilenced(attacker, catalog)) {
+  const blockLabel = unitAttackBlockHoverLabel(attacker, catalog)
+  if (blockLabel) {
+    if (steps.length > 0) {
+      const dest = actingStand({ q: attacker.q, r: attacker.r }, steps)
+      return {
+        icon: 'move',
+        q: dest.q,
+        r: dest.r,
+        steps,
+        attackTargetId: null,
+        fire: false,
+        afterMove: null,
+        impactKeys: [],
+        label: blockLabel,
+      }
+    }
     return {
       icon: 'invalid',
       q: aim.q,
@@ -494,7 +532,7 @@ function attackHover(
       afterMove: null,
       impactKeys: [],
       aimHex: aim,
-      label: 'Silenced',
+      label: blockLabel,
     }
   }
   const unit = unitById(catalog, attacker.unitId)
@@ -726,7 +764,7 @@ export function combatHover(
   }
 
   if (isSelf) {
-    if (shapePulsesOnMove(shape.shape)) {
+    if (shapePulsesOnMove(shape.shape) && !isUnitAttackBlocked(attacker, catalog)) {
       return stayHover(from, {
         afterMove: 'pulse',
         impactKeys: impactFrom(attacker, from, from, battle, catalog, tiles),
@@ -817,18 +855,9 @@ export function combatHover(
         label: "Can't Stand Here",
       }
     }
-    if (isMagicAttackSilenced(attacker, catalog)) {
-      return {
-        icon: 'invalid',
-        q: hover.q,
-        r: hover.r,
-        steps: [],
-        attackTargetId: null,
-        fire: false,
-        afterMove: null,
-        impactKeys: [],
-        label: 'Silenced',
-      }
+    const blockLabel = unitAttackBlockHoverLabel(attacker, catalog)
+    if (blockLabel) {
+      return unitIsStationary(unit) ? null : moveOnly()
     }
     return {
       icon: attackIconFor(unit),
@@ -903,6 +932,59 @@ export function combatHover(
     return null
   }
 
+  if (shape.pullTarget && enemy) {
+    const steps = stepsToward(
+      hover,
+      reachable,
+      from,
+      budget,
+      tiles,
+      kind,
+      occupied,
+      spec,
+      passableMoat,
+      stopOnly,
+      landOccupied,
+      costAdjust,
+      geBlocks,
+    )
+    const stand = actingStand(from, steps ?? [])
+    const ghost = { ...attacker, q: stand.q, r: stand.r }
+    const aim = { q: enemy.q, r: enemy.r }
+    const pullNow = isValidPullAttackTarget(
+      ghost,
+      enemy,
+      catalog,
+      tiles,
+      battle.stacks,
+    )
+    const reachNow = targetInNormalAttackReach(ghost, enemy, catalog)
+    if (pullNow || reachNow) {
+      const pulseKeys = impactFrom(ghost, stand, stand, battle, catalog, tiles)
+      return {
+        ...attackHover(
+          ghost,
+          aim,
+          steps ?? [],
+          enemy.id,
+          battle,
+          catalog,
+          tiles,
+        ),
+        aimHex: aim,
+        impactKeys: pulseKeys,
+        pullLandingKeys: pullNow
+          ? pullLandingPreviewKeys(battle, ghost, enemy, catalog, tiles)
+          : [],
+      }
+    }
+    if (steps) {
+      return moveTowardHover(from, steps)
+    }
+    const approach = bestApproachToward(from, aim, reachable)
+    return approach ? moveTowardHover(from, approach.steps) : null
+  }
+
   if (shapePulsesOnMove(shape.shape)) {
     // Occupied enemy hex: fall through to attack/approach handling below.
     if (!(occupant && !isSelf)) {
@@ -925,6 +1007,8 @@ export function combatHover(
         return null
       }
       const dest = actingStand(from, steps)
+      const pulseAfter =
+        !isUnitAttackBlocked(attacker, catalog) ? ('pulse' as const) : null
       return {
         icon: 'move',
         q: dest.q,
@@ -932,8 +1016,10 @@ export function combatHover(
         steps,
         attackTargetId: null,
         fire: false,
-        afterMove: 'pulse',
-        impactKeys: impactFrom(attacker, dest, dest, battle, catalog, tiles),
+        afterMove: pulseAfter,
+        impactKeys: pulseAfter
+          ? impactFrom(attacker, dest, dest, battle, catalog, tiles)
+          : [],
       }
     }
   }
@@ -1087,7 +1173,7 @@ export function confusedAttackIntent(
   tiles: CombatTile[],
   random: () => number = Math.random,
 ): CombatHover | null {
-  if (isMagicAttackSilenced(stack, catalog)) {
+  if (isUnitAttackBlocked(stack, catalog)) {
     return null
   }
   const target = pickNearestUnitAnySide(stack, battle, catalog, random)

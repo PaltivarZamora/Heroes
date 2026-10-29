@@ -13,7 +13,10 @@ import {
   findBoatAt,
   isDisembarkLandHex,
 } from '../hex/boat'
-import { hexTransitionMoveCost } from '../hex/terrainTransition'
+import {
+  heroWorldPathCostOptions,
+  hexHeroMovementEnterCost,
+} from '../hex/worldHeroPath'
 import type { Axial } from '../hex/hero'
 import { GOLD_RESOURCE_ID } from '../hex/resources'
 import {
@@ -62,21 +65,31 @@ function mpToDays(mp: number, maxMp: number): number {
 }
 
 function landPathMoveCost(
+  session: GameSession,
   from: Axial,
   to: Axial,
   blocked: ReadonlySet<string>,
+  moverPlayerId: string,
 ): number | null {
   if (samePos(from, to)) {
     return 0
   }
-  const planned = findPathAvoidingMobRings(from, to, blocked)
+  const catalog = getCachedCatalog()
+  const pathOpts = heroWorldPathCostOptions(session, moverPlayerId, catalog)
+  const planned = findPathAvoidingMobRings(from, to, blocked, false, pathOpts)
   const path = planned?.path
   if (!path || path.length < 2) {
     return null
   }
   let cost = 0
   for (let i = 1; i < path.length; i += 1) {
-    const step = hexTransitionMoveCost(getCachedCatalog(), path[i].q, path[i].r)
+    const step = hexHeroMovementEnterCost(
+      catalog,
+      session,
+      path[i].q,
+      path[i].r,
+      moverPlayerId,
+    )
     if (step == null) {
       return null
     }
@@ -187,7 +200,7 @@ function bestBoatPlan(
       if (!bestWater || !Number.isFinite(bestSail)) {
         continue
       }
-      const walkAfterMp = landPathMoveCost(land, approachDest, blocked)
+      const walkAfterMp = landPathMoveCost(session, land, approachDest, blocked, hero.player_id)
       if (walkAfterMp == null) {
         continue
       }
@@ -220,7 +233,7 @@ function bestBoatPlan(
     if (!visibleToPlayer(seen, boat.position)) {
       continue
     }
-    const walkMp = landPathMoveCost(hero.position, boat.position, blocked)
+    const walkMp = landPathMoveCost(session, hero.position, boat.position, blocked, hero.player_id)
     if (walkMp == null || walkMp > oneDayMp + 1e-9) {
       continue
     }
@@ -242,7 +255,7 @@ function bestBoatPlan(
     if (!approach) {
       continue
     }
-    const walkMp = landPathMoveCost(hero.position, approach, blocked)
+    const walkMp = landPathMoveCost(session, hero.position, approach, blocked, hero.player_id)
     const sailStart = atLaunch
       ? atLaunch.position
       : { q: feature.launch.q, r: feature.launch.r }
@@ -296,7 +309,7 @@ function bestFlightPlan(
         continue
       }
       const approach = approachHex(hero.position, town.position, blocked)
-      const walkMp = landPathMoveCost(hero.position, approach ?? town.position, blocked)
+      const walkMp = landPathMoveCost(session, hero.position, approach ?? town.position, blocked, hero.player_id)
       if (walkMp == null) {
         continue
       }
@@ -322,7 +335,7 @@ function bestFlightPlan(
       if (!approach) {
         continue
       }
-      const walkMp = landPathMoveCost(hero.position, approach, blocked)
+      const walkMp = landPathMoveCost(session, hero.position, approach, blocked, hero.player_id)
       if (walkMp == null) {
         continue
       }
@@ -350,9 +363,11 @@ function bestFlightPlan(
       }
       const flightDays = Math.max(1, Math.ceil(quote.distance / speed))
       const walkAfterMp = landPathMoveCost(
+        session,
         quote.town.position,
         approachDest,
         blocked,
+        hero.player_id,
       )
       if (walkAfterMp == null) {
         continue
@@ -391,7 +406,7 @@ function compareRoutes(input: RouteCompareInput): {
     input
   const approachDest = baseIntent.dest
   const blocked = blockedHexes(session, hero, approachDest)
-  const walkMp = landPathMoveCost(hero.position, approachDest, blocked)
+  const walkMp = landPathMoveCost(session, hero.position, approachDest, blocked, hero.player_id)
   const walkDays = walkMp == null ? null : mpToDays(walkMp, maxMp)
 
   const minTrip = aiCfgNumber(catalog, 'ai_route_min_trip_days', 3)
@@ -688,7 +703,7 @@ export function stepAiRouteCommit(
           }
         }
         const blocked = blockedHexes(session, hero, boat.position)
-        const travel = landPathMoveCost(hero.position, boat.position, blocked)
+        const travel = landPathMoveCost(session, hero.position, boat.position, blocked, hero.player_id)
         if (travel != null) {
           return {
             kind: 'board_boat',
@@ -707,7 +722,13 @@ export function stepAiRouteCommit(
         const atLaunch = findBoatAt(session, dock.launch.q, dock.launch.r)
         if (atLaunch && atLaunch.occupant_hero_id == null) {
           const blocked = blockedHexes(session, hero, atLaunch.position)
-          const travel = landPathMoveCost(hero.position, atLaunch.position, blocked)
+          const travel = landPathMoveCost(
+            session,
+            hero.position,
+            atLaunch.position,
+            blocked,
+            hero.player_id,
+          )
           if (travel != null) {
             return {
               kind: 'board_boat',

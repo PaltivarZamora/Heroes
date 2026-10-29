@@ -45,13 +45,22 @@ export function chanceRollLog(
   return `${label}: ${pct}% chance${detail}${action} — ${outcome}`
 }
 
+/** Roll `chancePct` against random(); returns whether it fired and the d100 roll. */
+export function rollChancePctDetailed(
+  chancePct: number,
+  random: () => number = Math.random,
+): { triggered: boolean; roll: number } {
+  if (!Number.isFinite(chancePct) || chancePct <= 0) {
+    return { triggered: false, roll: 100 }
+  }
+  const roll = Math.floor(random() * 100)
+  return { triggered: roll < chancePct, roll }
+}
+
 /** Roll `chancePct` against random(); returns whether it fired. */
 export function rollChancePct(
   chancePct: number,
   random: () => number = Math.random,
 ): boolean {
-  if (!Number.isFinite(chancePct) || chancePct <= 0) {
-    return false
-  }
-  return random() * 100 < chancePct
+  return rollChancePctDetailed(chancePct, random).triggered
 }

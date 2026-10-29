@@ -1,5 +1,9 @@
 import type { CombatBattle, CombatSide, CombatStack } from './battle'
-import { formatInspectStatWithShred } from './statShred'
+import {
+  formatInspectDamageRangeWithShred,
+  formatInspectStatWithShred,
+} from './statShred'
+import { siegePhysBonusPctForHero } from './siegeBonus'
 import {
   scaleBySignedPct,
   stackCombatSpeed,
@@ -90,7 +94,7 @@ function inspectDamageRange(
   catalog: ReferenceCatalog,
   battle?: CombatBattle,
   heroes?: CombatHeroes,
-): { minDmg: number; maxDmg: number; shadowPct: number } {
+): { minDmg: number; maxDmg: number; shadowPct: number; siegePct: number } {
   const unit = unitById(catalog, stack.unitId)
   const magic = (unit?.dmg_type ?? '').toLowerCase() === 'magic'
   const out = stack.outputMods
@@ -105,8 +109,23 @@ function inspectDamageRange(
       ? deathKnightShadowDamageBonusPct(stack, battle, catalog, heroes)
       : 0
   const shadowPct = necroPct + dkPct
+  const siegePct =
+    !magic && battle != null
+      ? siegePhysBonusPctForHero(
+          catalog,
+          stack.unitId,
+          heroes
+            ? stack.side === 'atk'
+              ? heroes.atk
+              : heroes.def
+            : undefined,
+          battle,
+        )
+      : 0
   const totalPct =
-    (magic ? (out?.magicTotal ?? 0) : (out?.physicalTotal ?? 0)) + shadowPct
+    (magic ? (out?.magicTotal ?? 0) : (out?.physicalTotal ?? 0)) +
+    shadowPct +
+    siegePct
   return {
     minDmg: scaleBySignedPct(
       scaleBySignedPct(stackMinDmg(stack, catalog), minPct),
@@ -117,6 +136,7 @@ function inspectDamageRange(
       totalPct,
     ),
     shadowPct,
+    siegePct,
   }
 }
 
@@ -214,6 +234,24 @@ export function inspectActiveEffects(
   heroes?: CombatHeroes,
 ): InspectRow[] {
   const rows: InspectRow[] = []
+
+  if (battle) {
+    const hero =
+      heroes == null
+        ? undefined
+        : stack.side === 'atk'
+          ? heroes.atk
+          : heroes.def
+    const siegePct = siegePhysBonusPctForHero(
+      catalog,
+      stack.unitId,
+      hero,
+      battle,
+    )
+    if (siegePct > 0) {
+      rows.push(effect('Siege bonus', `${signedPct(Math.round(siegePct))} physical`))
+    }
+  }
 
   for (const cond of inspectConditions(stack, catalog)) {
     rows.push(effect(cond.name, cond.remaining))
@@ -667,7 +705,7 @@ export function inspectHoverRows(
     { label: 'top HP', value: `${stack.topHealth} / ${maxHp}` },
     {
       label: 'dmg',
-      value: `${formatInspectStatWithShred(minDmg, stack, catalog, 'minDmg')}–${formatInspectStatWithShred(maxDmg, stack, catalog, 'maxDmg')}`,
+      value: formatInspectDamageRangeWithShred(minDmg, maxDmg, stack, catalog),
     },
     {
       label: 'defense',
@@ -746,7 +784,10 @@ export function inspectRows(
   return [
     { label: 'name', value: unit.name },
     { label: 'qty', value: `${stack.qty} / ${stack.startingQty}` },
-    { label: 'health (max per creature)', value: String(maxHp) },
+    {
+      label: 'health (max per creature)',
+      value: formatInspectStatWithShred(maxHp, stack, catalog, 'maxHp'),
+    },
     { label: 'top HP', value: `${stack.topHealth} / ${maxHp}` },
     { label: 'dmg_type', value: unit.dmg_type ?? '—' },
     {

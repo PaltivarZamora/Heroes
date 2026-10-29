@@ -66,6 +66,16 @@ export function boatEnterCost(q: number, r: number): number | null {
   return isWaterOrShallowTerrain(catalog, terrain) ? 1 : null
 }
 
+/** Slide/anim timing only — terrain enter cost, deep Water (null) as 1. */
+export function boatSlideTimingCost(
+  catalog: ReferenceCatalog | null | undefined,
+  q: number,
+  r: number,
+): number {
+  const cost = hexTransitionMoveCost(catalog, q, r)
+  return cost != null && cost > 0 ? cost : 1
+}
+
 export function findBoatAt(
   session: GameSession,
   q: number,

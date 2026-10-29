@@ -10,7 +10,7 @@ import {
 import type { CombatBattle, CombatSide, CombatStack, CombatTile } from './battle'
 import { isHeroStack } from './battle'
 import { chanceRollLog, rollChancePct } from './combatLog'
-import { placeStormOnHexKeys, STORM_GROUND_EFFECT_ID } from './groundEffect'
+import { placeStormOnHexKeys, resolveUnitGroundEffectChancePct, STORM_GROUND_EFFECT_ID } from './groundEffect'
 import { occupancyKey, stackFootprint } from './occupancy'
 import { hexDisk } from './shapes'
 import { syncTombstonesFromWipes } from './tombstone'
@@ -78,8 +78,8 @@ export function applyTerrainGrowth(
 }
 
 /**
- * Tempest: after move stops, intel×chancePctIntelStat % independently per hex
- * in attack radius to place Storm.
+ * Tempest: after move stops, roll ground_effect_chance_pct per hex in attack
+ * radius to place Storm.
  */
 export function tryTempestStormScatter(
   battle: CombatBattle,
@@ -100,9 +100,11 @@ export function tryTempestStormScatter(
   const templateId = spec.groundEffectId ?? STORM_GROUND_EFFECT_ID
   const label = unitById(catalog, stack.unitId)?.name ?? 'Tempest'
   const caster = heroForSide(stack.side, heroes)
-  const intel = commandingHeroStats(catalog, caster).intel
-  const chanceMult = spec.chancePctIntelStat ?? 4
-  const chance = Math.min(100, Math.max(0, Math.floor(intel * chanceMult)))
+  const resolved = resolveUnitGroundEffectChancePct(spec, label)
+  if (resolved.missingLine) {
+    return { battle, lines: [resolved.missingLine] }
+  }
+  const chance = resolved.chance!
   const radius = Math.max(0, spec.radius ?? 2)
   const board = new Set(tiles.map((tile) => occupancyKey(tile.q, tile.r)))
   const hexes = hexDisk({ q: stack.q, r: stack.r }, radius).filter((hex) =>
@@ -119,12 +121,20 @@ export function tryTempestStormScatter(
     hits += 1
     keys.push(occupancyKey(hex.q, hex.r))
   }
-  const lines = [
-    `${label} dropped Storm ${hits}/${attempted} times` +
-      (chance < 100
-        ? ` (${chance}% per hex, INT ${intel} × ${chanceMult}).`
-        : '.'),
-  ]
+  const lines: string[] = []
+  if (attempted > 0 && chance < 100) {
+    lines.push(
+      chanceRollLog(label, chance, hits > 0, {
+        action: 'to leave Storm',
+        success: `${hits}/${attempted} hex${attempted === 1 ? '' : 'es'}.`,
+        fail: `0/${attempted} hex${attempted === 1 ? '' : 'es'}.`,
+      }),
+    )
+  } else if (attempted > 0) {
+    lines.push(
+      `${label} dropped Storm ${hits}/${attempted} time${attempted === 1 ? '' : 's'}.`,
+    )
+  }
   if (keys.length === 0) {
     return { battle, lines }
   }
@@ -224,23 +234,6 @@ export function applySelfRezThenTombstones(
     battle: syncTombstonesFromWipes(before, withStacks, catalog),
     lines,
   }
-}
-
-/** Chance% = hero.intel × chancePctIntelStat (Thunder Lizard / Tempest). */
-export function leaveBehindChancePct(
-  catalog: ReferenceCatalog,
-  caster: Hero | null | undefined,
-  chancePct: number | null,
-  chancePctIntelStat: number | null,
-): number {
-  if (chancePctIntelStat != null && chancePctIntelStat > 0) {
-    const intel = commandingHeroStats(catalog, caster).intel
-    return Math.min(100, Math.max(0, Math.floor(intel * chancePctIntelStat)))
-  }
-  if (chancePct != null && chancePct > 0) {
-    return Math.min(100, Math.floor(chancePct))
-  }
-  return 100
 }
 
 export function diskKeysAround(at: Axial, radius: number): string[] {

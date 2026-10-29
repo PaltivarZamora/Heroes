@@ -38,6 +38,7 @@ import {
 import { applyDailyHeroPoolRegen } from '../items/heroRegen'
 import {
   armyOptions,
+  armyDwellingRootForClass,
   buildingById,
   buildingGrowth,
   buildingProduces,
@@ -49,6 +50,7 @@ import {
   isBuildRoot,
   isLibraryBuilding,
   nextInChain,
+  townArmyClassIdsOrdered,
   unitCost,
   unitForBuilding,
   unitUpgradeCost,
@@ -957,9 +959,9 @@ export function grantOpenChest(session: GameSession): GameSession {
 }
 
 /**
- * Debug/options: place basic (level-1) army dwellings for slots 11–16 on the
- * player's first controlled town. `armyChoice` 1 = first root per slot (by id),
- * 2 = second. Includes one week of initial growth in recruit_qty.
+ * Debug/options: place level-1 army dwellings for slots 11–16 on the
+ * player's first controlled town. Army N = dwellings whose class matches
+ * the town's Nth hero class (hero_type sort_order, then id).
  */
 export function grantBuildArmy(
   session: GameSession,
@@ -977,17 +979,26 @@ export function grantBuildArmy(
   if (!town) {
     return { session, notice: 'You do not control a town.' }
   }
-  const rootIndex = armyChoice - 1
+  const classes = townArmyClassIdsOrdered(catalog, town.town_type_id)
+  const classId = classes[armyChoice - 1]
+  if (classId == null) {
+    return {
+      session,
+      notice: `No Army ${armyChoice} class defined for this town.`,
+    }
+  }
   let next = session
   let built = 0
   for (let slotNum = 11; slotNum <= 16; slotNum += 1) {
     if (!isArmySlot(slotNum)) {
       continue
     }
-    const roots = armyOptions(catalog, slotNum, town.town_type_id)
-      .filter(isBuildRoot)
-      .sort((a, b) => a.id - b.id)
-    const building = roots[rootIndex]
+    const building = armyDwellingRootForClass(
+      catalog,
+      slotNum,
+      town.town_type_id,
+      classId,
+    )
     if (!building) {
       continue
     }

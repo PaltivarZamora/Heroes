@@ -770,6 +770,14 @@ export function formatLogEntry(
       return {
         text: `${prefix}Lost ${townName(session, String(data.townId))}`,
       }
+    case 'mount_anim':
+      return {
+        text: `${prefix}${String(data.message ?? 'Mount animation notice')}`,
+      }
+    case 'sound':
+      return {
+        text: `${prefix}${String(data.message ?? 'Sound notice')}`,
+      }
     case 'ambushed':
       return {
         text: `${prefix}${mobLabel(session, String(data.mobId))} ambushed ${heroName(session, String(data.heroId))}`,

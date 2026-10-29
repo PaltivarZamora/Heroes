@@ -1,5 +1,5 @@
 import { type Grid, type Hex } from 'honeycomb-grid'
-import { findPathOnBoard, findPathToward, hexDistance } from './pathfinding'
+import { findPathOnBoard, findPathToward, hexDistance, type WorldPathCostOptions } from './pathfinding'
 import { mobPathRingKeys } from './mobAggro'
 import { getSession } from '../session/store'
 import { getTile, isPassable } from './world'
@@ -93,6 +93,7 @@ function stepsAlong(
   grid: Grid<Hex>,
   path: Axial[],
   remaining: number,
+  enterCost: (q: number, r: number) => number | null,
 ): Hex[] {
   const steps: Hex[] = []
   let mp = remaining
@@ -101,11 +102,7 @@ function stepsAlong(
     if (!hex) {
       break
     }
-    const tile = getTile(hex.q, hex.r)
-    if (!tile || tile.blocked) {
-      break
-    }
-    const cost = hexTransitionMoveCost(getCachedCatalog(), hex.q, hex.r)
+    const cost = enterCost(hex.q, hex.r)
     if (cost == null || mp + 1e-9 < cost) {
       break
     }
@@ -137,12 +134,16 @@ export function planMovementSteps(
   to: Axial,
   remaining: number,
   blocked?: ReadonlySet<string>,
+  pathOpts?: WorldPathCostOptions,
 ): { steps: Hex[]; risky: boolean } {
   if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return { steps: [], risky: false }
   }
-  const open = findPathToward(from, to, blocked)
-  const safe = findPathToward(from, to, ringBlocked(blocked, from, to))
+  const enterCost =
+    pathOpts?.enterCost ??
+    ((q, r) => hexTransitionMoveCost(getCachedCatalog(), q, r))
+  const open = findPathToward(from, to, blocked, pathOpts)
+  const safe = findPathToward(from, to, ringBlocked(blocked, from, to), pathOpts)
   if (!open || open.length <= 1) {
     return { steps: [], risky: false }
   }
@@ -152,7 +153,7 @@ export function planMovementSteps(
   const safeDist = safeEnd ? hexDistance(safeEnd, to) : Infinity
   const path = safeEnd && safeDist <= openDist ? safe! : open
   const risky = !(safeEnd && safeDist <= openDist)
-  return { steps: stepsAlong(grid, path, remaining), risky }
+  return { steps: stepsAlong(grid, path, remaining, enterCost), risky }
 }
 
 export function movementSteps(
@@ -161,8 +162,9 @@ export function movementSteps(
   to: Axial,
   remaining: number,
   blocked?: ReadonlySet<string>,
+  pathOpts?: WorldPathCostOptions,
 ): Hex[] {
-  return planMovementSteps(grid, from, to, remaining, blocked).steps
+  return planMovementSteps(grid, from, to, remaining, blocked, pathOpts).steps
 }
 
 /**
@@ -284,11 +286,15 @@ export function resolveWorldWaypointLeg(
   to: Axial,
   remaining: number,
   blocked?: ReadonlySet<string>,
+  pathOpts?: WorldPathCostOptions,
 ): { steps: Axial[]; remaining: number } | null {
   if (remaining <= 1e-9 || (from.q === to.q && from.r === to.r)) {
     return null
   }
-  const hexes = movementSteps(grid, from, to, remaining, blocked)
+  const enterCost =
+    pathOpts?.enterCost ??
+    ((q, r) => hexTransitionMoveCost(getCachedCatalog(), q, r))
+  const hexes = movementSteps(grid, from, to, remaining, blocked, pathOpts)
   if (hexes.length === 0) {
     return null
   }
@@ -299,7 +305,7 @@ export function resolveWorldWaypointLeg(
   let mp = remaining
   const steps: Axial[] = []
   for (const hex of hexes) {
-    const cost = hexTransitionMoveCost(getCachedCatalog(), hex.q, hex.r)
+    const cost = enterCost(hex.q, hex.r)
     if (cost == null) {
       return null
     }

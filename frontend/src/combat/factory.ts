@@ -1,9 +1,16 @@
 import type { Axial } from '../hex/hero'
 import { neighborHexes } from '../hex/pathfinding'
-import type { ReferenceCatalog } from '../town/catalog'
+import type { Hero } from '../session/types'
+import {
+  commandingHeroStats,
+  dummyHeroStat,
+  type ReferenceCatalog,
+} from '../town/catalog'
 import { unitAttackShape, unitById, unitHasTag } from '../town/catalog'
+import { heroStatValueByStatId } from '../town/statCatalog'
 import type { CombatStack } from './battle'
 import { isHeroStack } from './battle'
+import { applyStackHeal, applyVampiricRevive } from './attack'
 import { occupancyKey } from './occupancy'
 import { incomingDir } from './shapes'
 
@@ -36,10 +43,59 @@ export function isHealAllyTarget(
 export function healAmtForAllyRepair(
   attacker: CombatStack,
   catalog: ReferenceCatalog,
+  hero: Hero | null | undefined,
 ): number {
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.healFormula) {
+    const heroStat = hero
+      ? heroStatValueByStatId(
+          catalog,
+          commandingHeroStats(catalog, hero),
+          spec.healFormula.heroStatId,
+        )
+      : dummyHeroStat(catalog)
+    const total = (heroStat / spec.healFormula.div) * attacker.qty
+    return Math.max(0, Math.floor(total))
+  }
   const per = spec.healAmtPerUnit ?? 0
   return Math.max(0, Math.floor(per * attacker.qty))
+}
+
+export function applyAllyStackRepair(
+  target: CombatStack,
+  amount: number,
+  fullHealth: number,
+  revive: boolean,
+): { stack: CombatStack; healed: number; revived: number } {
+  if (amount <= 0 || target.qty <= 0) {
+    return { stack: target, healed: 0, revived: 0 }
+  }
+  if (revive) {
+    const next = applyVampiricRevive(target, amount, fullHealth)
+    return {
+      stack: next.stack,
+      healed: next.healed,
+      revived: next.revived,
+    }
+  }
+  const top = applyStackHeal(target, amount, fullHealth)
+  return { stack: top.stack, healed: top.healed, revived: 0 }
+}
+
+export function formatAllyRepairLog(
+  atkName: string,
+  defName: string,
+  healed: number,
+  revived: number,
+): string {
+  if (healed <= 0 && revived <= 0) {
+    return `${atkName} repairs ${defName}: no effect`
+  }
+  const bits = [`+${healed} HP`]
+  if (revived > 0) {
+    bits.push(`${revived} revived`)
+  }
+  return `${atkName} repairs ${defName}: ${bits.join(', ')}`
 }
 
 function isNeighbor(a: Axial, b: Axial): boolean {

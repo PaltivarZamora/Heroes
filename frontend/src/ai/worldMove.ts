@@ -14,7 +14,11 @@ import {
   isDisembarkLandHex,
 } from '../hex/boat'
 import { forEachPassableHex, getTile, isExplored, restoreExplored } from '../hex/world'
-import { hexTransitionMoveCost } from '../hex/terrainTransition'
+import {
+  heroWorldPathCostOptions,
+  hexHeroMovementEnterCost,
+  shouldBlockMapNodeForPath,
+} from '../hex/worldHeroPath'
 import type { Axial } from '../hex/hero'
 import {
   getCachedCatalog,
@@ -217,7 +221,7 @@ function blockedHexes(
     add(town.position.q, town.position.r)
   }
   for (const node of session.nodes) {
-    if (node.kind === 'pickup' && node.collected) {
+    if (!shouldBlockMapNodeForPath(session, node, mover.player_id)) {
       continue
     }
     add(node.position.q, node.position.r)
@@ -469,6 +473,7 @@ function decideBoardedWorldMove(
 }
 
 function pathTravelMp(
+  session: GameSession,
   hero: Hero,
   dest: Axial,
   blocked: ReadonlySet<string>,
@@ -479,18 +484,38 @@ function pathTravelMp(
   if (hero.movement_remaining <= 1e-9) {
     return null
   }
-  const planned = findPathAvoidingMobRings(hero.position, dest, blocked)
+  const catalog = getCachedCatalog()
+  const pathOpts = heroWorldPathCostOptions(session, hero.player_id, catalog)
+  const planned = findPathAvoidingMobRings(
+    hero.position,
+    dest,
+    blocked,
+    false,
+    pathOpts,
+  )
   const path = planned?.path
   if (!path || path.length < 2) {
     return null
   }
-  const firstCost = hexTransitionMoveCost(getCachedCatalog(), path[1].q, path[1].r)
+  const firstCost = hexHeroMovementEnterCost(
+    catalog,
+    session,
+    path[1].q,
+    path[1].r,
+    hero.player_id,
+  )
   if (firstCost == null || hero.movement_remaining + 1e-9 < firstCost) {
     return null
   }
   let cost = 0
   for (let i = 1; i < path.length; i += 1) {
-    const step = hexTransitionMoveCost(getCachedCatalog(), path[i].q, path[i].r)
+    const step = hexHeroMovementEnterCost(
+      catalog,
+      session,
+      path[i].q,
+      path[i].r,
+      hero.player_id,
+    )
     if (step == null) {
       return null
     }
@@ -737,7 +762,7 @@ export function decideWorldMove(
   ) => {
     const walkOnto = intent.kind === 'explore' ? null : intent.dest
     const blocked = blockedHexes(session, hero, walkOnto)
-    const travel = pathTravelMp(hero, intent.dest, blocked)
+    const travel = pathTravelMp(session, hero, intent.dest, blocked)
     if (travel == null) {
       return
     }
@@ -1380,7 +1405,7 @@ export function decideWorldMove(
       continue
     }
     const blocked = blockedHexes(session, hero, boat.position)
-    const travel = pathTravelMp(hero, boat.position, blocked)
+    const travel = pathTravelMp(session, hero, boat.position, blocked)
     if (travel == null) {
       continue
     }
@@ -1519,7 +1544,7 @@ export function decideWorldMove(
         continue
       }
       const blocked = blockedHexes(session, hero, approach)
-      const travel = pathTravelMp(hero, approach, blocked)
+      const travel = pathTravelMp(session, hero, approach, blocked)
       if (travel == null) {
         continue
       }

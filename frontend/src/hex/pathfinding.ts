@@ -30,7 +30,7 @@ function key(q: number, r: number): string {
 }
 
 /** Terrain walkable, and not occupied by a map object this path. */
-function isPathHexOpen(
+export function isPathHexOpen(
   q: number,
   r: number,
   blocked?: ReadonlySet<string>,
@@ -54,6 +54,11 @@ function isPathHexOpen(
  */
 function terrainEnterCost(q: number, r: number): number | null {
   return hexTransitionMoveCost(getCachedCatalog(), q, r)
+}
+
+export type WorldPathCostOptions = {
+  enterCost?: (q: number, r: number) => number | null
+  hexOpen?: (q: number, r: number, blocked?: ReadonlySet<string>) => boolean
 }
 
 export function hexDistance(from: Axial, to: Axial): number {
@@ -112,12 +117,13 @@ export function findPathAvoidingMobRings(
   to: Axial,
   blocked?: ReadonlySet<string>,
   ignoreFog = false,
+  pathOpts?: WorldPathCostOptions,
 ): { path: Axial[]; risky: boolean } | null {
-  const safe = findPath(from, to, withMobRings(blocked, to, from), ignoreFog)
+  const safe = findPath(from, to, withMobRings(blocked, to, from), ignoreFog, pathOpts)
   if (safe) {
     return { path: safe, risky: false }
   }
-  const path = findPath(from, to, blocked, ignoreFog)
+  const path = findPath(from, to, blocked, ignoreFog, pathOpts)
   return path ? { path, risky: true } : null
 }
 
@@ -252,20 +258,24 @@ export function findPath(
   to: Axial,
   blocked?: ReadonlySet<string>,
   ignoreFog = false,
+  pathOpts?: WorldPathCostOptions,
 ): Axial[] | null {
   if (from.q === to.q && from.r === to.r) {
     return [from]
   }
-  const open = (q: number, r: number) => isPathHexOpen(q, r, blocked, ignoreFog)
-  if (!open(to.q, to.r)) {
+  const enterCost = pathOpts?.enterCost ?? terrainEnterCost
+  const openHex = (q: number, r: number) =>
+    pathOpts?.hexOpen?.(q, r, blocked) ??
+    isPathHexOpen(q, r, blocked, ignoreFog)
+  if (!openHex(to.q, to.r)) {
     return null
   }
   return findPathOnBoard(
     from,
     to,
-    terrainEnterCost,
+    enterCost,
     blocked,
-    (q, r) => (q === from.q && r === from.r) || open(q, r),
+    (q, r) => (q === from.q && r === from.r) || openHex(q, r),
   )
 }
 
@@ -278,8 +288,13 @@ export function findPathToward(
   from: Axial,
   to: Axial,
   blocked?: ReadonlySet<string>,
+  pathOpts?: WorldPathCostOptions,
 ): Axial[] | null {
-  const direct = findPath(from, to, blocked, false)
+  const enterCost = pathOpts?.enterCost ?? terrainEnterCost
+  const openHex = (q: number, r: number) =>
+    pathOpts?.hexOpen?.(q, r, blocked) ??
+    isPathHexOpen(q, r, blocked, false)
+  const direct = findPath(from, to, blocked, false, pathOpts)
   if (direct) {
     return direct
   }
@@ -314,10 +329,10 @@ export function findPathToward(
         continue
       }
       // Stay in explored fog — never path into or through unexplored hexes.
-      if (!isPathHexOpen(next.q, next.r, blocked, false)) {
+      if (!openHex(next.q, next.r)) {
         continue
       }
-      const cost = terrainEnterCost(next.q, next.r)
+      const cost = enterCost(next.q, next.r)
       if (cost == null) {
         continue
       }

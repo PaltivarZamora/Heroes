@@ -39,6 +39,7 @@ import {
   type CombatTile,
 } from './battle'
 import { chanceRollLog, formatChancePct, rollChancePct } from './combatLog'
+import { syncTombstonesFromWipes } from './tombstone'
 import {
   applySelfRezThenTombstones,
 } from './confluence'
@@ -61,6 +62,8 @@ import {
   isStunned,
   isVanished,
   isMagicAttackSilenced,
+  isPhysicalAttackDisarmed,
+  isUnitAttackBlocked,
   liveResistance,
   tryInflictCondition,
 } from './condition'
@@ -75,7 +78,12 @@ import {
 import {
   tryLeaveGroundEffectOnAttackPath,
 } from './attackTrail'
+import { applyAreaAllyHealFromAttack } from './areaAllyHeal'
+import { tryRetreatAfterAttack } from './retreatAfterAttack'
+import { clearVanishOnAttack } from './vanishOnMove'
 import {
+  applyAllyStackRepair,
+  formatAllyRepairLog,
   healAmtForAllyRepair,
   isHealAllyTarget,
 } from './factory'
@@ -92,7 +100,23 @@ import {
   applySummonOnKillFromAttack,
   unitHasSummonOnKill,
 } from './summonOnKill'
-import { tryApplyStatShredFromHit } from './statShred'
+import { applyExtraTurnChanceAfterAttack } from './extraTurnChance'
+import { siegePhysBonusPct } from './siegeBonus'
+import { tryApplyAllyBuffFromHit, tryApplySelfBuffFromHit } from './statBuff'
+import {
+  isValidPullAttackTarget,
+  targetInNormalAttackReach,
+  tryPullTargetBeforeAttack,
+} from './pullTarget'
+import {
+  pickRandomExtraShotTarget,
+  qualifiesForExtraShots,
+} from './extraShots'
+import type { ExtraShotsConfig } from '../town/catalog'
+import {
+  stackCritStatsFromShred,
+  tryApplyStatShredFromHit,
+} from './statShred'
 import {
   applyHighPriestessHealOnKill,
   auraExtraQty,
@@ -414,8 +438,17 @@ export function canAttackAnyone(
   if (canPlaceTrapAnyone(attacker, battle, catalog, tiles)) {
     return true
   }
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   return battle.stacks.some((row) =>
-    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
+    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks) ||
+    (spec.pullTarget &&
+      isValidPullAttackTarget(
+        attacker,
+        row,
+        catalog,
+        tiles,
+        battle.stacks,
+      )),
   )
 }
 
@@ -463,11 +496,17 @@ function liveCritStats(
   extraPct = 0,
   extraAmt = 0,
 ): { pct: number; amt: number; minBonus: number } {
-  const base = commandingHeroStats(catalog, attackerHero)
+  const fromShred = stackCritStatsFromShred(
+    striker,
+    catalog,
+    attackerHero,
+    extraPct,
+    extraAmt,
+  )
   return {
-    pct: base.crit_pct + (striker.critPctBonus ?? 0) + extraPct,
-    amt: base.crit_amt + (striker.critAmtBonus ?? 0) + extraAmt,
-    minBonus: Math.max(1, striker.minCritBonusDmg ?? 1),
+    pct: fromShred.pct,
+    amt: fromShred.amt,
+    minBonus: fromShred.minBonus,
   }
 }
 
@@ -1644,6 +1683,125 @@ function remainingLogLine(
     : `Player ${atkPlayer} now has ${atkQty} ${atkName} and Player ${defPlayer} has ${defQty} ${defName}.`
 }
 
+function fireExtraShotsFromAttack(
+  attackerId: string,
+  config: ExtraShotsConfig,
+  stacks: CombatStack[],
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes: CombatHeroes | undefined,
+  random: () => number,
+  strikeMods: StrikeMods | null | undefined,
+  rangePenalty: boolean,
+  spec: ReturnType<typeof unitAttackShape>,
+  lines: string[],
+  hitKeys: string[],
+  noteKill: (unitId: number, killed: number) => void,
+): CombatStack[] {
+  const live = (id: string) => stacks.find((row) => row.id === id) ?? null
+  for (let shot = 0; shot < config.count; shot += 1) {
+    const atk = live(attackerId)
+    if (!atk || atk.qty <= 0) {
+      break
+    }
+    const picked = pickRandomExtraShotTarget(
+      atk,
+      stacks,
+      catalog,
+      tiles,
+      random,
+    )
+    if (!picked) {
+      continue
+    }
+    const def = live(picked.id)
+    if (!def || def.qty <= 0) {
+      continue
+    }
+    const waveKind = damageKindOf(unitById(catalog, atk.unitId))
+    const struck = applyStrike(
+      atk,
+      def,
+      catalog,
+      random,
+      config.dmgPct,
+      rangePenalty,
+      heroForSide(def.side, heroes),
+      heroForSide(atk.side, heroes),
+      {
+        ...strikeMods,
+        battleStacks: stacks,
+        zoneEvasionPct: zoneEvasionPctForStack(
+          { ...battle, stacks },
+          def,
+          catalog,
+        ),
+        outgoingPctAdd:
+          (strikeMods?.outgoingPctAdd ?? 0) +
+          necromancerShadowDamageBonusPct(
+            atk,
+            { ...battle, stacks },
+            catalog,
+            heroes,
+          ),
+        outgoingPhysicalPctAdd:
+          (strikeMods?.outgoingPhysicalPctAdd ?? 0) +
+          siegePhysBonusPct(catalog, atk, heroes, { ...battle, stacks }) +
+          deathKnightShadowDamageBonusPct(
+            atk,
+            { ...battle, stacks },
+            catalog,
+            heroes,
+          ),
+      },
+    )
+    stacks = writeStack(stacks, def.id, struck.stack)
+    noteKill(def.unitId, struck.killed)
+    if (!struck.missed && !struck.parried) {
+      const atkName = stackName(catalog, atk.unitId)
+      const defName = stackName(catalog, def.unitId)
+      lines.push(
+        `${atkName} fires an extra arrow at ${defName}: ${struck.damage} dmg`,
+      )
+      if (struck.damage > 0) {
+        hitKeys.push(occupancyKey(def.q, def.r))
+      }
+      if (struck.damage > 0 && struck.stack && struck.stack.qty > 0) {
+        const post = afterDamageTaken(
+          struck.stack,
+          atk,
+          struck.damage,
+          waveKind,
+          catalog,
+          random,
+        )
+        let defender = post.defender
+        let striker = post.attacker
+        lines.push(...post.lines)
+        if (spec.statShred && striker && striker.qty > 0) {
+          const shredded = tryApplyStatShredFromHit(
+            catalog,
+            striker,
+            defender,
+            spec.statShred,
+            heroForSide(striker.side, heroes),
+            heroForSide(defender.side, heroes),
+            random,
+          )
+          defender = shredded.stack
+          lines.push(...shredded.lines)
+        }
+        stacks = writeStack(stacks, def.id, defender)
+        if (striker) {
+          stacks = writeStack(stacks, attackerId, striker)
+        }
+      }
+    }
+  }
+  return stacks
+}
+
 export type AttackAim = {
   targetId: string | null
   hex: { q: number; r: number }
@@ -1676,15 +1834,26 @@ export function resolveAttack(
   if (!before || before.qty <= 0) {
     return null
   }
-  if (isMagicAttackSilenced(before, catalog)) {
+  if (isUnitAttackBlocked(before, catalog)) {
     return null
   }
   const stand = aim.stand ?? { q: before.q, r: before.r }
   battle = moveStack(battle, attackerId, stand.q, stand.r)
-  const attacker = battle.stacks.find((row) => row.id === attackerId)
+  let attacker = battle.stacks.find((row) => row.id === attackerId)
   if (!attacker || attacker.qty <= 0) {
     return null
   }
+  attacker = {
+    ...clearVanishOnAttack(attacker, catalog),
+    attackedThisTurn: true,
+  }
+  battle = {
+    ...battle,
+    stacks: battle.stacks.map((row) =>
+      row.id === attackerId ? attacker : row,
+    ),
+  }
+  const battleForTombstones = battle
   const rushMods = strikeModsFromCharge(
     attacker,
     catalog,
@@ -1697,7 +1866,8 @@ export function resolveAttack(
   const trapCfg = unitTrapConfig(atkUnit)
   const placingTrap = spec.placesTrap && trapCfg != null
   const noAim =
-    shapeIsUntargeted(spec.shape) || shapePulsesOnMove(spec.shape)
+    shapeIsUntargeted(spec.shape) ||
+    (shapePulsesOnMove(spec.shape) && !spec.pullTarget)
   const aimed =
     (aim.targetId
       ? battle.stacks.find((row) => row.id === aim.targetId)
@@ -1706,6 +1876,12 @@ export function resolveAttack(
       (row) => row.q === aim.hex.q && row.r === aim.hex.r,
     ) ??
     null
+
+  const extraShotsEligible =
+    spec.extraShots != null &&
+    aimed != null &&
+    aimed.side !== attacker.side &&
+    qualifiesForExtraShots(attacker, aimed, catalog)
 
   const maxRange = stackMaxRange(attacker, catalog)
   const aimDist = hexDistance(attacker, aim.hex)
@@ -1747,6 +1923,33 @@ export function resolveAttack(
           return null
         }
       }
+    } else if (spec.pullTarget) {
+      if (!aimed) {
+        return null
+      }
+      const pullOk = isValidPullAttackTarget(
+        attacker,
+        aimed,
+        catalog,
+        tiles,
+        battle.stacks,
+      )
+      const reachOk =
+        (allowFriendly || aimed.side !== attacker.side) &&
+        targetInNormalAttackReach(attacker, aimed, catalog)
+      if (!pullOk && !reachOk) {
+        return null
+      }
+      if (
+        aimed.side === attacker.side &&
+        !allowFriendly &&
+        !isHealAllyTarget(attacker, aimed, catalog)
+      ) {
+        return null
+      }
+      if (isUntargetableStack(aimed, catalog) || isVanished(aimed, catalog)) {
+        return null
+      }
     } else if (
       !aimed ||
       !isValidAttackTarget(
@@ -1764,13 +1967,23 @@ export function resolveAttack(
 
   // Goblin Hammersmith Repair Strike: heal tagged ally instead of damaging.
   if (aimed && isHealAllyTarget(attacker, aimed, catalog)) {
-    const amount = healAmtForAllyRepair(attacker, catalog)
+    const amount = healAmtForAllyRepair(
+      attacker,
+      catalog,
+      heroForSide(attacker.side, heroes),
+    )
     const full = stackMaxHealth(aimed, catalog)
-    const healed = applyStackHeal(aimed, amount, full)
+    const specHeal = unitAttackShape(atkUnit)
+    const repaired = applyAllyStackRepair(
+      aimed,
+      amount,
+      full,
+      specHeal.healRevive === true,
+    )
     const atkName = stackName(catalog, attacker.unitId)
     const defName = stackName(catalog, aimed.unitId)
     const stacks = writeStack(
-      writeStack(battle.stacks, aimed.id, healed.stack),
+      writeStack(battle.stacks, aimed.id, repaired.stack),
       attackerId,
       { ...attacker, hasActedThisRound: true },
     )
@@ -1778,9 +1991,12 @@ export function resolveAttack(
       battle: { ...battle, stacks },
       log: {
         lines: [
-          healed.healed > 0
-            ? `${attacker.qty} ${atkName} repaired ${aimed.qty} ${defName} for ${healed.healed} HP.`
-            : `${attacker.qty} ${atkName} repaired ${aimed.qty} ${defName} (already full).`,
+          formatAllyRepairLog(
+            atkName,
+            defName,
+            repaired.healed,
+            repaired.revived,
+          ),
         ],
       },
       hitKeys: [],
@@ -1862,17 +2078,46 @@ export function resolveAttack(
         lines: [],
         trapSetLine: `${attacker.qty} ${name} set a trap`,
       },
-      hitKeys: [occupancyKey(aim.hex.q, aim.hex.r)],
+      hitKeys: [],
       healKeys: [],
       hitColor: 'yellow',
     }
   }
 
+  const pullLog: string[] = []
+  let battleAfterPull = battle
+  let aimedForHits = aimed
+  if (
+    spec.pullTarget &&
+    aimed &&
+    (allowFriendly || aimed.side !== attacker.side)
+  ) {
+    const pull = tryPullTargetBeforeAttack(
+      battleAfterPull,
+      attacker,
+      aimed,
+      catalog,
+      tiles,
+    )
+    battleAfterPull = pull.battle
+    if (pull.pulled) {
+      if (pull.line) {
+        pullLog.push(pull.line)
+      }
+      aimedForHits = pull.target ?? aimed
+    } else if (!targetInNormalAttackReach(attacker, aimed, catalog)) {
+      return null
+    }
+  }
+  battle = battleAfterPull
+
   const hits = resolveShapeHits(
     attacker,
     aim.hex,
-    aimed && (allowFriendly || aimed.side !== attacker.side) ? aimed : null,
-    battle,
+    aimedForHits && (allowFriendly || aimedForHits.side !== attacker.side)
+      ? aimedForHits
+      : null,
+    battleAfterPull,
     catalog,
     tiles,
     random,
@@ -1886,11 +2131,10 @@ export function resolveAttack(
           : null),
     },
   )
-  // Attack-trail leave-behind (Skeleton Caster Shadow, Imp Fire, Storm, etc.).
-  // Multi: one roll per landed bolt hex (Tesla Coil). Others: full geometry.
+  // Attack-trail leave-behind (Fire, Shadow, Storm, …).
   const trailLines: string[] = []
   {
-    const trail =
+    let trail =
       spec.shape === 'multi'
         ? hits.map((hit) => hit.hex)
         : spec.shape === 'spiral'
@@ -1899,25 +2143,33 @@ export function resolveAttack(
               spec,
               { q: attacker.q, r: attacker.r },
               aim.hex,
-              battle,
+              battleAfterPull,
               boardKeys(tiles),
               attacker.side,
               tiles,
               catalog,
             )
-    if (trail.length > 0) {
-      const left = tryLeaveGroundEffectOnAttackPath(
-        battle,
-        attackerId,
-        catalog,
-        trail,
-        tiles,
-        heroForSide(attacker.side, heroes),
-        random,
-      )
-      battle = left.battle
-      trailLines.push(...left.lines)
+    if (trail.length === 0 && hits.length > 0) {
+      trail = hits.map((hit) => hit.hex)
     }
+    if (trail.length === 0 && !noAim) {
+      trail = [aim.hex]
+    }
+    const left = tryLeaveGroundEffectOnAttackPath(
+      battleAfterPull,
+      attackerId,
+      catalog,
+      trail,
+      tiles,
+      heroForSide(attacker.side, heroes),
+      random,
+    )
+    battleAfterPull = left.battle
+    battle = battleAfterPull
+    if (left.tiles) {
+      tiles = left.tiles
+    }
+    trailLines.push(...left.lines)
   }
   // Tidal Caller: extinguish Fire (or other) along the line path.
   if (spec.clearsGroundEffectId != null && spec.clearsGroundEffectId > 0) {
@@ -1959,7 +2211,7 @@ export function resolveAttack(
   const blockedByAttacker = unitBlocksEnemyRetaliation(atkUnit)
   let stacks = battle.stacks
   let atk: CombatStack | null = attacker
-  const lines: string[] = [...trailLines]
+  const lines: string[] = [...pullLog, ...trailLines]
   const hitKeys: string[] = []
   const healKeys: string[] = []
   let unitDeaths = { ...(battle.unitDeaths ?? {}) }
@@ -2084,6 +2336,9 @@ export function resolveAttack(
       if (isMagicAttackSilenced(def, catalog)) {
         continue
       }
+      if (isPhysicalAttackDisarmed(def, catalog)) {
+        continue
+      }
 
       const fireRetaliationStrike = (
         retaliator: CombatStack,
@@ -2160,12 +2415,19 @@ export function resolveAttack(
                 catalog,
                 heroes,
               ),
-              outgoingPhysicalPctAdd: deathKnightShadowDamageBonusPct(
-                nextRetaliator,
-                { ...battle, stacks },
-                catalog,
-                heroes,
-              ),
+              outgoingPhysicalPctAdd:
+                siegePhysBonusPct(
+                  catalog,
+                  nextRetaliator,
+                  heroes,
+                  { ...battle, stacks },
+                ) +
+                deathKnightShadowDamageBonusPct(
+                  nextRetaliator,
+                  { ...battle, stacks },
+                  catalog,
+                  heroes,
+                ),
             },
           )
           // Monk reflect: redirect computed retaliation dmg onto the retaliator.
@@ -2330,6 +2592,22 @@ export function resolveAttack(
             ...nextRetaliator,
             preemptiveStrikeUsesLeft: left > 0 ? left : undefined,
           }
+        }
+        const retalTrail = shaped.map((hit) => hit.hex)
+        if (retalTrail.length > 0) {
+          const geLeft = tryLeaveGroundEffectOnAttackPath(
+            { ...battle, stacks },
+            nextRetaliator.id,
+            catalog,
+            retalTrail,
+            tiles,
+            heroForSide(nextRetaliator.side, heroes),
+            random,
+            'retaliate',
+          )
+          battle = geLeft.battle
+          stacks = geLeft.battle.stacks
+          lines.push(...geLeft.lines)
         }
         return nextRetaliator
       }
@@ -2568,6 +2846,7 @@ export function resolveAttack(
             ),
           outgoingPhysicalPctAdd:
             (waveStrikeMods.outgoingPhysicalPctAdd ?? 0) +
+            siegePhysBonusPct(catalog, atk, heroes, { ...battle, stacks }) +
             deathKnightShadowDamageBonusPct(
               atk,
               { ...battle, stacks },
@@ -2655,10 +2934,56 @@ export function resolveAttack(
             victimStack,
             spec.statShred,
             heroForSide(atk.side, heroes),
+            heroForSide(victimStack.side, heroes),
             random,
           )
           stacks = writeStack(stacks, victimId, shredded.stack)
           lines.push(...shredded.lines)
+        }
+      }
+      if (
+        struck.damage > 0 &&
+        !struck.missed &&
+        !struck.parried &&
+        spec.selfBuff &&
+        atk
+      ) {
+        const attackerStack = live(attackerId)
+        if (attackerStack) {
+          const buffed = tryApplySelfBuffFromHit(
+            catalog,
+            attackerStack,
+            spec.selfBuff,
+            heroForSide(atk.side, heroes),
+          )
+          stacks = writeStack(stacks, attackerId, buffed.stack)
+          lines.push(...buffed.lines)
+          const refreshed = live(attackerId)
+          if (refreshed) {
+            atk = refreshed
+          }
+        }
+      }
+      if (
+        struck.damage > 0 &&
+        !struck.missed &&
+        !struck.parried &&
+        spec.allyBuff &&
+        atk
+      ) {
+        const attackerStack = live(attackerId)
+        if (attackerStack) {
+          const blessed = tryApplyAllyBuffFromHit(
+            catalog,
+            stacks,
+            attackerStack,
+            spec.allyBuff,
+            heroForSide(atk.side, heroes),
+            (row) => heroForSide(row.side, heroes),
+            random,
+          )
+          stacks = blessed.stacks
+          lines.push(...blessed.lines)
         }
       }
       // Bouncy Bomb: deaths on THIS stack pulse min_dmg × deaths at enemies.
@@ -2690,15 +3015,12 @@ export function resolveAttack(
         const hasAbsorbGate =
           (spec.killAbsorbChancePct != null && spec.killAbsorbChancePct > 0) ||
           tagsRequired.length > 0 ||
-          spec.killAbsorbTagRequired != null ||
           spec.killAbsorbRequiresTier != null ||
           spec.killAbsorbTrigger != null
         if (hasAbsorbGate) {
           const tagsOk =
-            tagsRequired.length > 0
-              ? tagsRequired.every((tag) => unitHasTag(victim, tag))
-              : spec.killAbsorbTagRequired == null ||
-                unitHasTag(victim, spec.killAbsorbTagRequired)
+            tagsRequired.length === 0 ||
+            tagsRequired.every((tag) => unitHasTag(victim, tag))
           const tierOk =
             spec.killAbsorbRequiresTier == null ||
             (victim != null &&
@@ -2797,6 +3119,26 @@ export function resolveAttack(
 
   let skipInitiativeResort = false
   let offensiveKills = 0
+  if (atk && atk.qty > 0 && spec.areaAllyHeal) {
+    const chargeOrigin =
+      strikeModsLive?.chargePathOrigin ??
+      (spec.shape === 'charge_line' ? { q: before.q, r: before.r } : null)
+    const areaHeal = applyAreaAllyHealFromAttack(
+      { ...battle, stacks },
+      atk,
+      catalog,
+      spec,
+      aim.hex,
+      hits,
+      tiles,
+      heroForSide(atk.side, heroes),
+      chargeOrigin,
+    )
+    stacks = areaHeal.battle.stacks
+    lines.push(...areaHeal.lines)
+    healKeys.push(...areaHeal.healKeys)
+    atk = live(attackerId)
+  }
   if (atk && atk.qty > 0) {
     let { pool: offensivePool, kills: waveKills } = fireOffensive(
       (pct) => pct,
@@ -3009,6 +3351,25 @@ export function resolveAttack(
 
   tryRetaliate(false)
 
+  if (extraShotsEligible && spec.extraShots) {
+    stacks = fireExtraShotsFromAttack(
+      attackerId,
+      spec.extraShots,
+      stacks,
+      battle,
+      catalog,
+      tiles,
+      heroes,
+      random,
+      strikeModsLive,
+      rangePenalty,
+      spec,
+      lines,
+      hitKeys,
+      noteKill,
+    )
+  }
+
   // Drop unused one-shot retaliation skips (e.g. death-pulse victims not in
   // uniqueHitIds) so they don't suppress a later turn's retaliation.
   stacks = stacks.map((row) =>
@@ -3048,6 +3409,18 @@ export function resolveAttack(
   }
 
   atk = live(attackerId)
+  if (atk && atk.qty > 0 && spec.retreatAfterAttack) {
+    const retreated = tryRetreatAfterAttack(
+      { ...battle, stacks, unitDeaths, roundUnitDeaths },
+      attackerId,
+      catalog,
+      tiles,
+    )
+    stacks = retreated.battle.stacks
+    if (retreated.line) {
+      lines.push(retreated.line)
+    }
+  }
   if (uniqueHitIds.length === 1) {
     const id = uniqueHitIds[0]!
     const original =
@@ -3194,6 +3567,22 @@ export function resolveAttack(
       )
     }
   }
+  const actorEnd = nextBattle.stacks.find((row) => row.id === attackerId)
+  const extraTurnRoll = applyExtraTurnChanceAfterAttack(
+    nextBattle,
+    attackerId,
+    catalog,
+    actorEnd ? heroForSide(actorEnd.side, heroState) : undefined,
+    random,
+  )
+  nextBattle = extraTurnRoll.battle
+  if (extraTurnRoll.line) {
+    lines.push(extraTurnRoll.line)
+  }
+  if (extraTurnRoll.grantExtraTurn) {
+    grantExtraTurn = true
+  }
+  nextBattle = syncTombstonesFromWipes(battleForTombstones, nextBattle, catalog)
   return {
     battle: nextBattle,
     log: { lines },

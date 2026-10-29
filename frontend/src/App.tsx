@@ -109,6 +109,9 @@ import { appendAiTrace, clearAiTraces, getAiTraceBlocks, subscribeAiTraces } fro
 import { decideAndApplyHeroTrade } from './ai/armyAlloc'
 import { runAiTurn } from './ai/turn'
 import type { WorldAttackTarget } from './ai/worldMove'
+import { mountAnimDevWarnings } from './hex/heroMountMoveAnim'
+import { worldSpriteScaleDevWarnings } from './hex/worldSpriteScale'
+import { installAudioUnlock, soundDevWarnings } from './audio/soundPlayer'
 import { GameBanner } from './layout/GameBanner'
 import {
   GameLogModal,
@@ -306,6 +309,10 @@ function App() {
   const [roadPlanDebug, setRoadPlanDebug] = useState(false)
   const [townHexNumbers, setTownHexNumbers] = useState(false)
   const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
+
+  useEffect(() => {
+    installAudioUnlock()
+  }, [])
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -1780,13 +1787,19 @@ function App() {
         return `  ${index}: ${player.id} ${control} arch=${player.arch_id} type=${typeId ?? 'random'} heroes=${player.hero_ids.length} towns=${player.town_ids.length} fog=${player.explored.length} elim=${player.eliminated === true}`
       }),
     ],
-    traceLines:
-      aiTraces.length > 0
+    traceLines: [
+      ...(mountAnimDevWarnings().length > 0 ? mountAnimDevWarnings() : []),
+      ...(soundDevWarnings().length > 0 ? soundDevWarnings() : []),
+      ...(worldSpriteScaleDevWarnings().length > 0
+        ? worldSpriteScaleDevWarnings()
+        : []),
+      ...(aiTraces.length > 0
         ? [
             '--- AI traces (DEV) ---',
             ...aiTraces.flatMap((block) => ['', ...block.split('\n')]),
           ]
-        : [],
+        : []),
+    ],
   }
   const debugText = formatDebugText(debugSnapshot)
   const debugSections = formatDebugSections(debugSnapshot)

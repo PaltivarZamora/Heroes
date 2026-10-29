@@ -245,9 +245,21 @@ export function incomingDir(from: Axial, to: Axial): Axial {
   return { q: to.q - prev.q, r: to.r - prev.r }
 }
 
-/** Target + the 2 hexes neighboring both attacker and target (near side). */
+/**
+ * Target + the two flanking hexes beside the target (perpendicular to the
+ * attack line). Uses the hex adjacent to the target toward `from`, so ranged
+ * cleave matches melee flanks instead of hexes beside the attacker.
+ */
 export function cleaveHexes(from: Axial, target: Axial): Axial[] {
-  return [{ q: target.q, r: target.r }, ...sharedNeighbors(from, target)]
+  const line = hexLine(from, target)
+  if (line.length < 2) {
+    return [{ q: target.q, r: target.r }]
+  }
+  const towardAttacker = line[line.length - 2]!
+  return [
+    { q: target.q, r: target.r },
+    ...sharedNeighbors(towardAttacker, target),
+  ]
 }
 
 /**

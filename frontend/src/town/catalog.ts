@@ -196,6 +196,7 @@ export type UnitCombatAbilities = {
   leavesGroundEffectOnMove: boolean
   /** Leave ground_effect on attack geometry (any shape via geometricHexes). */
   leavesGroundEffectOnAttack: boolean
+  leavesGroundEffectOnRetaliate: boolean
   /** Catalog ground_effect.id for leave-on-move / leave-on-attack. */
   groundEffectId: number | null
   /** Fire (and similar): take zero damage from Fire entry/turn-start. */
@@ -214,12 +215,14 @@ export type UnitCombatAbilities = {
   healOnAllyTarget: boolean
   /** Heal amount per creature in this stack (× qty). */
   healAmtPerUnit: number | null
+  /** Ally heal: floor(heroStat / div × healer qty); replaces heal_amt_per_unit. */
+  healFormula: { heroStatId: number; div: number } | null
+  /** Ally heal: leftover pool may revive fallen creatures (up to startingQty). */
+  healRevive: boolean
   /** Bouncy Bomb: when this stack's creatures die, pulse min_dmg × deaths. */
   killChainPulse: boolean
   /** Flesh Golem: flat % chance per Living kill to grow qty by growsQtyOnKill. */
   killAbsorbChancePct: number | null
-  /** Victim must have this unit_tag.id to be absorbable (legacy single-tag). */
-  killAbsorbTagRequired: number | null
   /** Victim must have ALL of these unit_tag.ids (e.g. Humanoid+Living). */
   killAbsorbTagsRequired: number[]
   /** Victim creature tier must equal this (Pit Fiend Arch). */
@@ -328,14 +331,28 @@ export type UnitCombatAbilities = {
   selfRezCapPct: number | null
   /** Phoenix: multiply chance by Phoenix deaths this round (incl. wipe). */
   selfRezBasedOnKillsThisRound: boolean
-  /** Ghoul-style permanent stat shred on hit (see `stat_shred` JSON). */
+  /** Ghoul-style permanent stat debuff on hit (see `stat_shred` JSON). */
   statShred: UnitStatShredConfig | null
+  /** Self stacking buff on own landed hits (see `self_buff` JSON). */
+  selfBuff: UnitStatShredConfig | null
+  /** Bless a random ally on own landed hits (see `ally_buff` JSON). */
+  allyBuff: UnitAllyBuffConfig | null
+  /** Heal tagged allies in the attack shape area (see `area_ally_heal` JSON). */
+  areaAllyHeal: AreaAllyHealConfig | null
+  /** Bonus ranged shots after a qualifying main attack (see `extra_shots`). */
+  extraShots: ExtraShotsConfig | null
+  /** After each own attack: chance for another turn (see `extra_turn_chance`). */
+  extraTurnChance: ExtraTurnChanceConfig | null
+  /** Siege battles: +heroStat × mult % physical damage. */
+  siegeBonusPhys: HeroStatMultConfig | null
   /** Summon this unit id after offensive kills (see summonOnKillStat/Div). */
   summonOnKillUnitId: number | null
   /** `stat.id` on the commanding hero for qty (e.g. 2 = STR). */
   summonOnKillStat: number | null
   /** Qty per kill: max(1, floor(heroStat / div)) × kills this attack. */
   summonOnKillStatDiv: number | null
+  /** Pull a ranged target adjacent before resolving the attack shape. */
+  pullTarget: boolean
   /** Attack places a hidden trap on an empty in-range hex (no direct damage). */
   placesTrap: boolean
   /** `ground_effect` template for `places_trap` (e.g. Explosive Trap). */
@@ -344,6 +361,17 @@ export type UnitCombatAbilities = {
   trapRadius: number
   /** Start of own turn: heal front creature by this % of missing HP (100 = full). */
   regenPct: number | null
+  /** After moving without attacking this turn: gain Vanish for 1 round. */
+  vanishOnMoveNoAttack: boolean
+  /** After own attack + retaliation: snap back to turn-start hex. */
+  retreatAfterAttack: boolean
+  /**
+   * When false on the silenced unit: Silence blocks all attacks (legacy).
+   * Omitted or true: Silence blocks Magic attacks only (default).
+   */
+  silenceBlocksMagicAttackOnly: boolean
+  /** Chance to leave `ground_effect_id` on attack path (before condition `chance_pct`). */
+  groundEffectChancePct: number | null
 }
 
 export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
@@ -352,12 +380,45 @@ export const DEFAULT_UNIT_RETALIATION: UnitRetaliation = {
   preemptive: false,
 }
 
-export type StatShredTarget = 'speed' | 'defense' | 'resistance' | 'dmg'
+export type StatShredTarget =
+  | 'speed'
+  | 'defense'
+  | 'resistance'
+  | 'phys_dmg'
+  | 'magic_dmg'
+  | 'max_hp'
+  | 'crit'
+  | 'random'
 
 export type UnitStatShredConfig = {
   targetStat: StatShredTarget
   heroStatId: number
   mult: number
+}
+
+export type UnitAllyBuffConfig = UnitStatShredConfig & {
+  minGain: number
+  target: 'random_ally' | 'adjacent_allies'
+}
+
+export type AreaAllyHealConfig = {
+  heroStatId: number
+  mult: number
+  allyTagId: number | null
+}
+
+export type ExtraShotsConfig = {
+  count: number
+  dmgPct: number
+}
+
+export type HeroStatMultConfig = {
+  heroStatId: number
+  mult: number
+}
+
+export type ExtraTurnChanceConfig = HeroStatMultConfig & {
+  maxChain: number
 }
 
 export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
@@ -381,6 +442,7 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   speedDebuffPct: null,
   leavesGroundEffectOnMove: false,
   leavesGroundEffectOnAttack: false,
+  leavesGroundEffectOnRetaliate: false,
   groundEffectId: null,
   immuneToFire: false,
   immuneToLightning: false,
@@ -388,9 +450,10 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   canTargetAllyIfTag: null,
   healOnAllyTarget: false,
   healAmtPerUnit: null,
+  healFormula: null,
+  healRevive: false,
   killChainPulse: false,
   killAbsorbChancePct: null,
-  killAbsorbTagRequired: null,
   killAbsorbTagsRequired: [],
   killAbsorbRequiresTier: null,
   killAbsorbTrigger: null,
@@ -436,13 +499,24 @@ export const DEFAULT_UNIT_ABILITIES: UnitCombatAbilities = {
   selfRezCapPct: null,
   selfRezBasedOnKillsThisRound: false,
   statShred: null,
+  selfBuff: null,
+  allyBuff: null,
+  areaAllyHeal: null,
+  extraShots: null,
+  extraTurnChance: null,
+  siegeBonusPhys: null,
   summonOnKillUnitId: null,
   summonOnKillStat: null,
   summonOnKillStatDiv: null,
+  pullTarget: false,
   placesTrap: false,
   trapGroundEffectId: null,
   trapRadius: 0,
   regenPct: null,
+  vanishOnMoveNoAttack: false,
+  retreatAfterAttack: false,
+  silenceBlocksMagicAttackOnly: true,
+  groundEffectChancePct: null,
 }
 
 export type MoveTypeRow = {
@@ -3946,7 +4020,23 @@ function parseStatShredTarget(raw: unknown): StatShredTarget | null {
   if (typeof raw === 'string') {
     const text = raw.trim().toLowerCase()
     if (text === 'dmg' || text === 'damage') {
-      return 'dmg'
+      const key = String(raw ?? '')
+      if (!warnedStatShredTarget.has(key)) {
+        warnedStatShredTarget.add(key)
+        console.warn(
+          `[stat_shred] target_stat "dmg" is removed; use "phys_dmg" or "magic_dmg"`,
+        )
+      }
+      return null
+    }
+    if (
+      text === 'phys_dmg' ||
+      text === 'magic_dmg' ||
+      text === 'max_hp' ||
+      text === 'crit' ||
+      text === 'random'
+    ) {
+      return text as StatShredTarget
     }
   }
   const id = Number(raw)
@@ -3963,10 +4053,59 @@ function parseStatShredTarget(raw: unknown): StatShredTarget | null {
   if (!warnedStatShredTarget.has(key)) {
     warnedStatShredTarget.add(key)
     console.warn(
-      `[stat_shred] unknown target_stat ${JSON.stringify(raw)} (use 1 Speed, 4 Defense, 5 Resistance, or "dmg"); ignored`,
+      `[stat_shred] unknown target_stat ${JSON.stringify(raw)} (use 1 Speed, 4 Defense, 5 Resistance, phys_dmg, magic_dmg, max_hp, or crit); ignored`,
     )
   }
   return null
+}
+
+function asHeroStatMult(value: unknown): HeroStatMultConfig | null {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return null
+  }
+  const heroStatId = asOptionalId(rec.hero_stat)
+  const mult = Number(rec.mult)
+  if (heroStatId == null || !Number.isFinite(mult) || mult <= 0) {
+    return null
+  }
+  return { heroStatId, mult }
+}
+
+function asAreaAllyHeal(value: unknown): AreaAllyHealConfig | null {
+  const base = asHeroStatMult(value)
+  if (!base) {
+    return null
+  }
+  const rec = asJsonObject(value)
+  if (!rec || rec.ally_tag_id == null) {
+    return { ...base, allyTagId: null }
+  }
+  const allyTagId = asOptionalId(rec.ally_tag_id)
+  if (allyTagId == null) {
+    return null
+  }
+  return { ...base, allyTagId }
+}
+
+function asExtraTurnChance(value: unknown): ExtraTurnChanceConfig | null {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return null
+  }
+  const heroStatId = asOptionalId(rec.hero_stat)
+  const mult = Number(rec.mult)
+  const maxChain = Number(rec.max_chain)
+  if (
+    heroStatId == null ||
+    !Number.isFinite(mult) ||
+    mult <= 0 ||
+    !Number.isFinite(maxChain) ||
+    maxChain < 1
+  ) {
+    return null
+  }
+  return { heroStatId, mult, maxChain: Math.floor(maxChain) }
 }
 
 function asUnitStatShred(value: unknown): UnitStatShredConfig | null {
@@ -3984,6 +4123,49 @@ function asUnitStatShred(value: unknown): UnitStatShredConfig | null {
     return null
   }
   return { targetStat, heroStatId, mult }
+}
+
+function asUnitAllyBuff(value: unknown): UnitAllyBuffConfig | null {
+  const base = asUnitStatShred(value)
+  if (!base) {
+    return null
+  }
+  const rec = asJsonObject(value)
+  const targetRaw =
+    typeof rec?.target === 'string' ? rec.target.trim().toLowerCase() : ''
+  if (targetRaw !== 'random_ally' && targetRaw !== 'adjacent_allies') {
+    return null
+  }
+  const minGain = Number(rec?.min_gain)
+  if (!Number.isFinite(minGain) || minGain < 0) {
+    return null
+  }
+  return {
+    ...base,
+    minGain: Math.floor(minGain),
+    target: targetRaw as 'random_ally' | 'adjacent_allies',
+  }
+}
+
+function asExtraShots(value: unknown): ExtraShotsConfig | null {
+  const rec = asJsonObject(value)
+  if (!rec) {
+    return null
+  }
+  const count = Number(rec.count)
+  const dmgPct = Number(rec.dmg_pct)
+  if (
+    !Number.isFinite(count) ||
+    count <= 0 ||
+    !Number.isFinite(dmgPct) ||
+    dmgPct <= 0
+  ) {
+    return null
+  }
+  return {
+    count: Math.floor(count),
+    dmgPct: Math.floor(dmgPct),
+  }
 }
 
 function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
@@ -4027,6 +4209,8 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     })(),
     leavesGroundEffectOnMove: rec?.leaves_ground_effect_on_move === true,
     leavesGroundEffectOnAttack: rec?.leaves_ground_effect_on_attack === true,
+    leavesGroundEffectOnRetaliate:
+      rec?.leaves_ground_effect_on_retaliate === true,
     groundEffectId: asOptionalId(rec?.ground_effect_id),
     immuneToFire: rec?.immune_to_fire === true,
     immuneToLightning: rec?.immune_to_lightning === true,
@@ -4037,12 +4221,28 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
       const n = Number(rec?.heal_amt_per_unit)
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
     })(),
+    healFormula: (() => {
+      const raw = rec?.heal_formula
+      const obj =
+        raw != null && typeof raw === 'object' && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : null
+      if (!obj) {
+        return null
+      }
+      const heroStatId = asOptionalId(obj.hero_stat)
+      const div = Number(obj.div)
+      if (heroStatId == null || !Number.isFinite(div) || div <= 0) {
+        return null
+      }
+      return { heroStatId, div }
+    })(),
+    healRevive: rec?.heal_revive === true,
     killChainPulse: rec?.kill_chain_pulse === true,
     killAbsorbChancePct: (() => {
       const n = Number(rec?.kill_absorb_chance_pct)
       return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null
     })(),
-    killAbsorbTagRequired: asOptionalId(rec?.kill_absorb_tag_required),
     killAbsorbTagsRequired: asIntIds(rec?.kill_absorb_tags_required),
     killAbsorbRequiresTier: (() => {
       const n = Number(rec?.kill_absorb_requires_tier)
@@ -4165,12 +4365,19 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     selfRezBasedOnKillsThisRound:
       rec?.self_rez_based_on_kills_this_round === true,
     statShred: asUnitStatShred(rec?.stat_shred),
+    selfBuff: asUnitStatShred(rec?.self_buff),
+    allyBuff: asUnitAllyBuff(rec?.ally_buff),
+    areaAllyHeal: asAreaAllyHeal(rec?.area_ally_heal),
+    extraShots: asExtraShots(rec?.extra_shots),
+    extraTurnChance: asExtraTurnChance(rec?.extra_turn_chance),
+    siegeBonusPhys: asHeroStatMult(rec?.siege_bonus_phys),
     summonOnKillUnitId: asOptionalId(rec?.summon_on_kill_unit_id),
     summonOnKillStat: asOptionalId(rec?.summon_on_kill_stat),
     summonOnKillStatDiv: (() => {
       const n = Number(rec?.summon_on_kill_stat_div)
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
     })(),
+    pullTarget: rec?.pull_target === true,
     placesTrap: rec?.places_trap === true,
     trapGroundEffectId: asOptionalId(rec?.trap_ground_effect_id),
     trapRadius: (() => {
@@ -4180,6 +4387,17 @@ function asUnitCombatAbilities(value: unknown): UnitCombatAbilities {
     regenPct: (() => {
       const n = Number(rec?.regen_pct)
       return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null
+    })(),
+    vanishOnMoveNoAttack: rec?.vanish_on_move_no_attack === true,
+    retreatAfterAttack: rec?.retreat_after_attack === true,
+    silenceBlocksMagicAttackOnly:
+      rec?.silence_blocks_magic_attack_only !== false,
+    groundEffectChancePct: (() => {
+      const ge = Number(rec?.ground_effect_chance_pct)
+      if (Number.isFinite(ge) && ge > 0) {
+        return Math.min(100, Math.floor(ge))
+      }
+      return null
     })(),
   }
 }
@@ -5647,6 +5865,36 @@ export function armyOptions(
     }
     return unitForBuilding(catalog, row.id) != null
   })
+}
+
+/** Town hero classes in roster order (sort_order, then id). */
+export function townArmyClassIdsOrdered(
+  catalog: ReferenceCatalog,
+  townTypeId: number,
+): number[] {
+  if (!isTownEnabled(catalog, townTypeId)) {
+    return []
+  }
+  return catalog.hero_type
+    .filter(
+      (row) =>
+        row.town_id === townTypeId && isHeroTypeOffered(catalog, row.id),
+    )
+    .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+    .map((row) => row.id)
+}
+
+/** Level-1 army dwelling root for a hero class in an army slot. */
+export function armyDwellingRootForClass(
+  catalog: ReferenceCatalog,
+  slotId: number,
+  townTypeId: number,
+  classId: number,
+): BuildingRow | null {
+  const roots = armyOptions(catalog, slotId, townTypeId).filter(isBuildRoot)
+  return (
+    roots.find((row) => armyBranchKey(catalog, row) === classId) ?? null
+  )
 }
 
 export function genericSlotBuildings(

@@ -47,6 +47,7 @@ import {
   snapshotMobKillRewards,
 } from '../session/mobKillRewards'
 import { runAiItemMaintenanceForPlayer } from '../ai/itemEquip'
+import { persistSummonOnKillArmy } from './summonOnKill'
 
 export type OpeningStack = {
   id: string
@@ -492,6 +493,18 @@ export function applyCombatOutcome(
   let next = session
   if (winner) {
     next = applyWinnerArmy(next, winner, winnerSide, battleResolved)
+    const killRaised = persistSummonOnKillArmy(
+      next,
+      winner,
+      winnerSide,
+      battleResolved,
+      catalog,
+    )
+    next = killRaised.session
+    summary.winnerGains = [...killRaised.gains]
+    if (killRaised.lines.length > 0) {
+      summary.xpLines = [...summary.xpLines, ...killRaised.lines]
+    }
     const persisted = persistSummonedStacks(
       next,
       winner,
@@ -500,7 +513,7 @@ export function applyCombatOutcome(
       catalog,
     )
     next = persisted.session
-    summary.winnerGains = persisted.gains
+    summary.winnerGains = [...summary.winnerGains, ...persisted.gains]
     // XP (and any level-ups) before demon tier — INT bumps from this battle
     // must count toward floor(INT/6) Warlock / floor(INT/4) Heretic. Demons
     // previously ran first, so a hero who crossed the tier threshold on this
@@ -718,6 +731,18 @@ export function applyCombatEscape(
   let next = session
   if (winner) {
     next = applyWinnerArmy(next, winner, winnerSide, battle)
+    const killRaised = persistSummonOnKillArmy(
+      next,
+      winner,
+      winnerSide,
+      battle,
+      catalog,
+    )
+    next = killRaised.session
+    summary.winnerGains = [...killRaised.gains]
+    if (killRaised.lines.length > 0) {
+      summary.xpLines = [...summary.xpLines, ...killRaised.lines]
+    }
     const persisted = persistSummonedStacks(
       next,
       winner,
@@ -726,7 +751,7 @@ export function applyCombatEscape(
       catalog,
     )
     next = persisted.session
-    summary.winnerGains = persisted.gains
+    summary.winnerGains = [...summary.winnerGains, ...persisted.gains]
     const ownValue = partsArmyValue(
       catalog,
       openingValueParts(opening, catalog, winnerSide),

@@ -141,6 +141,7 @@ export function HeroAbilityPopup({
             abilityMeetsCastGate(catalog, ability, battle, casterSide)
           }
           unavailableMessage={(ability) => abilityCooldownMessage(hero, ability)}
+          abilityTipPlacement="portal-right"
         />
         {footer ? (
           <div className="combat-hero-popup-footer">{footer}</div>

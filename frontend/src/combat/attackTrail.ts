@@ -1,14 +1,16 @@
 import type { Axial } from '../hex/hero'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
-import { unitAttackShape, unitById } from '../town/catalog'
-import type { CombatBattle, CombatStack, CombatTile } from './battle'
+import { hexTerrainByName, unitAttackShape, unitById } from '../town/catalog'
+import type { CombatBattle, CombatTile } from './battle'
 import { isHeroStack } from './battle'
 import {
   FIRE_GROUND_EFFECT_ID,
+  filterFirePlaceableHexKeys,
   placeFireOnHexKeys,
   placeGroundEffectOnEmptyHexes,
   placeStormOnHexKeys,
+  resolveUnitGroundEffectChancePct,
   STORM_GROUND_EFFECT_ID,
 } from './groundEffect'
 import { occupancyKey } from './occupancy'
@@ -16,13 +18,69 @@ import {
   placeShadowOnEmptyHexes,
   SHADOW_GROUND_EFFECT_ID,
 } from './shadow'
-import { chanceRollLog, rollChancePct } from './combatLog'
-import { leaveBehindChancePct } from './confluence'
+import { formatChancePct, rollChancePctDetailed } from './combatLog'
+
+function effectLabel(templateId: number): string {
+  if (templateId === STORM_GROUND_EFFECT_ID) {
+    return 'Storm'
+  }
+  if (templateId === FIRE_GROUND_EFFECT_ID) {
+    return 'Fire'
+  }
+  if (templateId === SHADOW_GROUND_EFFECT_ID) {
+    return 'Shadow'
+  }
+  return 'ground effect'
+}
+
+function terrainNameForKey(
+  catalog: ReferenceCatalog,
+  key: string,
+  tiles: CombatTile[] | undefined,
+): string | null {
+  if (!tiles) {
+    return null
+  }
+  const tile = tiles.find((row) => occupancyKey(row.q, row.r) === key)
+  if (!tile) {
+    return null
+  }
+  return hexTerrainByName(catalog, tile.terrain)?.name ?? tile.terrain
+}
+
+function summarizeGroundEffectLine(
+  unitName: string,
+  effect: string,
+  chance: number,
+  attempted: number,
+  placed: number,
+  rolls: number[],
+  reason?: string,
+): string {
+  if (reason) {
+    return `${unitName}: ${effect} — ${reason}.`
+  }
+  if (chance >= 100) {
+    if (placed > 0) {
+      return `${unitName}: ${effect} placed on ${placed}/${attempted} hex${attempted === 1 ? '' : 'es'}.`
+    }
+    return `${unitName}: ${effect} — none placed (${attempted} hex${attempted === 1 ? '' : 'es'} blocked).`
+  }
+  const rollText =
+    rolls.length === 1
+      ? String(rolls[0])
+      : rolls.length > 1
+        ? rolls.join(', ')
+        : '?'
+  if (placed > 0) {
+    return `${unitName}: ${effect} ${formatChancePct(chance)}% — rolled ${rollText}, ${placed}/${attempted} placed.`
+  }
+  return `${unitName}: ${effect} ${formatChancePct(chance)}% — rolled ${rollText}, none placed.`
+}
 
 /**
  * Leave ground_effect on attack geometry (any shape via geometricHexes).
- * Shadow: empty-hex only, never overwrite. Fire: overwrite + wet-terrain fizzle.
- * Per-hex chance_pct (default 100 when omitted — Skeleton Caster).
+ * One Combat log line per call (placed, failed roll, fizzle, or missing key).
  */
 export function tryLeaveGroundEffectOnAttackPath(
   battle: CombatBattle,
@@ -32,6 +90,7 @@ export function tryLeaveGroundEffectOnAttackPath(
   tiles?: CombatTile[],
   caster?: Hero | null,
   random: () => number = Math.random,
+  source: 'attack' | 'retaliate' = 'attack',
 ): { battle: CombatBattle; tiles?: CombatTile[]; lines: string[] } {
   const stack = battle.stacks.find((row) => row.id === stackId)
   if (!stack || isHeroStack(stack) || stack.qty <= 0) {
@@ -39,142 +98,140 @@ export function tryLeaveGroundEffectOnAttackPath(
   }
   const spec = unitAttackShape(unitById(catalog, stack.unitId))
   const templateId = spec.groundEffectId
-  if (!spec.leavesGroundEffectOnAttack || templateId == null || templateId <= 0) {
+  const leaves =
+    source === 'retaliate'
+      ? spec.leavesGroundEffectOnRetaliate
+      : spec.leavesGroundEffectOnAttack
+  if (!leaves || templateId == null || templateId <= 0) {
     return { battle, lines: [], ...(tiles ? { tiles } : {}) }
   }
-  const chance = leaveBehindChancePct(
-    catalog,
-    caster ?? null,
-    spec.chancePct,
-    spec.chancePctIntelStat,
-  )
-  const rolledKeys: string[] = []
-  let attempted = 0
-  let hits = 0
+  const unitName = unitById(catalog, stack.unitId)?.name ?? 'Attacker'
+  const label = effectLabel(templateId)
+  const resolved = resolveUnitGroundEffectChancePct(spec, unitName)
+  if (resolved.missingLine) {
+    return { battle, lines: [resolved.missingLine], ...(tiles ? { tiles } : {}) }
+  }
+  const chance = resolved.chance!
+  const uniqueHexes: Axial[] = []
+  const seen = new Set<string>()
   for (const hex of hexes) {
-    attempted += 1
-    if (chance < 100 && !rollChancePct(chance, random)) {
+    const key = occupancyKey(hex.q, hex.r)
+    if (seen.has(key)) {
       continue
     }
-    hits += 1
-    rolledKeys.push(occupancyKey(hex.q, hex.r))
+    seen.add(key)
+    uniqueHexes.push(hex)
   }
-  const unitName = unitById(catalog, stack.unitId)?.name ?? 'Attacker'
-  const effectLabel =
-    templateId === STORM_GROUND_EFFECT_ID
-      ? 'Storm'
-      : templateId === FIRE_GROUND_EFFECT_ID
-        ? 'Fire'
-        : 'ground effect'
-  // S6-36 / S6-50: one aggregated leave-behind line (not per-hex spam).
-  const lines: string[] =
-    attempted > 0 && (chance < 100 || templateId === STORM_GROUND_EFFECT_ID)
-      ? [
-          templateId === STORM_GROUND_EFFECT_ID ||
-          templateId === FIRE_GROUND_EFFECT_ID
-            ? `${unitName} dropped ${effectLabel} ${hits}/${attempted} times` +
-              (chance < 100 ? ` (${chance}% per hex).` : '.')
-            : chanceRollLog(unitName, chance, hits > 0, {
-                action: 'to leave ground effect per hex',
-                success: `${hits}/${attempted} hexes.`,
-                fail: `0/${attempted} hexes.`,
-              }),
-        ]
-      : []
-  if (rolledKeys.length === 0) {
-    return { battle, lines, ...(tiles ? { tiles } : {}) }
-  }
-  if (templateId === SHADOW_GROUND_EFFECT_ID) {
+  const attempted = uniqueHexes.length
+  if (attempted === 0) {
     return {
-      battle: placeShadowOnEmptyHexes(battle, rolledKeys, stack.side),
-      lines,
+      battle,
+      lines: [
+        `${unitName}: ${label} — no valid hexes in attack geometry.`,
+      ],
       ...(tiles ? { tiles } : {}),
     }
   }
-  if (templateId === FIRE_GROUND_EFFECT_ID) {
-    return {
-      ...leaveFireOnAttackPath(
-        battle,
-        stack,
-        catalog,
-        rolledKeys,
-        tiles,
-        caster ?? null,
-      ),
-      lines,
+  const rolls: number[] = []
+  const rolledKeys: string[] = []
+  for (const hex of uniqueHexes) {
+    if (chance < 100) {
+      const roll = rollChancePctDetailed(chance, random)
+      rolls.push(roll.roll)
+      if (!roll.triggered) {
+        continue
+      }
     }
+    rolledKeys.push(occupancyKey(hex.q, hex.r))
   }
-  if (templateId === STORM_GROUND_EFFECT_ID) {
-    return {
-      ...leaveStormOnAttackPath(
-        battle,
-        stack,
-        catalog,
-        rolledKeys,
-        tiles,
-        caster ?? null,
-      ),
-      lines,
+  let summaryReason: string | undefined
+  let placedCount = 0
+  let nextBattle = battle
+  let nextTiles = tiles
+
+  if (rolledKeys.length === 0) {
+    const line = summarizeGroundEffectLine(
+      unitName,
+      label,
+      chance,
+      attempted,
+      0,
+      rolls,
+    )
+    return { battle, lines: [line], ...(tiles ? { tiles } : {}) }
+  }
+
+  if (templateId === SHADOW_GROUND_EFFECT_ID) {
+    nextBattle = placeShadowOnEmptyHexes(nextBattle, rolledKeys, stack.side)
+    placedCount = rolledKeys.length
+  } else if (templateId === FIRE_GROUND_EFFECT_ID) {
+    const fizzleIds = spec.fizzleTerrainIds
+    const placeable = filterFirePlaceableHexKeys(
+      rolledKeys,
+      tiles,
+      catalog,
+      fizzleIds,
+    )
+    const fizzled = rolledKeys.filter((key) => !placeable.includes(key))
+    if (fizzled.length > 0 && placeable.length === 0) {
+      const terrain =
+        terrainNameForKey(catalog, fizzled[0]!, tiles) ?? 'wet terrain'
+      summaryReason = `${label} fizzled (${terrain})`
     }
-  }
-  return {
-    ...placeGroundEffectOnEmptyHexes(
-      battle,
+    const fire = placeFireOnHexKeys(
+      nextBattle,
+      catalog,
+      caster ?? null,
+      stack.side,
+      rolledKeys,
+      tiles,
+      null,
+      fizzleIds,
+    )
+    nextBattle = fire.battle
+    nextTiles = fire.tiles ?? nextTiles
+    placedCount = fire.placedKeys.length
+    if (placedCount === 0 && fizzled.length > 0 && !summaryReason) {
+      summaryReason = `${label} fizzled (${terrainNameForKey(catalog, fizzled[0]!, tiles) ?? 'wet terrain'})`
+    }
+  } else if (templateId === STORM_GROUND_EFFECT_ID) {
+    const storm = placeStormOnHexKeys(
+      nextBattle,
+      catalog,
+      caster ?? null,
+      stack.side,
+      rolledKeys,
+      tiles,
+    )
+    nextBattle = storm.battle
+    nextTiles = storm.tiles ?? nextTiles
+    placedCount = storm.placedKeys.length
+  } else {
+    const placed = placeGroundEffectOnEmptyHexes(
+      nextBattle,
       rolledKeys,
       stack.side,
       templateId,
       catalog,
       tiles,
-    ),
-    lines,
+    )
+    nextBattle = placed.battle
+    nextTiles = placed.tiles ?? nextTiles
+    placedCount = rolledKeys.length
   }
-}
 
-function leaveFireOnAttackPath(
-  battle: CombatBattle,
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-  rolledKeys: string[],
-  tiles: CombatTile[] | undefined,
-  caster: Hero | null,
-): { battle: CombatBattle; tiles?: CombatTile[] } {
-  const fizzleTerrainIds = unitAttackShape(
-    unitById(catalog, stack.unitId),
-  ).fizzleTerrainIds
-  const fire = placeFireOnHexKeys(
-    battle,
-    catalog,
-    caster,
-    stack.side,
-    rolledKeys,
-    tiles,
-    null,
-    fizzleTerrainIds,
+  const line = summarizeGroundEffectLine(
+    unitName,
+    label,
+    chance,
+    attempted,
+    placedCount,
+    rolls,
+    summaryReason,
   )
   return {
-    battle: fire.battle,
-    ...(fire.tiles ? { tiles: fire.tiles } : tiles ? { tiles } : {}),
-  }
-}
-
-function leaveStormOnAttackPath(
-  battle: CombatBattle,
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-  rolledKeys: string[],
-  tiles: CombatTile[] | undefined,
-  caster: Hero | null,
-): { battle: CombatBattle; tiles?: CombatTile[] } {
-  const storm = placeStormOnHexKeys(
-    battle,
-    catalog,
-    caster,
-    stack.side,
-    rolledKeys,
-    tiles,
-  )
-  return {
-    battle: storm.battle,
-    ...(storm.tiles ? { tiles: storm.tiles } : tiles ? { tiles } : {}),
+    battle: nextBattle,
+    lines: [line],
+    ...(nextTiles ? { tiles: nextTiles } : tiles ? { tiles } : {}),
   }
 }

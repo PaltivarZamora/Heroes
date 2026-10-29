@@ -1,0 +1,791 @@
+{
+  "frames": {
+    "Mount_Citadel_move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_001": {
+      "frame": {
+        "x": 207,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_002": {
+      "frame": {
+        "x": 414,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_003": {
+      "frame": {
+        "x": 621,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_004": {
+      "frame": {
+        "x": 828,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_005": {
+      "frame": {
+        "x": 1035,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_006": {
+      "frame": {
+        "x": 1242,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_007": {
+      "frame": {
+        "x": 0,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_008": {
+      "frame": {
+        "x": 207,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_009": {
+      "frame": {
+        "x": 414,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_010": {
+      "frame": {
+        "x": 621,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_011": {
+      "frame": {
+        "x": 828,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_012": {
+      "frame": {
+        "x": 1035,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_013": {
+      "frame": {
+        "x": 1242,
+        "y": 200,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_014": {
+      "frame": {
+        "x": 0,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_015": {
+      "frame": {
+        "x": 207,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_016": {
+      "frame": {
+        "x": 414,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_017": {
+      "frame": {
+        "x": 621,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_018": {
+      "frame": {
+        "x": 828,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_019": {
+      "frame": {
+        "x": 1035,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_020": {
+      "frame": {
+        "x": 1242,
+        "y": 400,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_021": {
+      "frame": {
+        "x": 0,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_022": {
+      "frame": {
+        "x": 207,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_023": {
+      "frame": {
+        "x": 414,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_024": {
+      "frame": {
+        "x": 621,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_025": {
+      "frame": {
+        "x": 828,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_026": {
+      "frame": {
+        "x": 1035,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_027": {
+      "frame": {
+        "x": 1242,
+        "y": 600,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_028": {
+      "frame": {
+        "x": 0,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_029": {
+      "frame": {
+        "x": 207,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_030": {
+      "frame": {
+        "x": 414,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_031": {
+      "frame": {
+        "x": 621,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_032": {
+      "frame": {
+        "x": 828,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_033": {
+      "frame": {
+        "x": 1035,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_034": {
+      "frame": {
+        "x": 1242,
+        "y": 800,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_035": {
+      "frame": {
+        "x": 0,
+        "y": 1000,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 59
+    },
+    "Mount_Citadel_move_Stand": {
+      "frame": {
+        "x": 207,
+        "y": 1000,
+        "w": 207,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 207,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 207,
+        "h": 200
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Mount_Citadel_move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1449,
+      "h": 1200
+    },
+    "scale": "1"
+  }
+}
