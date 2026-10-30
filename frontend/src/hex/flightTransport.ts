@@ -1,27 +1,26 @@
-import { mountMoveSheetStem } from './heroMountMoveAnim'
 import { heroTypeName, type ReferenceCatalog } from '../town/catalog'
 import { boatOccupiedByHero } from './boat'
+import {
+  BOAT_MOVE_STEM,
+  WORLD_MOVE_STEM,
+  classMountMoveSheetStem,
+  moveSheetStaticFile,
+  townMoveSheetStem,
+} from './moveSheetStems'
 import type { GameSession, Hero } from '../session/types'
 
-/** Move-sheet stem (no extension), e.g. `Mount_Boat_Move`. */
-export const BOAT_MOVE_STEM = 'Mount_Boat_Move'
-export const WORLD_MOVE_STEM = 'Mount_World_Move'
-
-/** Static PNG when a move sheet fails to load (same basename as the sheet). */
-export function moveSheetStaticFile(stem: string): string {
-  return `${stem}.png`
-}
+export {
+  BOAT_MOVE_STEM,
+  WORLD_MOVE_STEM,
+  moveSheetStaticFile,
+  townMoveSheetStem,
+} from './moveSheetStems'
 
 /** @deprecated Use {@link moveSheetStaticFile} with {@link BOAT_MOVE_STEM}. */
 export const TRANSPORT_BOAT_FILE = moveSheetStaticFile(BOAT_MOVE_STEM)
 
 /** @deprecated Use {@link moveSheetStaticFile} with {@link WORLD_MOVE_STEM}. */
 export const TRANSPORT_WORLD_FILE = moveSheetStaticFile(WORLD_MOVE_STEM)
-
-export function townMoveSheetStem(townTypeName: string): string {
-  const base = townTypeName.trim().replace(/\s+/g, '_')
-  return `Mount_${base}_Move`
-}
 
 /** `Mount_{Town}_Move.png` from catalog `town.name` of the departure town. */
 export function transportMoveStemForTownType(
@@ -93,7 +92,7 @@ export function heroMoveSheetStem(
     return flightMoveSheetStem(hero.flight, catalog)
   }
   const name = catalog ? heroTypeName(catalog, hero.class_id) : ''
-  return name ? mountMoveSheetStem(name) : null
+  return name ? classMountMoveSheetStem(name) : null
 }
 
 /** @deprecated Use {@link transportMoveStemForDeparture} + {@link moveSheetStaticFile}. */

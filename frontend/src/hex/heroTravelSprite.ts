@@ -2,13 +2,7 @@ import { Assets, Texture } from 'pixi.js'
 import type { AxialPos, GameSession, Hero } from '../session/types'
 import { getCachedCatalog, heroTypeName, type ReferenceCatalog } from '../town/catalog'
 import { boatOccupiedByHero } from './boat'
-import {
-  BOAT_MOVE_STEM,
-  moveSheetStaticFile,
-  preloadTransportMoveSheetStems,
-  WORLD_MOVE_STEM,
-  flightMoveSheetStem,
-} from './flightTransport'
+import { preloadTransportMoveSheetStems } from './flightTransport'
 import {
   loadMountMoveSheetByStem,
   preloadMountMoveSheets,
@@ -44,9 +38,9 @@ export function mountSpriteFileForHero(
   return mountSpriteFile(name)
 }
 
-/** Filenames only (preload). */
+/** Filenames only (preload). Empty boats use the boat move sheet atlas on the map. */
 export const HERO_TRAVEL_FILES = {
-  boat: moveSheetStaticFile(BOAT_MOVE_STEM),
+  boat: '',
 } as const
 
 export type HeroTravelFacing = 'left' | 'right'
@@ -71,15 +65,13 @@ export function heroTravelSprite(
     session != null && boatOccupiedByHero(session, hero.id) != null
   if (boarded) {
     return {
-      file: moveSheetStaticFile(BOAT_MOVE_STEM),
+      file: '',
       flipX: facing !== TRAVEL_ART.transport.artFaces,
     }
   }
   if (hero.flight) {
-    const catalog = getCachedCatalog()
-    const stem = flightMoveSheetStem(hero.flight, catalog)
     return {
-      file: moveSheetStaticFile(stem),
+      file: '',
       flipX: facing !== TRAVEL_ART.transport.artFaces,
     }
   }
@@ -178,14 +170,11 @@ export async function loadTravelTexture(
   }
 }
 
-/** Warm transport move sheets, world/town static pngs, and class mounts. */
+/** Warm transport move sheets and class mount static pngs (never whole *_Move.png). */
 export function preloadHeroTravelSprites(catalog?: ReferenceCatalog | null): void {
   const ref = catalog ?? getCachedCatalog()
-  void loadTravelTexture(moveSheetStaticFile(BOAT_MOVE_STEM))
-  void loadTravelTexture(moveSheetStaticFile(WORLD_MOVE_STEM))
   preloadTransportMoveSheetStems(ref, (stem) => {
     void loadMountMoveSheetByStem(stem)
-    void loadTravelTexture(moveSheetStaticFile(stem))
   })
   if (ref) {
     for (const row of ref.hero_type) {

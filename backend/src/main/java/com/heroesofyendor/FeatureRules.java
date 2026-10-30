@@ -276,6 +276,28 @@ final class FeatureRules {
         return id == null ? "loose:" + resourceId : "feature:" + id;
     }
 
+    /** Feature anchor, guard hex, or dock launch — no props (BR S13-8). */
+    static boolean hexUsedByFeature(List<MapObjectData> objects, int q, int r) {
+        if (objects == null) {
+            return false;
+        }
+        for (MapObjectData obj : objects) {
+            if ("town".equals(obj.kind())) {
+                continue;
+            }
+            if (obj.q() == q && obj.r() == r) {
+                return true;
+            }
+            if (obj.guardQ() != null && obj.guardR() != null && obj.guardQ() == q && obj.guardR() == r) {
+                return true;
+            }
+            if (obj.launchQ() != null && obj.launchR() != null && obj.launchQ() == q && obj.launchR() == r) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * A blocking prop on this hex would remove the last walkable approach of a
      * neighbouring permanent feature.
@@ -285,6 +307,9 @@ final class FeatureRules {
             return false;
         }
         int q = HexCoords.qOf(col, row);
+        if (hexUsedByFeature(objects, q, row)) {
+            return true;
+        }
         for (int[] d : HexCoords.AXIAL_NEIGHBORS) {
             int nq = q + d[0];
             int nr = row + d[1];

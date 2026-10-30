@@ -33,15 +33,17 @@ import {
   stopMountMoveSound,
   warnMountMoveSoundMissingStem,
 } from '../audio/heroMountMoveSound'
-import { heroTravelSprite, loadTravelTexture, preloadHeroTravelSprites, HERO_TRAVEL_FILES, facingFromMove } from './heroTravelSprite'
+import { heroTravelSprite, loadTravelTexture, preloadHeroTravelSprites, HERO_TRAVEL_SPRITE_DIR, facingFromMove } from './heroTravelSprite'
 import {
   ensureMountMoveConfigWarnings,
   ensureMoveSheetStemLoading,
   flipMountForFacing,
+  loadMountMoveSheetByStem,
   moveStepTimingCost,
   mountMoveSettings,
   preloadAllMountMoveSheets,
   reportMountMoveSheetMissingStem,
+  syncMoveSheetStemFromLoaderCache,
   textureFromMountMoveSheet,
   worldHeroMoveVisibleToHuman,
   type MountMoveSheet,
@@ -49,6 +51,7 @@ import {
 } from './heroMountMoveAnim'
 import {
   applyWorldSpriteScale,
+  ensureWorldSpriteMaxWidthWarning,
   ensureWorldSpriteScaleWarning,
   worldHeroRingScaleFactor,
   worldSpriteTargetHeight,
@@ -61,6 +64,7 @@ import {
 import { strokeDashedPolyline, strokeRoadSegments } from './roadRender'
 import { flightSegmentSteps, townCircleLapSteps } from './flight'
 import { heroMoveSheetStem, preloadTransportMoveSheetStems } from './flightTransport'
+import { BOAT_MOVE_STEM, isMoveSheetImageFile, WORLD_MOVE_STEM } from './moveSheetStems'
 import {
   createWaypointPlan,
   tryAppendWaypoint,
@@ -154,6 +158,8 @@ import {
   syncHero,
   syncHeroFlightPosition,
   finalizeHeroFlightSegment,
+  heroNeedsFlightLegToday,
+  markFlightLegAppliedToday,
   townIsUndefended,
   walletFromSession,
   applyFountainVisit,
@@ -252,8 +258,38 @@ let playHeroFlightFn:
       heroId: string,
     ) => Promise<{ arrivedTownId: string | null; siegeTownId: string | null }>)
   | null = null
+let playHeroFlightDayLegFn:
+  | ((
+      heroId: string,
+      legFrom: Axial,
+      steps: Axial[],
+    ) => Promise<void>)
+  | null = null
 let abortActiveMapMovementFn: (() => void) | null = null
 let syncSelectedHeroFromSessionFn: (() => void) | null = null
+/** After day rollover, draw airborne heroes at leg start until slide replay runs. */
+let flightLegDisplayPositions = new Map<string, Axial>()
+let repaintHeroMarkersRef: (() => void) | null = null
+
+export function setFlightLegDisplayPositions(
+  legs: Map<string, { from: { q: number; r: number } }>,
+): void {
+  flightLegDisplayPositions = new Map(
+    [...legs.entries()].map(([id, leg]) => [
+      id,
+      { q: leg.from.q, r: leg.from.r },
+    ]),
+  )
+  repaintHeroMarkersRef?.()
+}
+
+export function clearFlightLegDisplayPositions(): void {
+  if (flightLegDisplayPositions.size === 0) {
+    return
+  }
+  flightLegDisplayPositions = new Map()
+  repaintHeroMarkersRef?.()
+}
 
 /** Stop in-flight click-to-move so post-combat sync cannot re-walk stale steps. */
 export function abortActiveMapMovement(): void {
@@ -281,13 +317,38 @@ export function requestMapMove(
 }
 
 /** Animate this turn's Hanger flight segment; lands / clears flight if arrived. */
-export function requestPlayHeroFlight(
+export async function requestPlayHeroFlight(
   heroId: string,
 ): Promise<{ arrivedTownId: string | null; siegeTownId: string | null }> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (playHeroFlightFn) {
+      return playHeroFlightFn(heroId)
+    }
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+  }
   return (
     playHeroFlightFn?.(heroId) ??
     Promise.resolve({ arrivedTownId: null, siegeTownId: null })
   )
+}
+
+/** Replay a calendar flight leg (session already at end hex); visual slide only. */
+export async function requestPlayHeroFlightDayLeg(
+  heroId: string,
+  legFrom: Axial,
+  steps: Axial[],
+): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (playHeroFlightDayLegFn) {
+      return playHeroFlightDayLegFn(heroId, legFrom, steps)
+    }
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+  }
+  await playHeroFlightDayLegFn?.(heroId, legFrom, steps)
 }
 
 export function clearCachedGrid(): void {
@@ -448,6 +509,19 @@ function pathCostForMovingHero(moverPlayerId?: string | null) {
     session.heroes.find((hero) => hero.id === selectedMapHeroId)?.player_id ??
     null
   return heroWorldPathCostOptions(session, playerId)
+}
+
+function approachHexForMover(
+  from: Axial,
+  target: Axial,
+  walkOnto?: Axial | null,
+) {
+  return approachHex(
+    from,
+    target,
+    obstacleHexes(from, walkOnto),
+    pathCostForMovingHero(),
+  )
 }
 
 function sailDestForLandGoal(
@@ -1383,8 +1457,9 @@ export function HexMap({
       const heroMoveVisuals = new Map<string, HeroMoveVisual>()
       let mountMoveConfigChecked = false
       let worldSpriteScaleChecked = false
-      preloadHeroTravelSprites(getCachedCatalog())
+      let worldSpriteMaxWidthChecked = false
       const moveSheetKey = (stem: string) => stem.toLowerCase()
+      let repaintHeroMarkers: (() => void) | null = null
       const refreshMoveSheetLoad = (
         result: MountMoveSheetLoadResult,
         stem: string,
@@ -1394,24 +1469,10 @@ export function HexMap({
             reportMountMoveSheetMissingStem(current, stem, result.fail!),
           )
         }
-        if (!cancelled) {
-          placeHeroMarkers()
+        if (!cancelled && repaintHeroMarkers) {
+          repaintHeroMarkers()
         }
       }
-      preloadAllMountMoveSheets(
-        getCachedCatalog(),
-        moveSheetsByStem,
-        moveSheetLoadingStems,
-        refreshMoveSheetLoad,
-      )
-      preloadTransportMoveSheetStems(getCachedCatalog(), (stem) => {
-        ensureMoveSheetStemLoading(
-          stem,
-          moveSheetsByStem,
-          moveSheetLoadingStems,
-          (result) => refreshMoveSheetLoad(result, stem),
-        )
-      })
       const mobMarkers = new Map<
         string,
         {
@@ -2770,6 +2831,16 @@ export function HexMap({
         const session = getSession()
         const catalog = getCachedCatalog()
         const targetH = worldSpriteTargetHeight(hexSize, catalog)
+        const moveSettings = mountMoveSettings(catalog)
+        const boatStem = BOAT_MOVE_STEM
+        syncMoveSheetStemFromLoaderCache(boatStem, moveSheetsByStem)
+        ensureMoveSheetStemLoading(
+          boatStem,
+          moveSheetsByStem,
+          moveSheetLoadingStems,
+          (result) => refreshMoveSheetLoad(result, boatStem),
+        )
+        const boatSheet = moveSheetsByStem.get(moveSheetKey(boatStem))
         const seen = new Set<string>()
         for (const boat of session.boats ?? []) {
           if (boat.occupant_hero_id != null) {
@@ -2777,19 +2848,18 @@ export function HexMap({
           }
           seen.add(boat.id)
           const visible = isExplored(boat.position.q, boat.position.r)
-          const file = HERO_TRAVEL_FILES.boat
           let texture: Texture | null = null
-          if (travelArtByFile.has(file)) {
-            texture = travelArtByFile.get(file) ?? null
-          } else if (!travelArtLoading.has(file)) {
-            travelArtLoading.add(file)
-            void loadTravelTexture(file).then((loaded) => {
-              travelArtByFile.set(file, loaded)
-              travelArtLoading.delete(file)
-              if (!cancelled) {
-                placeEmptyBoatMarkers()
-              }
+          let flipX = false
+          if (boatSheet && boatSheet.stand.width >= 1) {
+            const picked = textureFromMountMoveSheet(boatSheet, {
+              moving: false,
+              animFrameAcc: 0,
+              animFps: moveSettings.animFps,
+              flipXMoving: false,
+              flipXStanding: false,
             })
+            texture = picked.texture
+            flipX = picked.flipX
           }
           let entry = boatMarkers.get(boat.id)
           if (!entry) {
@@ -2812,7 +2882,7 @@ export function HexMap({
           entry.badge.visible = !hasArt
           if (hasArt && texture) {
             entry.sprite.texture = texture
-            applyWorldSpriteScale(entry.sprite, texture, targetH)
+            applyWorldSpriteScale(entry.sprite, texture, targetH, flipX, hexSize, catalog)
           } else {
             entry.badge.clear()
             entry.badge.circle(0, 0, hexSize * 0.35)
@@ -2851,9 +2921,14 @@ export function HexMap({
             ensureWorldSpriteScaleWarning(current, catalog),
           )
         }
+        if (!worldSpriteMaxWidthChecked) {
+          worldSpriteMaxWidthChecked = true
+          updateSession((current) =>
+            ensureWorldSpriteMaxWidthWarning(current, catalog),
+          )
+        }
         const moveSettings = mountMoveSettings(catalog)
         const targetH = worldSpriteTargetHeight(hexSize, catalog)
-        const ringFactor = worldHeroRingScaleFactor(targetH, hexSize)
         const sessionHeroes = session.heroes
         const counts = new Map<string, number>()
         const indexOnHex = new Map<string, number>()
@@ -2875,6 +2950,7 @@ export function HexMap({
           let texture: Texture | null = null
           let flipX = travel.flipX
           if (moveStem) {
+            syncMoveSheetStemFromLoaderCache(moveStem, moveSheetsByStem)
             ensureMoveSheetStemLoading(
               moveStem,
               moveSheetsByStem,
@@ -2898,8 +2974,13 @@ export function HexMap({
             moveStem != null &&
             moveSheetsByStem.has(moveSheetKey(moveStem)) &&
             moveSheetsByStem.get(moveSheetKey(moveStem)) == null
-          if (!texture && travel && (!moveStem || sheetFailed)) {
-            const file = travel.file
+          const travelFile = travel.file.trim()
+          const allowTravelFallback =
+            travelFile !== '' &&
+            !isMoveSheetImageFile(travelFile) &&
+            (moveStem == null || sheetFailed)
+          if (!texture && allowTravelFallback) {
+            const file = travelFile
             if (travelArtByFile.has(file)) {
               texture = travelArtByFile.get(file) ?? null
             } else if (!travelArtLoading.has(file)) {
@@ -2952,7 +3033,18 @@ export function HexMap({
             ownerTint(hero.player_id) ?? NEUTRAL_OBJECT_COLOR
           if (hasArt && texture) {
             entry.sprite.texture = texture
-            applyWorldSpriteScale(entry.sprite, texture, targetH, flipX)
+            const appliedScale = applyWorldSpriteScale(
+              entry.sprite,
+              texture,
+              targetH,
+              flipX,
+              hexSize,
+              catalog,
+            )
+            const ringFactor = worldHeroRingScaleFactor(
+              texture.height * appliedScale,
+              hexSize,
+            )
             entry.badge.clear()
             entry.badge.circle(
               0,
@@ -2967,6 +3059,7 @@ export function HexMap({
             entry.label.style.fill = 0xffffff
           } else {
             // Missing-art fallback: original circle + name token.
+            const ringFactor = worldHeroRingScaleFactor(targetH, hexSize)
             entry.badge.clear()
             entry.badge.circle(
               0,
@@ -2990,7 +3083,15 @@ export function HexMap({
           if (moveVisual) {
             entry.view.position.set(moveVisual.x, moveVisual.y)
           } else {
-            entry.view.position.set(center.x + spread, center.y)
+            const legDisplay = flightLegDisplayPositions.get(hero.id)
+            if (legDisplay) {
+              const legHex =
+                grid.getHex(legDisplay) ?? grid.createHex(legDisplay)
+              const legCenter = hexCenter(legHex, offsetX, offsetY)
+              entry.view.position.set(legCenter.x + spread, legCenter.y)
+            } else {
+              entry.view.position.set(center.x + spread, center.y)
+            }
           }
         }
         for (const [id, entry] of heroMarkers) {
@@ -3005,6 +3106,23 @@ export function HexMap({
         syncTownActorDepth()
         applyActorCull()
       }
+      repaintHeroMarkers = placeHeroMarkers
+      repaintHeroMarkersRef = placeHeroMarkers
+      preloadHeroTravelSprites(getCachedCatalog())
+      preloadAllMountMoveSheets(
+        getCachedCatalog(),
+        moveSheetsByStem,
+        moveSheetLoadingStems,
+        refreshMoveSheetLoad,
+      )
+      preloadTransportMoveSheetStems(getCachedCatalog(), (stem) => {
+        ensureMoveSheetStemLoading(
+          stem,
+          moveSheetsByStem,
+          moveSheetLoadingStems,
+          (result) => refreshMoveSheetLoad(result, stem),
+        )
+      })
       const placeMobMarkers = () => {
         const session = getSession()
         const catalog = getCachedCatalog()
@@ -3077,7 +3195,7 @@ export function HexMap({
           entry.qty.visible = hasArt
           if (hasArt && texture) {
             entry.sprite.texture = texture
-            applyWorldSpriteScale(entry.sprite, texture, targetH)
+            applyWorldSpriteScale(entry.sprite, texture, targetH, false, hexSize, catalog)
             entry.qty.text = formatAmount(
               lead ? mobUnitQty(session, mob, lead.unit_id) : 0,
             )
@@ -3236,23 +3354,28 @@ export function HexMap({
           // Still blocked / circling — fall through to normal select.
         }
         selectedMapHeroId = row.id
-        moveGen += 1
-        moving = false
-        waypointPlan = null
-        preview.clear()
+        const sameHeroMidMove =
+          moving && heroRef.current?.id === id && row.flight != null
+        if (!sameHeroMidMove) {
+          moveGen += 1
+          moving = false
+          waypointPlan = null
+          preview.clear()
+        }
+        const legDisplay = flightLegDisplayPositions.get(id)
         heroRef.current = {
           id: row.id,
-          q: row.position.q,
-          r: row.position.r,
+          q: legDisplay?.q ?? row.position.q,
+          r: legDisplay?.r ?? row.position.r,
           remaining: row.movement_remaining,
         }
         onHeroState({
           id: row.id,
-          q: row.position.q,
-          r: row.position.r,
+          q: heroRef.current.q,
+          r: heroRef.current.r,
           remaining: row.movement_remaining,
         })
-        panToHex(row.position.q, row.position.r)
+        panToHex(heroRef.current.q, heroRef.current.r)
         exploreAround(heroRef.current)
         placeHeroMarkers()
         placeMobMarkers()
@@ -3782,7 +3905,7 @@ export function HexMap({
           dock ||
           recruits ||
           noticeBoard
-            ? approachHex(
+            ? approachHexForMover(
                 from,
                 occupant?.position ??
                   enemyTown?.position ??
@@ -3794,7 +3917,7 @@ export function HexMap({
                   dock?.position ??
                   recruits?.position ??
                   noticeBoard!.position,
-                hoverBlocked,
+                walkOnto,
               )
             : emptyBoat
               ? emptyBoat.position
@@ -3829,6 +3952,41 @@ export function HexMap({
           return
         }
         drawPreview([...(waypointPlan?.steps ?? []), ...steps], mob ?? null)
+      }
+
+      const primeMoveSheetStem = async (
+        stem: string,
+      ): Promise<MountMoveSheet | null> => {
+        const key = moveSheetKey(stem)
+        syncMoveSheetStemFromLoaderCache(stem, moveSheetsByStem)
+        const cached = moveSheetsByStem.get(key)
+        if (cached) {
+          return cached
+        }
+        if (moveSheetsByStem.has(key)) {
+          return null
+        }
+        ensureMoveSheetStemLoading(
+          stem,
+          moveSheetsByStem,
+          moveSheetLoadingStems,
+          (result) => refreshMoveSheetLoad(result, stem),
+        )
+        while (moveSheetLoadingStems.has(key) && !signal.aborted) {
+          await sleep(16, signal)
+        }
+        syncMoveSheetStemFromLoaderCache(stem, moveSheetsByStem)
+        let sheet = moveSheetsByStem.get(key) ?? null
+        if (sheet) {
+          return sheet
+        }
+        if (moveSheetsByStem.has(key)) {
+          return null
+        }
+        const result = await loadMountMoveSheetByStem(stem)
+        moveSheetsByStem.set(key, result.sheet)
+        refreshMoveSheetLoad(result, stem)
+        return result.sheet
       }
 
       const slideHeroSegment = async (
@@ -4286,9 +4444,200 @@ export function HexMap({
       }
       requestMapMoveFn = (to, walkOnto) => tryMoveTo(to, undefined, walkOnto)
 
+      const walkFlightSteps = async (
+        heroId: string,
+        steps: Axial[],
+        legFrom: Axial,
+        gen: number,
+        opts: { syncSession: boolean; runAmbush: boolean },
+      ): Promise<void> => {
+        if (steps.length === 0) {
+          return
+        }
+        const catalog = getCachedCatalog()
+        const moveCfg = mountMoveSettings(catalog)
+        if (moveCfg.secPerHex == null) {
+          updateSession((current) =>
+            ensureMountMoveConfigWarnings(current, catalog),
+          )
+        }
+        const sessionHero = getSession().heroes.find((row) => row.id === heroId)
+        const moveStem = sessionHero
+          ? heroMoveSheetStem(sessionHero, getSession(), catalog)
+          : null
+        if (!moveStem) {
+          updateSession((current) =>
+            reportMountMoveSheetMissingStem(current, WORLD_MOVE_STEM, {
+              url: '',
+              reason: 'no move sheet stem for airborne hero',
+            }),
+          )
+        }
+        let prev: Axial = { q: legFrom.q, r: legFrom.r }
+        if (heroRef.current?.id === heroId) {
+          heroRef.current.q = prev.q
+          heroRef.current.r = prev.r
+        }
+        let mountSoundOn = false
+        try {
+          let sheet: MountMoveSheet | null = null
+          if (moveStem) {
+            sheet = await primeMoveSheetStem(moveStem)
+            if (!sheet) {
+              updateSession((current) =>
+                reportMountMoveSheetMissingStem(current, moveStem, {
+                  url: `${HERO_TRAVEL_SPRITE_DIR}/${moveStem}.json`,
+                  reason: 'move sheet not loaded before flight slide',
+                }),
+              )
+            }
+          }
+          for (const hex of steps) {
+            if (signal.aborted || gen !== moveGen || !heroRef.current) {
+              return
+            }
+            const row = getSession().heroes.find((h) => h.id === heroId)
+            if (!row?.flight) {
+              return
+            }
+            const stepCost = 1
+            if (moveStem && !sheet) {
+              sheet =
+                moveSheetsByStem.get(moveSheetKey(moveStem)) ??
+                (await primeMoveSheetStem(moveStem))
+            }
+            const animateStep =
+              moveCfg.secPerHex != null &&
+              moveStem != null &&
+              worldHeroMoveVisibleToHuman(getSession(), {
+                ...row,
+                position: prev,
+              })
+            if (animateStep) {
+              const playbackRate = 1 / stepCost
+              if (!mountSoundOn) {
+                const soundStart = await beginMountMoveSoundForStem(
+                  moveStem,
+                  playbackRate,
+                )
+                if (soundStart === 'missing') {
+                  updateSession((current) =>
+                    warnMountMoveSoundMissingStem(current, moveStem),
+                  )
+                } else if (soundStart === 'playing') {
+                  mountSoundOn = true
+                }
+              } else {
+                setMountMoveSoundRate(playbackRate)
+              }
+              await slideHeroSegment(
+                heroId,
+                moveStem,
+                prev,
+                hex,
+                moveCfg.secPerHex!,
+                stepCost,
+                moveCfg.animFps,
+                signal,
+              )
+            } else {
+              await sleep(MOVE_STEP_MS, signal)
+            }
+            heroRef.current.q = hex.q
+            heroRef.current.r = hex.r
+            heroRef.current.remaining = 0
+            onHeroState({
+              id: heroRef.current.id,
+              q: heroRef.current.q,
+              r: heroRef.current.r,
+              remaining: 0,
+            })
+            if (opts.syncSession) {
+              updateSession((current) =>
+                syncHeroFlightPosition(
+                  current,
+                  { q: hex.q, r: hex.r },
+                  heroId,
+                ),
+              )
+            }
+            placeHeroMarkers()
+            placeMobMarkers()
+            followHero()
+            if (opts.syncSession && heroRef.current) {
+              exploreAround(heroRef.current)
+            }
+            prev = { q: hex.q, r: hex.r }
+            if (
+              opts.runAmbush &&
+              (await ambushAfterWorldStep({ q: hex.q, r: hex.r }))
+            ) {
+              break
+            }
+          }
+        } finally {
+          stopMountMoveSound(200)
+          heroMoveVisuals.delete(heroId)
+          placeHeroMarkers()
+        }
+      }
+
+      playHeroFlightDayLegFn = (heroId, legFrom, steps) => {
+        const live = getSession().heroes.find((row) => row.id === heroId)
+        if (!live?.flight || moving || steps.length === 0) {
+          return Promise.resolve()
+        }
+        if (
+          !worldHeroMoveVisibleToHuman(getSession(), {
+            ...live,
+            position: legFrom,
+          })
+        ) {
+          return Promise.resolve()
+        }
+        switchToMapHero(heroId)
+        const gen = ++moveGen
+        moving = true
+        cameraFollowMoves = true
+        return new Promise((resolve) => {
+          void (async () => {
+            try {
+              await walkFlightSteps(heroId, steps, legFrom, gen, {
+                syncSession: false,
+                runAmbush: false,
+              })
+              if (gen === moveGen) {
+                const row = getSession().heroes.find((h) => h.id === heroId)
+                if (row && heroRef.current?.id === heroId) {
+                  heroRef.current.q = row.position.q
+                  heroRef.current.r = row.position.r
+                  heroRef.current.remaining = 0
+                  onHeroState({
+                    id: row.id,
+                    q: row.position.q,
+                    r: row.position.r,
+                    remaining: 0,
+                  })
+                  placeHeroMarkers()
+                  followHero()
+                }
+              }
+            } finally {
+              if (gen === moveGen) {
+                moving = false
+              }
+            }
+            resolve()
+          })()
+        })
+      }
+
       playHeroFlightFn = (heroId) => {
         const live = getSession().heroes.find((row) => row.id === heroId)
         if (!live?.flight || moving) {
+          return Promise.resolve({ arrivedTownId: null, siegeTownId: null })
+        }
+        if (!heroNeedsFlightLegToday(live)) {
           return Promise.resolve({ arrivedTownId: null, siegeTownId: null })
         }
         const dest = getSession().towns.find(
@@ -4299,10 +4648,13 @@ export function HexMap({
         }
         switchToMapHero(heroId)
         const speed = flightSpeed(getCachedCatalog())
-        // Circling: one full orbit around the town. En route: straight segment.
         const path = live.flight.circling
           ? townCircleLapSteps(dest.position, live.position, dest.flipped)
           : flightSegmentSteps(live.position, dest.position, speed)
+        const legFrom: Axial = {
+          q: live.position.q,
+          r: live.position.r,
+        }
         const gen = ++moveGen
         moving = true
         clearWaypoints()
@@ -4310,138 +4662,69 @@ export function HexMap({
         const followWas = cameraFollowMoves
         cameraFollowMoves = true
 
-        const catalog = getCachedCatalog()
-        const moveCfg = mountMoveSettings(catalog)
-        const moveStem = heroMoveSheetStem(live, getSession(), catalog)
-        const useSlide =
-          moveCfg.secPerHex != null &&
-          worldHeroMoveVisibleToHuman(getSession(), live)
-
-        const walkPath = async (steps: Axial[]) => {
-          let prev: Axial = {
-            q: heroRef.current?.q ?? live.position.q,
-            r: heroRef.current?.r ?? live.position.r,
-          }
-          let mountSoundOn = false
-          try {
-            for (const hex of steps) {
-              if (signal.aborted || gen !== moveGen || !heroRef.current) {
-                return
-              }
-              const stepCost = 1
-              if (useSlide && moveStem && moveCfg.secPerHex != null) {
-                const playbackRate = 1 / stepCost
-                if (!mountSoundOn) {
-                  const soundStart = await beginMountMoveSoundForStem(
-                    moveStem,
-                    playbackRate,
-                  )
-                  if (soundStart === 'missing') {
-                    updateSession((current) =>
-                      warnMountMoveSoundMissingStem(current, moveStem),
-                    )
-                  } else if (soundStart === 'playing') {
-                    mountSoundOn = true
-                  }
-                } else {
-                  setMountMoveSoundRate(playbackRate)
-                }
-                await slideHeroSegment(
-                  heroId,
-                  moveStem,
-                  prev,
-                  hex,
-                  moveCfg.secPerHex,
-                  stepCost,
-                  moveCfg.animFps,
-                  signal,
-                )
-              } else {
-                await sleep(MOVE_STEP_MS, signal)
-              }
-              heroRef.current.q = hex.q
-              heroRef.current.r = hex.r
-              heroRef.current.remaining = 0
-              onHeroState({
-                id: heroRef.current.id,
-                q: heroRef.current.q,
-                r: heroRef.current.r,
-                remaining: 0,
-              })
-              updateSession((current) =>
-                syncHeroFlightPosition(
-                  current,
-                  { q: hex.q, r: hex.r },
-                  heroId,
-                ),
-              )
-              placeHeroMarkers()
-              placeMobMarkers()
-              followHero()
-              prev = { q: hex.q, r: hex.r }
-              if (await ambushAfterWorldStep({ q: hex.q, r: hex.r })) {
-                break
-              }
-            }
-          } finally {
-            stopMountMoveSound(200)
-            heroMoveVisuals.delete(heroId)
-            placeHeroMarkers()
-          }
-        }
-
         return new Promise((resolve) => {
           void (async () => {
-            await walkPath(path)
-            let arrivedTownId: string | null = null
-            let siegeTownId: string | null = null
-            if (gen === moveGen) {
-              updateSession((current) => {
-                const result = finalizeHeroFlightSegment(current, heroId)
-                arrivedTownId = result.arrivedTownId
-                siegeTownId = result.siegeTownId
-                return result.session
+            try {
+              await walkFlightSteps(heroId, path, legFrom, gen, {
+                syncSession: true,
+                runAmbush: true,
               })
-              // Just entered circling after reaching dest — orbit once this turn.
-              const after = getSession().heroes.find((h) => h.id === heroId)
-              if (
-                after?.flight?.circling &&
-                !live.flight?.circling &&
-                gen === moveGen
-              ) {
-                const lap = townCircleLapSteps(
-                  dest.position,
-                  after.position,
-                  dest.flipped,
-                )
-                await walkPath(lap)
-                if (gen === moveGen) {
-                  updateSession((current) => {
-                    const result = finalizeHeroFlightSegment(current, heroId)
-                    arrivedTownId = result.arrivedTownId
-                    siegeTownId = result.siegeTownId
-                    return result.session
+              let arrivedTownId: string | null = null
+              let siegeTownId: string | null = null
+              if (gen === moveGen) {
+                updateSession((current) => {
+                  const result = finalizeHeroFlightSegment(current, heroId)
+                  arrivedTownId = result.arrivedTownId
+                  siegeTownId = result.siegeTownId
+                  return markFlightLegAppliedToday(result.session, heroId)
+                })
+                const after = getSession().heroes.find((h) => h.id === heroId)
+                if (
+                  after?.flight?.circling &&
+                  !live.flight?.circling &&
+                  gen === moveGen
+                ) {
+                  const lap = townCircleLapSteps(
+                    dest.position,
+                    after.position,
+                    dest.flipped,
+                  )
+                  const lapFrom = { q: after.position.q, r: after.position.r }
+                  await walkFlightSteps(heroId, lap, lapFrom, gen, {
+                    syncSession: true,
+                    runAmbush: true,
                   })
+                  if (gen === moveGen) {
+                    updateSession((current) => {
+                      const result = finalizeHeroFlightSegment(current, heroId)
+                      arrivedTownId = result.arrivedTownId
+                      siegeTownId = result.siegeTownId
+                      return markFlightLegAppliedToday(result.session, heroId)
+                    })
+                  }
+                }
+                const row = getSession().heroes.find((h) => h.id === heroId)
+                if (row && heroRef.current) {
+                  heroRef.current.q = row.position.q
+                  heroRef.current.r = row.position.r
+                  heroRef.current.remaining = 0
+                  onHeroState({
+                    id: row.id,
+                    q: row.position.q,
+                    r: row.position.r,
+                    remaining: 0,
+                  })
+                  placeHeroMarkers()
+                  followHero()
                 }
               }
-              const row = getSession().heroes.find((h) => h.id === heroId)
-              if (row && heroRef.current) {
-                heroRef.current.q = row.position.q
-                heroRef.current.r = row.position.r
-                heroRef.current.remaining = 0
-                onHeroState({
-                  id: row.id,
-                  q: row.position.q,
-                  r: row.position.r,
-                  remaining: 0,
-                })
-                placeHeroMarkers()
-                followHero()
+              resolve({ arrivedTownId, siegeTownId })
+            } finally {
+              if (gen === moveGen) {
+                moving = false
+                cameraFollowMoves = followWas
               }
-              moving = false
             }
-            cameraFollowMoves = followWas
-            resolve({ arrivedTownId, siegeTownId })
           })()
         })
       }
@@ -4508,6 +4791,7 @@ export function HexMap({
         if (!hero) {
           return
         }
+        const emptyBoatOnClick = emptyBoatAt(hex.q, hex.r)
         // Click own circling / in-flight hero (or re-click self) to select + recheck land.
         const selfRow = getSession().heroes.find((row) => row.id === hero.id)
         const allyOnHex = selfRow
@@ -4519,6 +4803,7 @@ export function HexMap({
             )
           : undefined
         if (
+          !emptyBoatOnClick &&
           allyOnHex &&
           (allyOnHex.flight != null || allyOnHex.id === hero.id)
         ) {
@@ -4708,11 +4993,7 @@ export function HexMap({
             meet()
             return
           }
-          const dest = approachHex(
-            hero,
-            occupant.position,
-            obstacleHexes(hero),
-          )
+          const dest = approachHexForMover(hero, occupant.position)
           if (!dest) {
             return
           }
@@ -4768,11 +5049,7 @@ export function HexMap({
             siege()
             return
           }
-          const dest = approachHex(
-            hero,
-            enemyTown.position,
-            obstacleHexes(hero),
-          )
+          const dest = approachHexForMover(hero, enemyTown.position)
           if (!dest) {
             return
           }
@@ -4811,7 +5088,7 @@ export function HexMap({
             fight()
             return
           }
-          const dest = approachHex(hero, mob.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, mob.position)
           if (!dest) {
             return
           }
@@ -4912,7 +5189,7 @@ export function HexMap({
             offer()
             return
           }
-          const dest = approachHex(hero, chest.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, chest.position)
           if (!dest) {
             return
           }
@@ -4958,7 +5235,7 @@ export function HexMap({
             read()
             return
           }
-          const dest = approachHex(hero, sign.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, sign.position)
           if (!dest) {
             return
           }
@@ -4999,7 +5276,7 @@ export function HexMap({
             open()
             return
           }
-          const dest = approachHex(hero, library.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, library.position)
           if (!dest) {
             return
           }
@@ -5039,7 +5316,7 @@ export function HexMap({
             open()
             return
           }
-          const dest = approachHex(hero, hanger.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, hanger.position)
           if (!dest) {
             return
           }
@@ -5079,7 +5356,7 @@ export function HexMap({
             open()
             return
           }
-          const dest = approachHex(hero, dock.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, dock.position)
           if (!dest) {
             return
           }
@@ -5119,7 +5396,7 @@ export function HexMap({
             open()
             return
           }
-          const dest = approachHex(hero, recruits.position, obstacleHexes(hero))
+          const dest = approachHexForMover(hero, recruits.position)
           if (!dest) {
             return
           }
@@ -5159,11 +5436,7 @@ export function HexMap({
             open()
             return
           }
-          const dest = approachHex(
-            hero,
-            noticeBoard.position,
-            obstacleHexes(hero),
-          )
+          const dest = approachHexForMover(hero, noticeBoard.position)
           if (!dest) {
             return
           }
@@ -5325,6 +5598,7 @@ export function HexMap({
       runActiveHeroMapStepRefresh = null
       requestMapMoveFn = null
       playHeroFlightFn = null
+      playHeroFlightDayLegFn = null
       abortActiveMapMovementFn = null
       syncSelectedHeroFromSessionFn = null
       abort.abort()

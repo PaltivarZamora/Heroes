@@ -1,6 +1,6 @@
 import {
   approachHex,
-  findPathAvoidingMobRings,
+  findPath,
   findPathOnBoard,
   hexDistance,
   neighborHexes,
@@ -76,8 +76,7 @@ function landPathMoveCost(
   }
   const catalog = getCachedCatalog()
   const pathOpts = heroWorldPathCostOptions(session, moverPlayerId, catalog)
-  const planned = findPathAvoidingMobRings(from, to, blocked, false, pathOpts)
-  const path = planned?.path
+  const path = findPath(from, to, blocked, false, pathOpts)
   if (!path || path.length < 2) {
     return null
   }
@@ -251,7 +250,12 @@ function bestBoatPlan(
     const goldCost =
       atLaunch && atLaunch.occupant_hero_id == null ? 0 : boatCostGold(catalog)
     const walkTarget = atLaunch ? atLaunch.position : feature.position
-    const approach = approachHex(hero.position, walkTarget, blockedHexes(session, hero, null))
+    const approach = approachHex(
+      hero.position,
+      walkTarget,
+      blockedHexes(session, hero, null),
+      heroWorldPathCostOptions(session, hero.player_id, catalog),
+    )
     if (!approach) {
       continue
     }
@@ -308,7 +312,12 @@ function bestFlightPlan(
       if (!townHasHanger(session, catalog, town.id)) {
         continue
       }
-      const approach = approachHex(hero.position, town.position, blocked)
+      const approach = approachHex(
+        hero.position,
+        town.position,
+        blocked,
+        heroWorldPathCostOptions(session, hero.player_id, catalog),
+      )
       const walkMp = landPathMoveCost(session, hero.position, approach ?? town.position, blocked, hero.player_id)
       if (walkMp == null) {
         continue
@@ -331,6 +340,7 @@ function bestFlightPlan(
         hero.position,
         feature.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, catalog),
       )
       if (!approach) {
         continue
@@ -646,6 +656,7 @@ export function stepAiRouteCommit(
           hero.position,
           feature.position,
           blockedHexes(session, hero, null),
+          heroWorldPathCostOptions(session, hero.player_id, catalog),
         )
         if (approach && !samePos(approach, hero.position)) {
           return {
@@ -663,6 +674,7 @@ export function stepAiRouteCommit(
           hero.position,
           town.position,
           blockedHexes(session, hero, null),
+          heroWorldPathCostOptions(session, hero.player_id, catalog),
         )
         if (approach && !samePos(approach, hero.position)) {
           return {
@@ -748,6 +760,7 @@ export function stepAiRouteCommit(
           hero.position,
           dock.position,
           blockedHexes(session, hero, null),
+          heroWorldPathCostOptions(session, hero.player_id, catalog),
         )
         if (approach) {
           if (samePos(hero.position, approach) && hexDistance(hero.position, dock.position) <= 1) {

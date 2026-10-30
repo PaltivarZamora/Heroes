@@ -159,6 +159,15 @@ export function flightSegmentSteps(
   return line.slice(1, endIdx + 1).map((hex) => ({ q: hex.q, r: hex.r }))
 }
 
+/** Hex steps along a straight line from `from` to `to` (excludes `from`, includes `to`). */
+export function flightLegHexSteps(from: Axial, to: Axial): Axial[] {
+  const line = hexLine(from, to)
+  if (line.length <= 1) {
+    return []
+  }
+  return line.slice(1).map((hex) => ({ q: hex.q, r: hex.r }))
+}
+
 /** Advance along a straight line toward `to` by up to `steps` hexes (never past). */
 export function advanceAlongHexLine(
   from: Axial,

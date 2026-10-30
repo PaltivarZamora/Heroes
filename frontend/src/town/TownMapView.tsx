@@ -24,7 +24,8 @@ import {
 import { parseCssHexColor } from '../hex/terrainTransition'
 import { loadPropTexture, layoutWorldMapPropSprite } from '../hex/propTextures'
 import { strokeRoadSegments } from '../hex/roadRender'
-import { boatOccupiedByHero } from '../hex/boat'
+import { heroMoveSheetStem } from '../hex/flightTransport'
+import { isMoveSheetImageFile } from '../hex/moveSheetStems'
 import { heroTravelSprite, loadTravelTexture } from '../hex/heroTravelSprite'
 import { getSelectedMapHeroId } from '../hex/HexMap'
 import {
@@ -33,7 +34,7 @@ import {
   worldSpriteTargetHeight,
 } from '../hex/worldSpriteScale'
 import {
-  loadMountMoveSheetForClass,
+  loadMountMoveSheetByStem,
   mountMoveSettings,
   textureFromMountMoveSheet,
 } from '../hex/heroMountMoveAnim'
@@ -261,13 +262,11 @@ async function paintTownMapBase(
     }
     const travel = heroTravelSprite(hero, getSession())
     const catalog = getCachedCatalog()
-    const aboard = boatOccupiedByHero(getSession(), hero.id)
-    const landMount =
-      !hero.flight && !aboard && travel.file.startsWith('Mount_')
+    const moveStem = heroMoveSheetStem(hero, getSession(), catalog)
     let flipX = travel.flipX
     let texture: Texture | null = null
-    if (landMount && hero.class_id != null && catalog) {
-      const result = await loadMountMoveSheetForClass(catalog, hero.class_id)
+    if (moveStem) {
+      const result = await loadMountMoveSheetByStem(moveStem)
       if (result.sheet && result.sheet.stand.width >= 1) {
         const picked = textureFromMountMoveSheet(result.sheet, {
           moving: false,
@@ -278,10 +277,11 @@ async function paintTownMapBase(
         })
         texture = picked.texture
         flipX = picked.flipX
-      } else if (result.sheet == null) {
-        texture = await loadTravelTexture(travel.file)
       }
-    } else {
+    } else if (
+      travel.file.trim() !== '' &&
+      !isMoveSheetImageFile(travel.file)
+    ) {
       texture = await loadTravelTexture(travel.file)
     }
     const view = new Container()
@@ -293,7 +293,7 @@ async function paintTownMapBase(
     view.position.set(cell.center.x + spread, cell.center.y)
     if (texture && texture.width >= 1) {
       const sprite = new Sprite(texture)
-      applyWorldSpriteScale(sprite, texture, targetH, flipX)
+      applyWorldSpriteScale(sprite, texture, targetH, flipX, TOWN_MAP_HEX_SIZE, cat)
       view.addChild(sprite)
     } else {
       const badge = new Graphics()

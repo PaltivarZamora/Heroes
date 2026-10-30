@@ -1,5 +1,5 @@
 import { calendarDayNumber, advanceDay, isWeekRollover } from '../hex/calendar'
-import { advanceAlongHexLine, nextTownCircleHex, townCircleLapSteps } from '../hex/flight'
+import { advanceAlongHexLine, flightLegHexSteps, nextTownCircleHex, townCircleLapSteps } from '../hex/flight'
 import { transportSpriteForDeparture } from '../hex/flightTransport'
 import { facingFromMove } from '../hex/heroTravelSprite'
 import { hexDistance } from '../hex/pathfinding'
@@ -343,7 +343,7 @@ export function endTurn(session: GameSession): GameSession {
     if (catalog) {
       current = applyDailyHeroPoolRegen(current, catalog)
     }
-    current = advanceAllFlights(current)
+    current = resetFlightLegsForNewCalendarDay(current)
     const mineResult = applyMineIncomeWithReport(current)
     current = mineResult.session
     incomeEvents.push(...mineResult.events)
@@ -606,6 +606,29 @@ export function setNamedProgress(
   return setPoolProgress(session, poolId, live)
 }
 
+function normalizeHeroFlightState(
+  flight: Hero['flight'],
+): Hero['flight'] {
+  if (flight == null || typeof flight !== 'object') {
+    return null
+  }
+  const dest = flight.destination_town_id
+  if (typeof dest !== 'string' || !dest.trim()) {
+    return null
+  }
+  const applied = flight.flight_leg_applied_today
+  return {
+    destination_town_id: dest,
+    transport_sprite:
+      typeof flight.transport_sprite === 'string'
+        ? flight.transport_sprite
+        : undefined,
+    circling: flight.circling === true,
+    flight_leg_applied_today:
+      applied === true ? true : applied === false ? false : true,
+  }
+}
+
 export function normalizeHeroProgress(
   session: GameSession,
 ): GameSession {
@@ -651,6 +674,7 @@ export function normalizeHeroProgress(
       ...withItems,
       ...fromHero,
       pool_id: poolId ?? hero.pool_id ?? null,
+      flight: normalizeHeroFlightState(withItems.flight),
       current_mana: asHeroPoolAmount(hero.current_mana, pools.current_mana),
       current_energy: asHeroPoolAmount(hero.current_energy, pools.current_energy),
       used_abilities_this_battle: asAbilityIdList(hero.used_abilities_this_battle),
@@ -3388,7 +3412,7 @@ export function restorePlayerHeroMovement(
       if (hero.player_id !== playerId) {
         return hero
       }
-      // In-flight heroes get no ground movement that day (advance happens on day tick).
+      // In-flight heroes get no ground movement that day (leg runs on activation).
       if (hero.flight) {
         return { ...hero, movement_remaining: 0 }
       }
@@ -3581,7 +3605,7 @@ export function findWorldHangerBeside(
  * Launch Hanger flight: charge gold and enter in-flight state.
  * Origin is either a friendly town with a Hanger (hero standing on it) or a
  * world Hanger (hero adjacent). Does not advance position — caller animates
- * via {@link requestPlayHeroFlight} (or day tick uses {@link advanceAllFlights}).
+ * via {@link requestPlayHeroFlight} when the hero is activated (see S13-7).
  */
 export function launchHeroFlight(
   session: GameSession,
@@ -3689,6 +3713,7 @@ export function launchHeroFlight(
               flight: {
                 destination_town_id: dest.id,
                 transport_sprite: transportSprite,
+                flight_leg_applied_today: false,
               },
               movement_remaining: 0,
             }
@@ -3865,11 +3890,16 @@ export function finalizeHeroFlightSegment(
 function advanceHeroFlightOnce(
   session: GameSession,
   heroId: string,
-): { session: GameSession; error: string | null; siegeTownId: string | null } {
+): {
+  session: GameSession
+  error: string | null
+  siegeTownId: string | null
+  arrivedTownId: string | null
+} {
   const catalog = getCachedCatalog()
   const hero = session.heroes.find((row) => row.id === heroId)
   if (!hero?.flight || !catalog) {
-    return { session, error: null, siegeTownId: null }
+    return { session, error: null, siegeTownId: null, arrivedTownId: null }
   }
   const dest = session.towns.find(
     (town) => town.id === hero.flight!.destination_town_id,
@@ -3884,6 +3914,7 @@ function advanceHeroFlightOnce(
       },
       error: null,
       siegeTownId: null,
+      arrivedTownId: null,
     }
   }
 
@@ -3913,6 +3944,7 @@ function advanceHeroFlightOnce(
       session: landed.session,
       error: null,
       siegeTownId: landed.siegeTownId,
+      arrivedTownId: landed.arrivedTownId,
     }
   }
 
@@ -3935,7 +3967,118 @@ function advanceHeroFlightOnce(
     session: landed.session,
     error: null,
     siegeTownId: landed.siegeTownId,
+    arrivedTownId: landed.arrivedTownId,
   }
+}
+
+export type FlightLegPreview = {
+  from: { q: number; r: number }
+  steps: Array<{ q: number; r: number }>
+}
+
+/** Hex path for the next flight leg when this hero is activated (S13-7). */
+export function previewFlightLegsBeforeAdvance(
+  session: GameSession,
+): Map<string, FlightLegPreview> {
+  const catalog = getCachedCatalog()
+  const legs = new Map<string, FlightLegPreview>()
+  if (!catalog) {
+    return legs
+  }
+  const speed = flightSpeed(catalog)
+  for (const hero of session.heroes) {
+    if (!hero.flight) {
+      continue
+    }
+    const dest = session.towns.find(
+      (town) => town.id === hero.flight!.destination_town_id,
+    )
+    if (!dest) {
+      continue
+    }
+    const from = hero.position
+    let steps: Array<{ q: number; r: number }>
+    if (hero.flight.circling) {
+      steps = townCircleLapSteps(dest.position, from, dest.flipped).map((hex) => ({
+        q: hex.q,
+        r: hex.r,
+      }))
+    } else {
+      const to = advanceAlongHexLine(from, dest.position, speed)
+      if (from.q === to.q && from.r === to.r) {
+        continue
+      }
+      steps = flightLegHexSteps(from, to).map((hex) => ({
+        q: hex.q,
+        r: hex.r,
+      }))
+    }
+    if (steps.length === 0) {
+      continue
+    }
+    legs.set(hero.id, {
+      from: { q: from.q, r: from.r },
+      steps,
+    })
+  }
+  return legs
+}
+
+/** Clear per-day leg flags on calendar rollover; position stays mid-route. */
+export function resetFlightLegsForNewCalendarDay(
+  session: GameSession,
+): GameSession {
+  return {
+    ...session,
+    heroes: session.heroes.map((hero) => {
+      if (!hero.flight) {
+        return hero
+      }
+      return {
+        ...hero,
+        flight: {
+          ...hero.flight,
+          flight_leg_applied_today: false,
+        },
+      }
+    }),
+  }
+}
+
+/** Airborne and today's segment not yet applied (activation or launch animation). */
+export function heroNeedsFlightLegToday(hero: Hero | null | undefined): boolean {
+  return (
+    hero?.flight != null && hero.flight.flight_leg_applied_today !== true
+  )
+}
+
+export function markFlightLegAppliedToday(
+  session: GameSession,
+  heroId: string,
+): GameSession {
+  return {
+    ...session,
+    heroes: session.heroes.map((hero) => {
+      if (hero.id !== heroId || !hero.flight) {
+        return hero
+      }
+      return {
+        ...hero,
+        flight: {
+          ...hero.flight,
+          flight_leg_applied_today: true,
+        },
+      }
+    }),
+  }
+}
+
+/** End-turn prompts: ground steps only (pending flight leg is not "can still act"). */
+export function heroHasEndTurnGroundActionsRemaining(hero: Hero): boolean {
+  if (hero.flight) {
+    return false
+  }
+  return hero.movement_remaining > 0
 }
 
 /** Day tick: advance every airborne hero one flight_speed segment. */

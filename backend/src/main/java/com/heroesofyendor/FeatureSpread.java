@@ -197,7 +197,7 @@ final class FeatureSpread {
                     continue;
                 }
                 int q = HexCoords.qOf(col, row);
-                if (featureOrGuard(ctx.objects, q, row)) {
+                if (FeatureRules.hexUsedByFeature(ctx.objects, q, row)) {
                     continue;
                 }
                 WorldProps.Seed prop = WorldProps.roll(terrain, ctx.propDefs, rng, densityMult);
@@ -273,19 +273,35 @@ final class FeatureSpread {
         return copy;
     }
 
-    private static boolean featureOrGuard(List<MapObjectData> objects, int q, int r) {
-        if (objects == null) {
-            return false;
+    /** Remove props placed on feature anchors, guards, or dock launch hexes (any layer). */
+    static int stripPropsFromFeatureHexes(MapGenContext ctx) {
+        if (ctx.propSeeds == null || ctx.objects == null) {
+            return 0;
         }
-        for (MapObjectData obj : objects) {
-            if (!"town".equals(obj.kind()) && obj.q() == q && obj.r() == r) {
-                return true;
-            }
-            if (obj.guardQ() != null && obj.guardR() != null && obj.guardQ() == q && obj.guardR() == r) {
-                return true;
+        int cleared = 0;
+        for (int row = 0; row < ctx.height; row++) {
+            for (int col = 0; col < ctx.width; col++) {
+                if (ctx.propSeeds[row][col] == null) {
+                    continue;
+                }
+                int q = HexCoords.qOf(col, row);
+                if (!FeatureRules.hexUsedByFeature(ctx.objects, q, row)) {
+                    continue;
+                }
+                if (ctx.propSeeds[row][col].blocker() && ctx.propBlocked != null) {
+                    ctx.propBlocked[row][col] = false;
+                }
+                ctx.propSeeds[row][col] = null;
+                cleared++;
             }
         }
-        return false;
+        if (cleared > 0) {
+            log.info(
+                    "Prop scatter: cleared {} prop(s) from feature hexes (seed={})",
+                    cleared,
+                    ctx.mapSeed);
+        }
+        return cleared;
     }
 
     private static Integer asInt(Object raw) {

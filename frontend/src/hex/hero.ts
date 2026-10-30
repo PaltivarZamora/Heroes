@@ -1,7 +1,5 @@
 import { type Grid, type Hex } from 'honeycomb-grid'
-import { findPathOnBoard, findPathToward, hexDistance, type WorldPathCostOptions } from './pathfinding'
-import { mobPathRingKeys } from './mobAggro'
-import { getSession } from '../session/store'
+import { findPathOnBoard, findPathToward, type WorldPathCostOptions } from './pathfinding'
 import { getTile, isPassable } from './world'
 import { hexTransitionMoveCost } from './terrainTransition'
 import { getCachedCatalog, heroInteractCost } from '../town/catalog'
@@ -112,21 +110,9 @@ function stepsAlong(
   return steps
 }
 
-function ringBlocked(blocked: ReadonlySet<string> | undefined, from: Axial, to: Axial): Set<string> {
-  const merged = new Set(blocked)
-  const dest = `${to.q},${to.r}`
-  const start = `${from.q},${from.r}`
-  for (const hexKey of mobPathRingKeys(getSession())) {
-    if (hexKey !== dest && hexKey !== start) {
-      merged.add(hexKey)
-    }
-  }
-  return merged
-}
-
 /**
- * Walk as far as movement allows. Prefers a route that stays outside every
- * mob's 1-hex ring. If the only way forward enters a ring, that route is used.
+ * Walk as far as movement allows on the lowest-cost path (terrain / roads /
+ * own mines). Mob aggro is not avoided here — preview red hexes warn only.
  */
 export function planMovementSteps(
   grid: Grid<Hex>,
@@ -142,18 +128,11 @@ export function planMovementSteps(
   const enterCost =
     pathOpts?.enterCost ??
     ((q, r) => hexTransitionMoveCost(getCachedCatalog(), q, r))
-  const open = findPathToward(from, to, blocked, pathOpts)
-  const safe = findPathToward(from, to, ringBlocked(blocked, from, to), pathOpts)
-  if (!open || open.length <= 1) {
+  const path = findPathToward(from, to, blocked, pathOpts)
+  if (!path || path.length <= 1) {
     return { steps: [], risky: false }
   }
-  const openEnd = open[open.length - 1]!
-  const safeEnd = safe && safe.length > 1 ? safe[safe.length - 1]! : null
-  const openDist = hexDistance(openEnd, to)
-  const safeDist = safeEnd ? hexDistance(safeEnd, to) : Infinity
-  const path = safeEnd && safeDist <= openDist ? safe! : open
-  const risky = !(safeEnd && safeDist <= openDist)
-  return { steps: stepsAlong(grid, path, remaining, enterCost), risky }
+  return { steps: stepsAlong(grid, path, remaining, enterCost), risky: false }
 }
 
 export function movementSteps(

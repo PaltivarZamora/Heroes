@@ -4,6 +4,7 @@ import { hexDistance } from '../hex/pathfinding'
 import {
   activePlayer,
   findChestById,
+  heroNeedsFlightLegToday,
   launchHeroFlight,
   syncHero,
 } from '../session/accessors'
@@ -257,7 +258,14 @@ export async function runAiTurn(
     for (const heroId of heroIds) {
       const hero =
         getSession().heroes.find((row) => row.id === heroId) ?? null
-      if (!hero || hero.flight) {
+      if (!hero) {
+        continue
+      }
+      if (hero.flight) {
+        if (heroNeedsFlightLegToday(hero)) {
+          selectHeroOnMap(hero.id)
+          await requestPlayHeroFlight(hero.id)
+        }
         continue
       }
       selectHeroOnMap(hero.id)

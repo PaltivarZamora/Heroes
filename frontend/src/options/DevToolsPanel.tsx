@@ -75,6 +75,7 @@ export type DevToolsPanelProps = {
   onHudNotice?: (notice: string | null) => void
   onAddStartingUnits?: () => void
   onAddWorldMobs?: () => void
+  onNewGameWithSeed?: () => void
   terrainWedgesDebug?: DevToggle
   zonesDebug?: DevToggle
   wallGapsDebug?: DevToggle
@@ -149,6 +150,7 @@ export function DevToolsPanel({
   onHudNotice,
   onAddStartingUnits,
   onAddWorldMobs,
+  onNewGameWithSeed,
   terrainWedgesDebug,
   zonesDebug,
   wallGapsDebug,
@@ -353,6 +355,16 @@ export function DevToolsPanel({
         >
           Reload Reference Data
         </button>
+
+        {onNewGameWithSeed ? (
+          <button
+            type="button"
+            className="dev-popup-btn"
+            onClick={onNewGameWithSeed}
+          >
+            New Game with Seed
+          </button>
+        ) : null}
 
         <DevSection
           sectionId="towns"

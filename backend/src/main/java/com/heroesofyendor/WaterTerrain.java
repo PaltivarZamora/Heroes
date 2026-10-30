@@ -321,6 +321,12 @@ final class WaterTerrain {
         if (ctx.lakes == null || ctx.lakes.isEmpty() || ctx.lakeIds == null) {
             return;
         }
+        Set<Integer> lakesWithIslands = new HashSet<>();
+        if (ctx.islands != null) {
+            for (Island island : ctx.islands) {
+                lakesWithIslands.add(island.lakeId);
+            }
+        }
         Set<Integer> covered = new HashSet<>();
         if (ctx.objects != null) {
             for (MapObjectData obj : ctx.objects) {
@@ -344,6 +350,12 @@ final class WaterTerrain {
                 site = forceBeachDock(ctx, lake);
             }
             if (site == null) {
+                boolean island = lakesWithIslands.contains(lake.id);
+                log.warn(
+                        "Dock ensure: lake id={} deep={} island={} — no valid mainland shore (passable land + deep-water launch)",
+                        lake.id,
+                        lake.deep,
+                        island);
                 continue;
             }
             int q = HexCoords.qOf(site[0], site[1]);
@@ -1394,17 +1406,10 @@ final class WaterTerrain {
         Rules rules = load(ctx);
         for (int row = 0; row < ctx.height; row++) {
             for (int col = 0; col < ctx.width; col++) {
-                if (onIsland(ctx, col, row) || ctx.cells[row][col] == null || !ctx.cells[row][col].isPassable()) {
-                    continue;
+                int[] site = tryDockShore(ctx, rules, lakeId, col, row, false, null);
+                if (site != null) {
+                    return site;
                 }
-                if (rules.beach != null && ctx.cells[row][col].id() != rules.beach.id()) {
-                    continue;
-                }
-                int[] launch = waterNeighbor(ctx, col, row, lakeId);
-                if (launch == null) {
-                    continue;
-                }
-                return new int[] {col, row, launch[0], launch[1]};
             }
         }
         return null;
@@ -1417,22 +1422,63 @@ final class WaterTerrain {
         }
         for (int row = 0; row < ctx.height; row++) {
             for (int col = 0; col < ctx.width; col++) {
-                if (onIsland(ctx, col, row) || ctx.cells[row][col] == null) {
-                    continue;
+                int[] site = tryDockShore(ctx, rules, lake.id, col, row, true, lake);
+                if (site != null) {
+                    return site;
                 }
-                if (rules.shallow == null || ctx.cells[row][col].id() != rules.shallow.id()) {
-                    continue;
-                }
-                int[] launch = waterNeighbor(ctx, col, row, lake.id);
-                if (launch == null) {
-                    continue;
-                }
-                ctx.cells[row][col] = rules.beach;
-                lake.beach++;
-                return new int[] {col, row, launch[0], launch[1]};
             }
         }
         return null;
+    }
+
+    /** Passable mainland with deep-water launch in {@code lakeId}; optional shallow→beach. */
+    private static int[] tryDockShore(
+            MapGenContext ctx,
+            Rules rules,
+            int lakeId,
+            int col,
+            int row,
+            boolean convertShallow,
+            Lake lake) {
+        if (onIsland(ctx, col, row)) {
+            return null;
+        }
+        HexTerrain terrain = ctx.cells[row][col];
+        if (terrain == null || !terrain.isPassable() || terrain.movementCost() == null) {
+            return null;
+        }
+        if (boatSailable(terrain, rules)) {
+            return null;
+        }
+        if (convertShallow
+                && rules.shallow != null
+                && rules.beach != null
+                && terrain.id() == rules.shallow.id()) {
+            ctx.cells[row][col] = rules.beach;
+            if (lake != null) {
+                lake.beach++;
+            }
+        }
+        int[] launch = waterNeighbor(ctx, col, row, lakeId);
+        if (launch == null) {
+            return null;
+        }
+        return new int[] {col, row, launch[0], launch[1]};
+    }
+
+    private static boolean boatSailable(HexTerrain terrain, Rules rules) {
+        if (terrain == null) {
+            return false;
+        }
+        if (rules.water != null && terrain.id() == rules.water.id()) {
+            return true;
+        }
+        if (rules.shallow != null && terrain.id() == rules.shallow.id()) {
+            return true;
+        }
+        String name = terrain.label();
+        return name != null
+                && ("water".equalsIgnoreCase(name) || "shallow".equalsIgnoreCase(name));
     }
 
     private static int[] waterNeighbor(MapGenContext ctx, int col, int row, int lakeId) {

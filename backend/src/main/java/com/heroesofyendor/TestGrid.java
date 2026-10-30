@@ -287,6 +287,7 @@ final class TestGrid {
                     double mult = MapConfig.cfgDouble(c.data, "prop_density_mult", c.sizeName(), 2.5);
                     int before = FeatureSpread.scatter(c, c.rngFor("props"), 1.0, false);
                     int after = FeatureSpread.scatter(c, c.rngFor("props"), mult, true);
+                    FeatureSpread.stripPropsFromFeatureHexes(c);
                     c.featureRules.report(before, after, mult);
                     MapGenPipeline.logCounts(
                             "props", "before=" + before + " after=" + after + " mult=" + mult);
@@ -1657,15 +1658,40 @@ final class TestGrid {
             }
         }
 
+        java.util.HashSet<Integer> lakesWithIslands = new java.util.HashSet<>();
+        if (gen.islands != null) {
+            for (WaterTerrain.Island island : gen.islands) {
+                lakesWithIslands.add(island.lakeId);
+            }
+        }
+
         int totalPlaced = 0;
         int bodyIndex = 0;
         for (java.util.HashSet<String> body : bodies) {
             bodyIndex++;
             int size = body.size();
+            Integer lakeId = lakeIdForWaterBody(body, gen);
+            boolean islandLake = lakeId != null && lakesWithIslands.contains(lakeId);
             if (size < minWater) {
-                continue;
+                if (!islandLake) {
+                    log.warn(
+                            "Dock placement: body #{} size={} below min {} — skipped",
+                            bodyIndex,
+                            size,
+                            minWater);
+                    continue;
+                }
+                log.info(
+                        "Dock placement: body #{} size={} below min {} but lake {} has island — require ≥1 dock",
+                        bodyIndex,
+                        size,
+                        minWater,
+                        lakeId);
             }
-            int want = 1 + (size - minWater) / waterPer;
+            int want =
+                    size < minWater && islandLake
+                            ? 1
+                            : 1 + (size - minWater) / waterPer;
             List<int[]> candidates = new ArrayList<>();
             for (int[] colRow : placeable) {
                 int col = colRow[0];
@@ -1784,6 +1810,29 @@ final class TestGrid {
             }
         }
         log.info("Dock placement: placed {} dock(s) total", totalPlaced);
+    }
+
+    private static Integer lakeIdForWaterBody(java.util.Set<String> body, MapGenContext gen) {
+        if (gen.lakeIds == null) {
+            return null;
+        }
+        for (String key : body) {
+            int comma = key.indexOf(',');
+            if (comma < 0) {
+                continue;
+            }
+            int q = Integer.parseInt(key.substring(0, comma));
+            int r = Integer.parseInt(key.substring(comma + 1));
+            int col = HexCoords.colOf(q, r);
+            if (r < 0 || col < 0 || r >= gen.height || col >= gen.width) {
+                continue;
+            }
+            int id = gen.lakeIds[r][col];
+            if (id > 0) {
+                return id;
+            }
+        }
+        return null;
     }
 
     /** Water or Shallow — boats sail both; docks must not stand on either. */

@@ -20,6 +20,7 @@ type DevPopupProps = {
   onHudNotice?: (notice: string | null) => void
   onAddStartingUnits?: () => void
   onAddWorldMobs?: () => void
+  onNewGameWithSeed?: () => void
   terrainWedgesDebug?: { enabled: boolean; onToggle: () => void }
   zonesDebug?: { enabled: boolean; onToggle: () => void }
   wallGapsDebug?: { enabled: boolean; onToggle: () => void }
@@ -54,6 +55,7 @@ export function DevPopup(props: DevPopupProps) {
           onHudNotice={props.onHudNotice}
           onAddStartingUnits={props.onAddStartingUnits}
           onAddWorldMobs={props.onAddWorldMobs}
+          onNewGameWithSeed={props.onNewGameWithSeed}
           terrainWedgesDebug={props.terrainWedgesDebug}
           zonesDebug={props.zonesDebug}
           wallGapsDebug={props.wallGapsDebug}

@@ -1,8 +1,6 @@
 import { isPassable, isWalkable } from './world'
 import { getCachedCatalog } from '../town/catalog'
 import { hexTransitionMoveCost } from './terrainTransition'
-import { mobPathRingKeys } from './mobAggro'
-import { getSession } from '../session/store'
 import type { Axial } from './hero'
 
 const AXIAL_NEIGHBORS: Axial[] = [
@@ -74,10 +72,13 @@ export function neighborHexes(at: Axial): Axial[] {
   }))
 }
 
-function pathEnterCost(path: Axial[]): number {
+function pathEnterCost(
+  path: Axial[],
+  enterCost: (q: number, r: number) => number | null,
+): number {
   let cost = 0
   for (let i = 1; i < path.length; i++) {
-    const step = terrainEnterCost(path[i].q, path[i].r)
+    const step = enterCost(path[i].q, path[i].r)
     if (step == null) {
       return Infinity
     }
@@ -86,56 +87,28 @@ function pathEnterCost(path: Axial[]): number {
   return cost
 }
 
+/** Sum of enter costs for a path (start hex excluded). */
+export function pathTravelCost(
+  path: Axial[],
+  enterCost: (q: number, r: number) => number | null = terrainEnterCost,
+): number {
+  return pathEnterCost(path, enterCost)
+}
+
 /**
  * Cheapest walkable hex next to `target` (never `target` itself).
  * The mover's current hex is allowed even if it would otherwise look blocked.
  */
-function withMobRings(
-  blocked: ReadonlySet<string> | undefined,
-  dest: Axial,
-  from: Axial,
-): Set<string> {
-  const merged = new Set(blocked)
-  const destKey = key(dest.q, dest.r)
-  const startKey = key(from.q, from.r)
-  for (const hexKey of mobPathRingKeys(getSession())) {
-    if (hexKey === destKey || hexKey === startKey) {
-      continue
-    }
-    merged.add(hexKey)
-  }
-  return merged
-}
-
-/**
- * Prefer a path that stays out of every mob's 1-hex ring. The destination
- * itself is allowed (attacking that mob, or a click inside the ring).
- * If the only route enters a ring, that path is returned and `risky` is set.
- */
-export function findPathAvoidingMobRings(
-  from: Axial,
-  to: Axial,
-  blocked?: ReadonlySet<string>,
-  ignoreFog = false,
-  pathOpts?: WorldPathCostOptions,
-): { path: Axial[]; risky: boolean } | null {
-  const safe = findPath(from, to, withMobRings(blocked, to, from), ignoreFog, pathOpts)
-  if (safe) {
-    return { path: safe, risky: false }
-  }
-  const path = findPath(from, to, blocked, ignoreFog, pathOpts)
-  return path ? { path, risky: true } : null
-}
-
 export function approachHex(
   from: Axial,
   target: Axial,
   blocked?: ReadonlySet<string>,
+  pathOpts?: WorldPathCostOptions,
 ): Axial | null {
+  const enterCost = pathOpts?.enterCost ?? terrainEnterCost
   let best: Axial | null = null
   let bestCost = Infinity
   let bestDist = Infinity
-  let bestRisky = true
   for (const next of neighborHexes(target)) {
     const here = next.q === from.q && next.r === from.r
     if (!here && !isPathHexOpen(next.q, next.r, blocked)) {
@@ -144,25 +117,36 @@ export function approachHex(
     if (here) {
       return next
     }
-    const planned = findPathAvoidingMobRings(from, next, blocked)
-    if (!planned) {
+    const path = findPath(from, next, blocked, false, pathOpts)
+    if (!path) {
       continue
     }
-    const cost = pathEnterCost(planned.path)
+    const cost = pathEnterCost(path, enterCost)
     const dist = hexDistance(from, next)
-    const better =
-      (bestRisky && !planned.risky) ||
-      (bestRisky === planned.risky &&
-        (cost + 1e-9 < bestCost ||
-          (Math.abs(cost - bestCost) < 1e-9 && dist < bestDist)))
-    if (better) {
+    if (
+      cost + 1e-9 < bestCost ||
+      (Math.abs(cost - bestCost) < 1e-9 && dist < bestDist)
+    ) {
       bestCost = cost
       bestDist = dist
-      bestRisky = planned.risky
       best = next
     }
   }
   return best
+}
+
+/**
+ * @deprecated Mob rings are not avoided in routing (BR S13-9). Use {@link findPath}.
+ */
+export function findPathAvoidingMobRings(
+  from: Axial,
+  to: Axial,
+  blocked?: ReadonlySet<string>,
+  ignoreFog = false,
+  pathOpts?: WorldPathCostOptions,
+): { path: Axial[]; risky: boolean } | null {
+  const path = findPath(from, to, blocked, ignoreFog, pathOpts)
+  return path ? { path, risky: false } : null
 }
 
 /**

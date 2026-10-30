@@ -1,5 +1,5 @@
 import {
-  findPathAvoidingMobRings,
+  findPath,
   findPathOnBoard,
   hexDistance,
   neighborHexes,
@@ -486,14 +486,7 @@ function pathTravelMp(
   }
   const catalog = getCachedCatalog()
   const pathOpts = heroWorldPathCostOptions(session, hero.player_id, catalog)
-  const planned = findPathAvoidingMobRings(
-    hero.position,
-    dest,
-    blocked,
-    false,
-    pathOpts,
-  )
-  const path = planned?.path
+  const path = findPath(hero.position, dest, blocked, false, pathOpts)
   if (!path || path.length < 2) {
     return null
   }
@@ -808,6 +801,7 @@ export function decideWorldMove(
       hero.position,
       targetPos,
       blockedHexes(session, hero, null),
+      heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
     )
     if (!approach) {
       return
@@ -943,6 +937,7 @@ export function decideWorldMove(
       hero.position,
       feature.position,
       blockedHexes(session, hero, null),
+      heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
     )
     if (!approach) {
       continue
@@ -1005,6 +1000,7 @@ export function decideWorldMove(
         hero.position,
         ally.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
       )
       if (!approach) {
         continue
@@ -1160,6 +1156,7 @@ export function decideWorldMove(
       hero.position,
       feature.position,
       blockedHexes(session, hero, null),
+      heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
     )
     if (!approach) {
       continue
@@ -1222,6 +1219,7 @@ export function decideWorldMove(
         hero.position,
         mob.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
       )
       if (!approach) {
         continue
@@ -1359,6 +1357,7 @@ export function decideWorldMove(
         hero.position,
         feature.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
       )
       if (!approach || samePos(approach, hero.position)) {
         continue
@@ -1438,6 +1437,7 @@ export function decideWorldMove(
         hero.position,
         feature.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
       )
       if (!approach || samePos(approach, hero.position)) {
         continue
@@ -1473,6 +1473,7 @@ export function decideWorldMove(
         hero.position,
         feature.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
       )
       if (!approach) {
         continue
@@ -1539,6 +1540,7 @@ export function decideWorldMove(
         hero.position,
         feature.position,
         blockedHexes(session, hero, null),
+        heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
       )
       if (!approach) {
         continue
@@ -1614,6 +1616,7 @@ export function decideWorldMove(
               hero.position,
               target.position,
               blockedHexes(session, hero, null),
+              heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
             )
       if (!dest) {
         continue
@@ -1724,6 +1727,7 @@ export function decideWorldMove(
           hero.position,
           feature.position,
           blockedHexes(session, hero, null),
+          heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
         )
         if (!approach) {
           continue
@@ -1775,6 +1779,7 @@ export function decideWorldMove(
           hero.position,
           feature.position,
           blockedHexes(session, hero, null),
+          heroWorldPathCostOptions(session, hero.player_id, getCachedCatalog()),
         )
         if (!approach) {
           continue

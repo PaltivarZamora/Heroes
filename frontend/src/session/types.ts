@@ -137,6 +137,8 @@ export type HeroFlight = {
    * Hero orbits the town footprint; no further progress toward dest.
    */
   circling?: boolean
+  /** True after this calendar day's flight leg has been applied (S13-7). */
+  flight_leg_applied_today?: boolean
 }
 
 export type Hero = {
@@ -172,7 +174,7 @@ export type Hero = {
   pool_id?: number | null
   /**
    * Hanger flight in progress. Null/undefined = on the ground.
-   * While set, hero is untargetable and auto-advances each day.
+   * While set, hero is untargetable; progress runs when the hero is activated (S13-7).
    */
   flight: HeroFlight | null
   /**

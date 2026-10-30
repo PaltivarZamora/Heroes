@@ -91,6 +91,8 @@ import {
   endTurn,
   findTownAt,
   findTownById,
+  heroHasEndTurnGroundActionsRemaining,
+  heroNeedsFlightLegToday,
   grantHeroStartingArmy,
   hasTownBuiltToday,
   heroArmyStackCount,
@@ -109,7 +111,9 @@ import { appendAiTrace, clearAiTraces, getAiTraceBlocks, subscribeAiTraces } fro
 import { decideAndApplyHeroTrade } from './ai/armyAlloc'
 import { runAiTurn } from './ai/turn'
 import type { WorldAttackTarget } from './ai/worldMove'
-import { mountAnimDevWarnings } from './hex/heroMountMoveAnim'
+import {
+  mountAnimDevWarnings,
+} from './hex/heroMountMoveAnim'
 import { worldSpriteScaleDevWarnings } from './hex/worldSpriteScale'
 import { installAudioUnlock, soundDevWarnings } from './audio/soundPlayer'
 import { GameBanner } from './layout/GameBanner'
@@ -321,6 +325,7 @@ function App() {
     return () => window.clearInterval(id)
   }, [])
   const aiRanKeyRef = useRef('')
+  const flightLegRunningRef = useRef(false)
   const aiTraces = useSyncExternalStore(subscribeAiTraces, getAiTraceBlocks)
   const calendar = session.game.calendar
   const onTownWelcome = useCallback((townName: string, townId: string) => {
@@ -1105,35 +1110,29 @@ function App() {
       )
     }
   }, [])
-  const adoptHero = useCallback((id: string) => {
-    const row = getSession().heroes.find((hero) => hero.id === id)
-    if (!row) {
-      return
-    }
-    selectHeroOnMap(row.id)
-    setHero({
-      id: row.id,
-      q: row.position.q,
-      r: row.position.r,
-      remaining: row.movement_remaining,
-    })
-  }, [])
-
-  const playHeroFlight = useCallback(
-    (heroId: string) => {
-      adoptHero(heroId)
-      setWorldHanger(null)
-      setDockBuy(null)
-      setWorldRecruits(null)
-      setWorldNoticeBoard(null)
-      setWelcomeTown(null)
+  const runFlightLegForHero = useCallback(
+    async (heroId: string) => {
+      if (flightLegRunningRef.current) {
+        return
+      }
+      const row = getSession().heroes.find((hero) => hero.id === heroId)
+      if (!row || !heroNeedsFlightLegToday(row)) {
+        return
+      }
+      flightLegRunningRef.current = true
       setMapInputLocked(true)
       setMapCameraFollowMoves(true)
-      void (async () => {
-        await Promise.resolve()
+      try {
         const result = await requestPlayHeroFlight(heroId)
-        setMapInputLocked(false)
-        adoptHero(heroId)
+        const live = getSession().heroes.find((hero) => hero.id === heroId)
+        if (live) {
+          setHero({
+            id: live.id,
+            q: live.position.q,
+            r: live.position.r,
+            remaining: live.movement_remaining,
+          })
+        }
         if (result.siegeTownId) {
           onSiegeTown(result.siegeTownId)
           return
@@ -1146,9 +1145,52 @@ function App() {
             setWelcomeTown(next)
           }
         }
+      } finally {
+        flightLegRunningRef.current = false
+        setMapInputLocked(false)
+      }
+    },
+    [onSiegeTown],
+  )
+
+  const adoptHero = useCallback(
+    (id: string, opts?: { skipFlightLeg?: boolean }) => {
+      const row = getSession().heroes.find((hero) => hero.id === id)
+      if (!row) {
+        return
+      }
+      selectHeroOnMap(row.id)
+      setHero({
+        id: row.id,
+        q: row.position.q,
+        r: row.position.r,
+        remaining: row.movement_remaining,
+      })
+      if (opts?.skipFlightLeg || aiPhase === 'running') {
+        return
+      }
+      void runFlightLegForHero(id)
+    },
+    [aiPhase, runFlightLegForHero],
+  )
+
+  const playHeroFlight = useCallback(
+    (heroId: string) => {
+      setWelcomeTown(null)
+      setWorldHanger(null)
+      setDockBuy(null)
+      setWorldRecruits(null)
+      setWorldNoticeBoard(null)
+      adoptHero(heroId, { skipFlightLeg: true })
+      setMapInputLocked(true)
+      setMapCameraFollowMoves(true)
+      void (async () => {
+        await Promise.resolve()
+        await runFlightLegForHero(heroId)
+        adoptHero(heroId, { skipFlightLeg: true })
       })()
     },
-    [adoptHero, onSiegeTown],
+    [adoptHero, runFlightLegForHero],
   )
 
   const cycleTown = useCallback((reverse = false) => {
@@ -1226,20 +1268,26 @@ function App() {
         }
         return
       }
-      const movable = player.hero_ids.filter((id) => {
+      const actionable = player.hero_ids.filter((id) => {
         const row = current.heroes.find((h) => h.id === id)
-        return row != null && row.movement_remaining > 0
+        if (row == null) {
+          return false
+        }
+        if (heroNeedsFlightLegToday(row)) {
+          return true
+        }
+        return row.movement_remaining > 0
       })
-      if (movable.length === 0) {
+      if (actionable.length === 0) {
         return
       }
       const selectedId = getSelectedMapHeroId()
-      const currentId = movable.includes(hero?.id ?? '')
+      const currentId = actionable.includes(hero?.id ?? '')
         ? hero?.id ?? null
-        : movable.includes(selectedId ?? '')
+        : actionable.includes(selectedId ?? '')
           ? selectedId
           : null
-      const heroId = idInDirection(currentId, movable, reverse)
+      const heroId = idInDirection(currentId, actionable, reverse)
       if (heroId) {
         adoptHero(heroId)
       }
@@ -1592,6 +1640,26 @@ function App() {
   useEffect(() => {
     syncActivePlayerView()
   }, [session.activePlayerIndex, calendarDay])
+
+  useEffect(() => {
+    if (aiPhase !== 'idle') {
+      return
+    }
+    const current = getSession()
+    const player = humanPlayer(current)
+    const actor = activePlayer(current)
+    if (!player || !actor || actor.id !== player.id || actor.is_ai) {
+      return
+    }
+    const heroId =
+      getSelectedMapHeroId() ??
+      player.hero_ids.find((id) => current.heroes.some((row) => row.id === id)) ??
+      null
+    if (!heroId) {
+      return
+    }
+    void runFlightLegForHero(heroId)
+  }, [session.activePlayerIndex, calendarDay, aiPhase, runFlightLegForHero])
 
   useEffect(() => {
     const player = activePlayer(getSession())
@@ -2111,6 +2179,25 @@ function App() {
         open={devOpen}
         onClose={() => setDevOpen(false)}
         inCombat={inCombat}
+        onNewGameWithSeed={() => {
+          const raw = window.prompt(
+            'Map seed (positive integer, e.g. 108600736):',
+            getSession().game.seed > 0
+              ? String(getSession().game.seed)
+              : '',
+          )
+          if (raw == null) {
+            return
+          }
+          const seed = Math.floor(Number(raw.trim()))
+          if (!Number.isFinite(seed) || seed <= 0) {
+            setOptionsHudNotice('Invalid seed — use a positive integer.')
+            return
+          }
+          const catalog = getCachedCatalog()
+          onStartGame({ ...defaultGameConfig(catalog), seed })
+          setDevOpen(false)
+        }}
         aiTraces={aiTraces}
         sections={debugSections}
         worldPerf={worldPerf}
@@ -2449,6 +2536,17 @@ function App() {
         >
           <h1 id="end-turn-confirm-title">End turn?</h1>
           <p>End your turn for this player?</p>
+          {(() => {
+            const player = humanPlayer(session)
+            const groundLeft =
+              player?.hero_ids.filter((id) => {
+                const row = session.heroes.find((hero) => hero.id === id)
+                return row != null && heroHasEndTurnGroundActionsRemaining(row)
+              }).length ?? 0
+            return groundLeft > 0 ? (
+              <p>{groundLeft} hero{groundLeft === 1 ? '' : 'es'} still ha{groundLeft === 1 ? 's' : 've'} movement left.</p>
+            ) : null
+          })()}
           <p className="surrender-prompt-actions">
             <button
               type="button"

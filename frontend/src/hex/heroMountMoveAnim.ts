@@ -13,9 +13,9 @@ import {
 } from '../town/catalog'
 import {
   HERO_TRAVEL_SPRITE_DIR,
-  mountSpriteFile,
   type HeroTravelFacing,
 } from './heroTravelSprite'
+import { classMountMoveSheetStem } from './moveSheetStems'
 
 export type MountMoveSheet = {
   /** Static pose (`{stem}_Stand`, or first sorted frame if missing). */
@@ -108,7 +108,7 @@ function warnConfigOnce(
 
 /** Stem without extension, e.g. `Mount_Cleric_Move`. */
 export function mountMoveSheetStem(className: string): string {
-  return mountSpriteFile(className).replace(/\.png$/i, '') + '_Move'
+  return classMountMoveSheetStem(className)
 }
 
 export function mountMoveSettings(
@@ -210,18 +210,29 @@ async function loadSheetByStem(stem: string): Promise<MountMoveSheetLoadResult> 
         meta?: { image?: string }
       }
       const imageName = data.meta?.image?.trim()
-      if (!imageName) {
+      const imageCandidates = [
+        imageName,
+        `${stem}.png`,
+      ].filter((name): name is string => Boolean(name?.trim()))
+      if (imageCandidates.length === 0) {
         return recordFail(jsonUrl, 'json missing meta.image')
       }
-      const imageUrl = `${HERO_TRAVEL_SPRITE_DIR}/${imageName.replace(/^\/+/, '')}`
-      let atlasTexture: Texture
-      try {
-        atlasTexture = await Assets.load<Texture>(imageUrl)
-      } catch {
-        return recordFail(imageUrl, 'texture load error')
+      let atlasTexture: Texture | null = null
+      let imageUrl = ''
+      for (const candidate of imageCandidates) {
+        imageUrl = `${HERO_TRAVEL_SPRITE_DIR}/${candidate.replace(/^\/+/, '')}`
+        try {
+          const tex = await Assets.load<Texture>(imageUrl)
+          if (tex.width >= 1 && tex.height >= 1) {
+            atlasTexture = tex
+            break
+          }
+        } catch {
+          /* try next candidate */
+        }
       }
-      if (atlasTexture.width < 1 || atlasTexture.height < 1) {
-        return recordFail(imageUrl, 'empty atlas texture')
+      if (!atlasTexture) {
+        return recordFail(imageUrl || jsonUrl, 'texture load error')
       }
       const sheet = new Spritesheet({
         texture: atlasTexture,
@@ -257,6 +268,31 @@ export async function loadMountMoveSheetByStem(
   return loadSheetByStem(stem)
 }
 
+/** Sync HexMap stem map from the module loader cache (preload / prior loads). */
+export function syncMoveSheetStemFromLoaderCache(
+  stem: string,
+  sheets: Map<string, MountMoveSheet | null>,
+): MountMoveSheetLoadResult | null {
+  const key = stem.toLowerCase()
+  if (!sheetCache.has(key) && !sheetFailCache.has(key)) {
+    return null
+  }
+  const sheet = sheetCache.get(key) ?? null
+  const had = sheets.has(key)
+  const prev = had ? sheets.get(key) : undefined
+  sheets.set(key, sheet)
+  const fail = sheetFailCache.get(key)
+  const result = fail ? { sheet: null, fail } : { sheet }
+  if (!had || prev !== sheet) {
+    return result
+  }
+  return null
+}
+
+export function isMoveSheetStemLoading(stem: string): boolean {
+  return sheetInflight.has(stem.toLowerCase())
+}
+
 export function reportMountMoveSheetMissingStem(
   session: GameSession,
   stem: string,
@@ -280,14 +316,22 @@ export function ensureMoveSheetStemLoading(
   onDone: (result: MountMoveSheetLoadResult) => void,
 ): void {
   const key = stem.toLowerCase()
-  if (sheets.has(key) || loading.has(key)) {
+  if (sheets.has(key)) {
+    return
+  }
+  const synced = syncMoveSheetStemFromLoaderCache(stem, sheets)
+  if (synced != null) {
+    queueMicrotask(() => onDone(synced))
+    return
+  }
+  if (loading.has(key)) {
     return
   }
   loading.add(key)
   void loadMountMoveSheetByStem(stem).then((result) => {
     sheets.set(key, result.sheet)
     loading.delete(key)
-    onDone(result)
+    queueMicrotask(() => onDone(result))
   })
 }
 

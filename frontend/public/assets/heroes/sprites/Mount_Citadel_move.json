@@ -1,6 +1,6 @@
 {
   "frames": {
-    "Mount_Citadel_move_000": {
+    "Mount_Citadel_Move_000": {
       "frame": {
         "x": 0,
         "y": 0,
@@ -21,7 +21,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_001": {
+    "Mount_Citadel_Move_001": {
       "frame": {
         "x": 207,
         "y": 0,
@@ -42,7 +42,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_002": {
+    "Mount_Citadel_Move_002": {
       "frame": {
         "x": 414,
         "y": 0,
@@ -63,7 +63,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_003": {
+    "Mount_Citadel_Move_003": {
       "frame": {
         "x": 621,
         "y": 0,
@@ -84,7 +84,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_004": {
+    "Mount_Citadel_Move_004": {
       "frame": {
         "x": 828,
         "y": 0,
@@ -105,7 +105,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_005": {
+    "Mount_Citadel_Move_005": {
       "frame": {
         "x": 1035,
         "y": 0,
@@ -126,7 +126,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_006": {
+    "Mount_Citadel_Move_006": {
       "frame": {
         "x": 1242,
         "y": 0,
@@ -147,7 +147,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_007": {
+    "Mount_Citadel_Move_007": {
       "frame": {
         "x": 0,
         "y": 200,
@@ -168,7 +168,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_008": {
+    "Mount_Citadel_Move_008": {
       "frame": {
         "x": 207,
         "y": 200,
@@ -189,7 +189,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_009": {
+    "Mount_Citadel_Move_009": {
       "frame": {
         "x": 414,
         "y": 200,
@@ -210,7 +210,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_010": {
+    "Mount_Citadel_Move_010": {
       "frame": {
         "x": 621,
         "y": 200,
@@ -231,7 +231,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_011": {
+    "Mount_Citadel_Move_011": {
       "frame": {
         "x": 828,
         "y": 200,
@@ -252,7 +252,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_012": {
+    "Mount_Citadel_Move_012": {
       "frame": {
         "x": 1035,
         "y": 200,
@@ -273,7 +273,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_013": {
+    "Mount_Citadel_Move_013": {
       "frame": {
         "x": 1242,
         "y": 200,
@@ -294,7 +294,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_014": {
+    "Mount_Citadel_Move_014": {
       "frame": {
         "x": 0,
         "y": 400,
@@ -315,7 +315,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_015": {
+    "Mount_Citadel_Move_015": {
       "frame": {
         "x": 207,
         "y": 400,
@@ -336,7 +336,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_016": {
+    "Mount_Citadel_Move_016": {
       "frame": {
         "x": 414,
         "y": 400,
@@ -357,7 +357,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_017": {
+    "Mount_Citadel_Move_017": {
       "frame": {
         "x": 621,
         "y": 400,
@@ -378,7 +378,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_018": {
+    "Mount_Citadel_Move_018": {
       "frame": {
         "x": 828,
         "y": 400,
@@ -399,7 +399,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_019": {
+    "Mount_Citadel_Move_019": {
       "frame": {
         "x": 1035,
         "y": 400,
@@ -420,7 +420,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_020": {
+    "Mount_Citadel_Move_020": {
       "frame": {
         "x": 1242,
         "y": 400,
@@ -441,7 +441,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_021": {
+    "Mount_Citadel_Move_021": {
       "frame": {
         "x": 0,
         "y": 600,
@@ -462,7 +462,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_022": {
+    "Mount_Citadel_Move_022": {
       "frame": {
         "x": 207,
         "y": 600,
@@ -483,7 +483,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_023": {
+    "Mount_Citadel_Move_023": {
       "frame": {
         "x": 414,
         "y": 600,
@@ -504,7 +504,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_024": {
+    "Mount_Citadel_Move_024": {
       "frame": {
         "x": 621,
         "y": 600,
@@ -525,7 +525,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_025": {
+    "Mount_Citadel_Move_025": {
       "frame": {
         "x": 828,
         "y": 600,
@@ -546,7 +546,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_026": {
+    "Mount_Citadel_Move_026": {
       "frame": {
         "x": 1035,
         "y": 600,
@@ -567,7 +567,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_027": {
+    "Mount_Citadel_Move_027": {
       "frame": {
         "x": 1242,
         "y": 600,
@@ -588,7 +588,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_028": {
+    "Mount_Citadel_Move_028": {
       "frame": {
         "x": 0,
         "y": 800,
@@ -609,7 +609,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_029": {
+    "Mount_Citadel_Move_029": {
       "frame": {
         "x": 207,
         "y": 800,
@@ -630,7 +630,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_030": {
+    "Mount_Citadel_Move_030": {
       "frame": {
         "x": 414,
         "y": 800,
@@ -651,7 +651,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_031": {
+    "Mount_Citadel_Move_031": {
       "frame": {
         "x": 621,
         "y": 800,
@@ -672,7 +672,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_032": {
+    "Mount_Citadel_Move_032": {
       "frame": {
         "x": 828,
         "y": 800,
@@ -693,7 +693,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_033": {
+    "Mount_Citadel_Move_033": {
       "frame": {
         "x": 1035,
         "y": 800,
@@ -714,7 +714,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_034": {
+    "Mount_Citadel_Move_034": {
       "frame": {
         "x": 1242,
         "y": 800,
@@ -735,7 +735,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_035": {
+    "Mount_Citadel_Move_035": {
       "frame": {
         "x": 0,
         "y": 1000,
@@ -756,7 +756,7 @@
       },
       "duration": 59
     },
-    "Mount_Citadel_move_Stand": {
+    "Mount_Citadel_Move_Stand": {
       "frame": {
         "x": 207,
         "y": 1000,
@@ -780,7 +780,7 @@
   },
   "meta": {
     "app": "https://ludo.ai",
-    "image": "Mount_Citadel_move.png",
+    "image": "Mount_Citadel_Move.png",
     "format": "RGBA8888",
     "size": {
       "w": 1449,
