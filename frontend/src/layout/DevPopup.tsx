@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import type { DebugSections } from '../hex/debug'
-import type { WorldRenderStats } from '../hex/worldRenderChunks'
+import { getWorldRenderStats, type WorldRenderStats } from '../hex/worldRenderChunks'
 import { GameWindowModal } from './GameWindowModal'
 import { GameWindowOverlay } from './GameWindowOverlay'
 import type { LevelUpNotice } from '../session/xp'
@@ -11,7 +12,6 @@ type DevPopupProps = {
   open: boolean
   onClose: () => void
   sections: DebugSections
-  worldPerf?: WorldRenderStats | null
   onCopyDebug: () => void
   onSeeWorld?: () => void
   onStartFixedFight?: (kind: FixedFightKind) => void
@@ -32,6 +32,19 @@ type DevPopupProps = {
 }
 
 export function DevPopup(props: DevPopupProps) {
+  const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
+
+  useEffect(() => {
+    if (!props.open) {
+      setWorldPerf(null)
+      return
+    }
+    const refresh = () => setWorldPerf(getWorldRenderStats())
+    refresh()
+    const id = window.setInterval(refresh, 1000)
+    return () => window.clearInterval(id)
+  }, [props.open])
+
   if (!props.open) {
     return null
   }
@@ -45,7 +58,7 @@ export function DevPopup(props: DevPopupProps) {
         <h1 id="dev-popup-title">Dev</h1>
         <DevToolsPanel
           sections={props.sections}
-          worldPerf={props.worldPerf}
+          worldPerf={worldPerf}
           onCopyDebug={props.onCopyDebug}
           onSeeWorld={props.onSeeWorld}
           onClose={props.onClose}

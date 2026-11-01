@@ -87,7 +87,6 @@ import {
 } from './resources'
 import {
   loadHexTerrainTextures,
-  loadTextureUrl,
 } from './terrainTextures'
 import {
   addPropSprite,
@@ -157,6 +156,11 @@ import {
   noteAdvancedPictureBorrow,
   unitStaticArtCandidates,
 } from '../town/unitArtFallback'
+import {
+  markUnitPictureNone,
+  resolveUnitPictureTexture,
+  unitPictureResolved,
+} from '../town/unitPictureTexture'
 import {
   activePlayer,
   claimMine,
@@ -1483,8 +1487,6 @@ export function HexMap({
         }
       >()
       const mobBorrowedArt = new Map<string, boolean>()
-      const unitArtByUrl = new Map<string, Texture | null>()
-      const unitArtLoading = new Set<string>()
       world.addChild(heroLayer)
       instance.stage.addChild(world)
 
@@ -3188,36 +3190,39 @@ export function HexMap({
                     (url) => ({ url, glow: false as const }),
                   )
                 : []
-          const artUrl = artCandidates[0]?.url ?? null
           let texture: Texture | null = null
-          if (artUrl) {
-            if (unitArtByUrl.has(artUrl)) {
-              texture = unitArtByUrl.get(artUrl) ?? null
-            } else if (!unitArtLoading.has(artUrl)) {
-              unitArtLoading.add(artUrl)
+          if (leadUnit) {
+            if (artCandidates.length === 0) {
+              markUnitPictureNone(leadUnit.id)
+            } else {
+            const resolved = unitPictureResolved(leadUnit.id)
+            if (resolved?.kind === 'texture') {
+              texture = resolved.texture
+              if (resolved.borrowedGlow) {
+                mobBorrowedArt.set(mob.id, true)
+              }
+            } else if (resolved?.kind !== 'none') {
               const mobId = mob.id
               const borrowUnit = leadUnit
-              void (async () => {
-                for (const candidate of artCandidates) {
-                  const loaded = await loadTextureUrl(candidate.url)
-                  if (loaded) {
-                    unitArtByUrl.set(candidate.url, loaded)
-                    unitArtByUrl.set(artUrl, loaded)
-                    if (candidate.glow) {
+              const catalogSnap = catalog
+              void resolveUnitPictureTexture(leadUnit.id, artCandidates).then(
+                (result) => {
+                  if (cancelled) {
+                    return
+                  }
+                  if (result.kind === 'texture') {
+                    if (result.borrowedGlow) {
                       mobBorrowedArt.set(mobId, true)
-                      if (borrowUnit && catalog) {
+                      if (borrowUnit && catalogSnap) {
                         noteAdvancedPictureBorrow(borrowUnit.id)
-                        flushAdvancedBorrowDevLog(catalog, borrowUnit)
+                        flushAdvancedBorrowDevLog(catalogSnap, borrowUnit)
                       }
                     }
-                    break
+                    placeMobMarkers()
                   }
-                }
-                unitArtLoading.delete(artUrl)
-                if (!cancelled) {
-                  placeMobMarkers()
-                }
-              })()
+                },
+              )
+            }
             }
           }
           let entry = mobMarkers.get(mob.id)

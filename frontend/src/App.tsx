@@ -23,7 +23,6 @@ import { SettingsScreen } from './settings/SettingsScreen'
 import { useGameKeybindHandler } from './input/useGameKeybindHandler'
 import { tooltipWithKey } from './input/keybindEngine'
 import { loadPlayerSettings } from './settings/playerSettings'
-import { getWorldRenderStats, type WorldRenderStats } from './hex/worldRenderChunks'
 import { formatMovementPoints, HERO_MARKER_LABEL } from './hex/hero'
 import {
   DEFAULT_HEX_SCALE,
@@ -328,7 +327,6 @@ function App() {
   const [wallGapsDebug, setWallGapsDebug] = useState(false)
   const [roadPlanDebug, setRoadPlanDebug] = useState(false)
   const [townHexNumbers, setTownHexNumbers] = useState(false)
-  const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
   const aiRanKeyRef = useRef('')
   const flightLegRunningRef = useRef(false)
   const blockHeroMovementAnimationRef = useRef(false)
@@ -337,13 +335,6 @@ function App() {
 
   useEffect(() => {
     installAudioUnlock()
-  }, [])
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setWorldPerf(getWorldRenderStats())
-    }, 400)
-    return () => window.clearInterval(id)
   }, [])
 
   const onTownWelcome = useCallback((townName: string, townId: string) => {
@@ -2373,7 +2364,6 @@ function App() {
         }}
         aiTraces={aiTraces}
         sections={debugSections}
-        worldPerf={worldPerf}
         onCopyDebug={copyDebug}
         onSeeWorld={() => openMapView(true)}
         onStartFixedFight={(kind: FixedFightKind) => {

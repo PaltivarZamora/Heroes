@@ -12,6 +12,12 @@ import {
   noteAdvancedPictureBorrow,
   unitStaticArtCandidates,
 } from './unitArtFallback'
+import {
+  isUnitPictureUrlKnownFailed,
+  markUnitPictureNone,
+  markUnitPictureUrlFailed,
+  unitPictureResolved,
+} from './unitPictureTexture'
 import { unitStaticPictureUrls } from './slotArt'
 
 export type UnitStackView = {
@@ -63,21 +69,28 @@ export function UnitStaticArtImg({
 }) {
   const unit = unitId != null ? unitById(catalog ?? null, unitId) : null
   const candidates = useMemo(() => {
+    let raw: Array<{ url: string; glow: boolean }> = []
     if (unit && catalog) {
-      return unitStaticArtCandidates(catalog, unit)
-    }
-    if (filename) {
-      return unitStaticPictureUrls(filename, townName).map((url) => ({
+      raw = unitStaticArtCandidates(catalog, unit)
+    } else if (filename) {
+      raw = unitStaticPictureUrls(filename, townName).map((url) => ({
         url,
         glow: false as const,
       }))
     }
-    return []
+    return raw.filter((row) => !isUnitPictureUrlKnownFailed(row.url))
   }, [catalog, unit, filename, townName])
   const [index, setIndex] = useState(0)
   useEffect(() => {
     setIndex(0)
   }, [filename, townName, unitId, catalog])
+  if (unitId != null && unitPictureResolved(unitId)?.kind === 'none') {
+    return (
+      <span className="town-building-slot-filename unit-art-placeholder">
+        {filename || 'Unknown'}
+      </span>
+    )
+  }
   if (!filename || candidates.length === 0) {
     return (
       <span className="town-building-slot-filename unit-art-placeholder">
@@ -86,6 +99,9 @@ export function UnitStaticArtImg({
     )
   }
   if (index >= candidates.length) {
+    if (unitId != null) {
+      markUnitPictureNone(unitId)
+    }
     return (
       <span className="town-building-slot-filename unit-art-placeholder">
         {filename}
@@ -110,7 +126,16 @@ export function UnitStaticArtImg({
           flushAdvancedBorrowDevLog(catalog, unit)
         }
       }}
-      onError={() => setIndex((i) => i + 1)}
+      onError={() => {
+        markUnitPictureUrlFailed(candidate.url)
+        setIndex((i) => {
+          const next = i + 1
+          if (unitId != null && next >= candidates.length) {
+            markUnitPictureNone(unitId)
+          }
+          return next
+        })
+      }}
     />
   )
 }
