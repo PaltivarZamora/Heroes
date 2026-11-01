@@ -1,4 +1,5 @@
-import { Assets, Texture } from 'pixi.js'
+import type { Texture } from 'pixi.js'
+import { loadTextureUrl } from './terrainTextures'
 
 const featureTextureCache = new Map<string, Texture | null>()
 const featureLoadInflight = new Map<string, Promise<Texture | null>>()
@@ -36,22 +37,7 @@ function featureUrls(fileName: string, variant: number): string[] {
 }
 
 async function tryLoad(url: string): Promise<Texture | null> {
-  try {
-    // Avoid HEAD-only checks: Vite SPA fallback returns 200 text/html for
-    // missing files, which looks "ok" until we inspect content-type / decode.
-    const response = await fetch(url)
-    const contentType = response.headers.get('content-type') ?? ''
-    if (!response.ok || !contentType.toLowerCase().startsWith('image/')) {
-      return null
-    }
-    const texture = await Assets.load<Texture>(url)
-    if (texture.width < 1 || texture.height < 1) {
-      return null
-    }
-    return texture
-  } catch {
-    return null
-  }
+  return loadTextureUrl(url)
 }
 
 /**

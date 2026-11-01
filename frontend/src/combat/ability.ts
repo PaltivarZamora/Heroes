@@ -3289,6 +3289,7 @@ const hitOne = (target: CombatStack, raw: number) => {
           { ...battle, stacks, tombstones },
           aimHex.q,
           aimHex.r,
+          catalog,
         )
         if (
           tomb &&
@@ -3324,11 +3325,14 @@ const hitOne = (target: CombatStack, raw: number) => {
               lines.push(
                 `${ability.name}: ${stackName(catalog, raised)} revived +${revived}.`,
               )
-              for (const hex of tombstoneFootprintHexes({
-                ...tomb,
-                q: anchor.q,
-                r: anchor.r,
-              })) {
+              for (const hex of tombstoneFootprintHexes(
+                {
+                  ...tomb,
+                  q: anchor.q,
+                  r: anchor.r,
+                },
+                catalog,
+              )) {
                 buffKeys.push(occupancyKey(hex.q, hex.r))
               }
             }

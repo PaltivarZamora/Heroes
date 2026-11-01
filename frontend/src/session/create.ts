@@ -17,10 +17,8 @@ import {
   visionRange,
   type ReferenceCatalog,
 } from '../town/catalog'
-import {
-  defaultGameConfig,
-  type GameConfig,
-} from '../options/gameConfig'
+import { DEFAULT_HEX_SCALE } from '../hex/hexScale'
+import { type GameConfig } from '../options/gameConfig'
 import {
   mapObjectAbilityIds,
   mapObjectChestLevel,
@@ -83,9 +81,44 @@ export function startingResources(
   return resources
 }
 
-/** Bootstrap / F5 refresh — same map_config defaults as the New Game screen. */
+/** Empty session before New Game / Load — no map fetch, no players. */
+export function createMenuIdleSession(): GameSession {
+  return {
+    game: {
+      id: GAME_ID,
+      name: '',
+      seed: 0,
+      calendar: startCalendar(),
+      settings: {
+        player_count: 0,
+        map_size: '',
+        map_width: 0,
+        map_height: 0,
+        victory_condition: 'standard',
+        difficulty: '1',
+        game_type: 'single',
+        hero_type_ids: [],
+        hex_size: DEFAULT_HEX_SCALE,
+        move_mode: 'hero_speed',
+      },
+    },
+    players: [],
+    activePlayerIndex: 0,
+    towns: [],
+    building_states: [],
+    heroes: [],
+    hero_progress: {},
+    units: [],
+    nodes: [],
+    features: [],
+    boats: [],
+    mobs: [],
+    next_item_no: 1,
+  }
+}
+
 export function createInitialSession(): GameSession {
-  return createSessionFromConfig(defaultGameConfig(getCachedCatalog()))
+  return createMenuIdleSession()
 }
 
 export function createSessionFromConfig(config: GameConfig): GameSession {

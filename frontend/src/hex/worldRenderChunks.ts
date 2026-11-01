@@ -945,6 +945,19 @@ export class WorldChunkRenderer {
 
 /** Module-level latest stats for the Debug panel (updated by HexMap ticker). */
 let latestStats: WorldRenderStats | null = null
+let devRenderStatsSampling = false
+
+/** When false, HexMap skips the expensive stats() display-tree walk. */
+export function setDevRenderStatsSampling(enabled: boolean): void {
+  devRenderStatsSampling = enabled
+  if (!enabled) {
+    latestStats = null
+  }
+}
+
+export function devRenderStatsSamplingEnabled(): boolean {
+  return devRenderStatsSampling
+}
 
 export function setWorldRenderStats(stats: WorldRenderStats | null) {
   latestStats = stats

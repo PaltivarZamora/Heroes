@@ -136,7 +136,7 @@ function openAdjacentHex(
     battle.stacks,
     catalog,
     undefined,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = (q: number, r: number) => {

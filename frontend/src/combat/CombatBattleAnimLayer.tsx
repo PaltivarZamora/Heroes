@@ -4,7 +4,7 @@ import {
   battleIdleSettings,
   type BattleAnimSettings,
 } from './battleAnimConfig'
-import { combatBattleUnitSpriteScale } from './combatStackArtBox'
+import { combatBattleUnitSpriteScale, stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
 import {
   battleUnitSheetForUnit,
   flipBattleUnitForSide,
@@ -12,7 +12,6 @@ import {
 } from './battleUnitSheet'
 import {
   combatUnitDrawFootPosition,
-  isDieCorpseVisual,
   pickVisualFrame,
   progressForTimedAnim,
   travelFlipXForSlide,
@@ -23,19 +22,28 @@ import { CombatBattleProjectile, CombatBattleUnitArt } from './CombatBattleUnitA
 import type { CombatBattle } from './battle'
 import { isHeroStack } from './battle'
 import type { ReferenceCatalog } from '../town/catalog'
-import { unitById, unitFootprint } from '../town/catalog'
+import { unitById } from '../town/catalog'
 import { combatStackFootprint, moveKindForUnit } from './movement'
 import { proceduralIdleTransformCss } from './proceduralBattleIdle'
 import { proceduralHitTransformCss, proceduralHitTransformOrigin } from './proceduralBattleHit'
 import { stackShowsBattleSprites } from './combatUnitAnimPlayback'
 import { advFallbackGlow } from '../town/unitArtFallback'
 import {
+  dieFallbackCorpseBodyVisible,
   dieFallbackEffectScale,
   dieFallbackFxFrame,
   dieFallbackFxOpacity,
   type DieFallbackEffectSheet,
 } from './battleDieFallbackEffect'
-import { stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
+import { CombatBattleStaticCorpseBody } from './CombatBattleStaticCorpseBody'
+import {
+  corpseDieFrameScale,
+  corpseUsesOwnDieSheetHold,
+  pickCorpseDieFrame,
+  tombCorpseArtFootprintCode,
+} from './combatCorpsePaint'
+import type { FootprintCode } from './footprint'
+import type { CombatSide } from './battle'
 
 type HexAnchor = { q: number; r: number; x: number; y: number }
 
@@ -76,6 +84,108 @@ function sheetSetForUnit(
   return unit ? battleUnitSheetForUnit(catalog, unit) : null
 }
 
+function corpseArtFootprintForTomb(
+  tomb: import('./battle').CombatTombstone,
+  catalog: ReferenceCatalog,
+): FootprintCode {
+  return tombCorpseArtFootprintCode(tomb, catalog)
+}
+
+function paintCorpseNode(
+  id: string,
+  unitId: number,
+  q: number,
+  r: number,
+  side: CombatSide,
+  footprint: FootprintCode,
+  visual: StackBattleVisual | undefined,
+  catalog: ReferenceCatalog,
+  unitSheets: Map<number, BattleUnitSheetSet | null>,
+  field: LayerProps['field'],
+  settings: BattleAnimSettings,
+  now: number,
+): ReactNode | null {
+  const anchor = anchorAt(field.anchors, q, r)
+  if (!anchor) {
+    return null
+  }
+  const drawFoot = combatUnitDrawFootPosition(
+    { x: anchor.x, y: anchor.y },
+    field.hexPx,
+    settings.footOffsetPct,
+    footprint,
+    side,
+    visual,
+    now,
+  )
+  const set = sheetSetForUnit(unitId, catalog, unitSheets)
+  const flipX = resolveBattleUnitFlipX(
+    side,
+    visual ?? { kind: 'idle', startedMs: 0, frameOffset: 0 },
+  )
+
+  if (corpseUsesOwnDieSheetHold(visual, set) && set && visual) {
+    const die = set.sheets.Die
+    const picked = pickCorpseDieFrame(set, visual, settings, now)
+    if (!picked || !die) {
+      return null
+    }
+    const scale = corpseDieFrameScale(
+      field.hexPx,
+      footprint,
+      side,
+      die.restHeight,
+      picked.frame.w,
+      settings,
+    )
+    const dieAnimSheet = set.sheets[picked.sheetKind]
+    const dieGlow = dieAnimSheet?.borrowedGlow
+      ? advFallbackGlow(catalog)
+      : null
+    return (
+      <CombatBattleUnitArt
+        key={`die:${id}`}
+        frame={picked.frame}
+        scale={scale}
+        footX={drawFoot.footX}
+        footY={drawFoot.footY}
+        flipX={flipX}
+        borrowGlow={
+          dieGlow
+            ? { color: dieGlow.color, px: Math.max(0.5, dieGlow.px * scale) }
+            : null
+        }
+      />
+    )
+  }
+
+  const schedule = visual?.dieFallbackFx
+  if (schedule && !dieFallbackCorpseBodyVisible(schedule, now)) {
+    return null
+  }
+
+  const tombUnit = unitById(catalog, unitId)
+  if (!tombUnit) {
+    return null
+  }
+  const unitName = tombUnit.name?.trim() || `unit ${unitId}`
+  return (
+    <CombatBattleStaticCorpseBody
+      key={`corpse:${id}`}
+      unitId={unitId}
+      unitDisplayName={unitName}
+      catalog={catalog}
+      hexPx={field.hexPx}
+      footprint={footprint}
+      side={side}
+      settings={settings}
+      footX={drawFoot.footX}
+      footY={drawFoot.footY}
+      flipX={flipX}
+    />
+  )
+}
+
 /** Die clips and held corpses — always below living stacks. */
 export function CombatBattleCorpseLayer({
   battle,
@@ -89,63 +199,72 @@ export function CombatBattleCorpseLayer({
   const settings = settingsProp ?? battleAnimSettings(catalog)
   const now = paintNowMs
   const nodes: ReactNode[] = []
-  for (const tomb of battle.tombstones ?? []) {
-    const visual = stackVisuals[tomb.id]
-    if (!isDieCorpseVisual(visual)) {
-      continue
+  const painted = new Set<string>()
+
+  const pushCorpse = (
+    id: string,
+    unitId: number,
+    q: number,
+    r: number,
+    side: CombatSide,
+    footprint: FootprintCode,
+    visual: StackBattleVisual | undefined,
+  ) => {
+    if (painted.has(id)) {
+      return
     }
-    const set = sheetSetForUnit(tomb.unitId, catalog, unitSheets)
-    const die = set?.sheets.Die
-    if (!set || !die) {
-      continue
-    }
-    const anchor = anchorAt(field.anchors, tomb.q, tomb.r)
-    if (!anchor) {
-      continue
-    }
-    const tombUnit = unitById(catalog, tomb.unitId)
-    const footprint = unitFootprint(tombUnit)
-    const drawFoot = combatUnitDrawFootPosition(
-      anchor,
-      field.hexPx,
-      settings.footOffsetPct,
+    const node = paintCorpseNode(
+      id,
+      unitId,
+      q,
+      r,
+      side,
       footprint,
-      tomb.side,
       visual,
+      catalog,
+      unitSheets,
+      field,
+      settings,
       now,
     )
-    const picked = pickVisualFrame(set, visual!, settings, now)
-    if (!picked) {
-      continue
+    if (node) {
+      painted.add(id)
+      nodes.push(node)
     }
-    const scale = combatBattleUnitSpriteScale(
-      field.hexPx,
-      footprint,
+  }
+
+  for (const tomb of battle.tombstones ?? []) {
+    const visual = stackVisuals[tomb.id]
+    pushCorpse(
+      tomb.id,
+      tomb.unitId,
+      tomb.q,
+      tomb.r,
       tomb.side,
-      die.restHeight,
-      picked.frame.w,
-      settings,
-    )
-    const dieAnimSheet = set.sheets[picked.sheetKind]
-    const dieGlow = dieAnimSheet?.borrowedGlow
-      ? advFallbackGlow(catalog)
-      : null
-    nodes.push(
-      <CombatBattleUnitArt
-        key={`die:${tomb.id}`}
-        frame={picked.frame}
-        scale={scale}
-        footX={drawFoot.footX}
-        footY={drawFoot.footY}
-        flipX={resolveBattleUnitFlipX(tomb.side, visual!)}
-        borrowGlow={
-          dieGlow
-            ? { color: dieGlow.color, px: Math.max(0.5, dieGlow.px * scale) }
-            : null
-        }
-      />,
+      corpseArtFootprintForTomb(tomb, catalog),
+      visual,
     )
   }
+
+  for (const stack of battle.stacks) {
+    if (isHeroStack(stack) || stack.qty > 0) {
+      continue
+    }
+    const visual = stackVisuals[stack.id]
+    if (painted.has(stack.id)) {
+      continue
+    }
+    pushCorpse(
+      stack.id,
+      stack.unitId,
+      stack.q,
+      stack.r,
+      stack.side,
+      combatStackFootprint(stack, catalog),
+      visual,
+    )
+  }
+
   return (
     <div className="combat-battle-corpse-layer" aria-hidden="true">
       {nodes}
@@ -178,6 +297,7 @@ export function CombatBattleAnimLayer({
         catalog,
         unitSheets,
         stackVisualEarly,
+        now,
       )
     ) {
       continue
@@ -328,7 +448,7 @@ export function CombatBattleDieFxLayer({
     q: number,
     r: number,
     side: 'atk' | 'def',
-    footprint: import('./footprint').FootprintCode,
+    footprint: FootprintCode,
   ) => {
     if (seen.has(id)) {
       return
@@ -387,13 +507,12 @@ export function CombatBattleDieFxLayer({
     )
   }
   for (const tomb of battle.tombstones ?? []) {
-    const unit = unitById(catalog, tomb.unitId)
     pushFx(
       tomb.id,
       tomb.q,
       tomb.r,
       tomb.side,
-      (tomb.footprint ?? unitFootprint(unit)) as import('./footprint').FootprintCode,
+      tombCorpseArtFootprintCode(tomb, catalog),
     )
   }
 

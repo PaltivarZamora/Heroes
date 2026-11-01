@@ -49,6 +49,11 @@ import {
 } from './battleStartPlacement'
 import { seedBattlePropsFromWorld } from './battleProps'
 import {
+  paintCombatBattlefieldProps,
+  resetCombatBattlefieldPropPaintLog,
+  type CombatBattlefieldPropPaintCtx,
+} from './battlefieldPropsPaint'
+import {
   addChunkMaskedTerrain,
   addMaskedTerrainHex,
   addMaskedTerrainWedge,
@@ -56,7 +61,6 @@ import {
   loadHexTerrainTextures,
   loadTextureUrl,
 } from '../hex/terrainTextures'
-import { addFootprintPropSprite, loadPropTexture } from '../hex/propTextures'
 import { parseCssHexColor, wedgesForHex } from '../hex/terrainTransition'
 import { terrainFillColor } from '../hex/world'
 import { setNavalMaskDebugState } from './navalMaskDebugBridge'
@@ -74,7 +78,7 @@ import {
   flushBattleSheetLoadFailuresToLog,
   reportBattleUnitTypeStatic,
   resetBattleUnitSheetSessionWarnings,
-  battleUnitDieSheetDrawable,
+  unitBattleSpriteStem,
   type BattleUnitSheetSet,
 } from './battleUnitSheet'
 import { resetBattleUnitSoundWarnings } from './battleUnitSound'
@@ -82,6 +86,7 @@ import {
   ensureAdvFallbackGlowWarning,
   resetAdvancedBorrowSessionLog,
 } from '../town/unitArtFallback'
+import { resetUnitCorpsePictureSessionCache } from '../town/unitCorpsePicture'
 import { cutMountMoveSound } from '../audio/heroMountMoveSound'
 import {
   CombatBattleAnimLayer,
@@ -117,7 +122,6 @@ import {
   idleVisualsForLivingStacks,
   mergeIdleSeedVisuals,
   combatUnitDrawFootPosition,
-  isDieCorpseVisual,
   type CombatProjectileVisual,
   type StackBattleVisual,
 } from './combatUnitAnimVisual'
@@ -147,7 +151,7 @@ import {
 import { setCombatKeyBridge } from '../input/combatKeyBridge'
 import { heroPortraitUrl, terrainArtUrl, unitPortraitUrl } from '../town/slotArt'
 import {
-  TOMBSTONE_ART,
+  tombFootprintCode,
   tombstoneAt,
   tombstoneName,
   tombstoneOccupancyBodies,
@@ -179,10 +183,6 @@ import {
 import { stackArtBox } from './combatStackArtBox'
 import {
   footprintBottomRow,
-  footprintBottomRowCentered,
-  footprintExtent,
-  footprintHexesCentered,
-  parseFootprint,
 } from './footprint'
 import {
   canCombatStep,
@@ -607,14 +607,6 @@ function CombatStackArt({
   )
 }
 
-function TombstoneArt({ townName }: { townName?: string | null }) {
-  return (
-    <div className="combat-stack-static-art">
-      <UnitStaticArtImg filename={TOMBSTONE_ART} townName={townName} />
-    </div>
-  )
-}
-
 function GroundEffectArt({
   filename,
   label,
@@ -785,6 +777,7 @@ export function CombatScreen({
       ? townTypeName(catalog, siegeTown.town_type_id)
       : undefined
   const canvasHostRef = useRef<HTMLDivElement>(null)
+  const battlePropPaintCtxRef = useRef<CombatBattlefieldPropPaintCtx | null>(null)
   const reachApiRef = useRef<{
     draw: (gold: string[], red?: string[]) => void
   } | null>(null)
@@ -1411,7 +1404,7 @@ export function CombatScreen({
       const resolveLeg = (from: { q: number; r: number }, to: { q: number; r: number }, budget: number) => {
         const unit = unitById(catalog, stack.unitId)
         const kind = moveKindForUnit(unit, catalog)
-        const tombs = tombstoneOccupancyBodies(battle.tombstones)
+        const tombs = tombstoneOccupancyBodies(battle.tombstones, catalog)
         // Blink: single teleport hop — only from the unit's current hex.
         if (unitAttackShape(unit).blinkMovement === true) {
           if (from.q !== stack.q || from.r !== stack.r) {
@@ -2637,6 +2630,8 @@ export function CombatScreen({
     resetBattleUnitSoundWarnings()
     resetDieFallbackSessionWarnings()
     resetAdvancedBorrowSessionLog()
+    resetUnitCorpsePictureSessionCache()
+    resetCombatBattlefieldPropPaintLog()
     setDieFallbackEffects(new Map())
     let cancelled = false
     const unitIds = [
@@ -2664,7 +2659,7 @@ export function CombatScreen({
       updateSession((current) => flushBattleSheetLoadFailuresToLog(current))
       for (const id of unitIds) {
         const unit = unitById(catalog, id)
-        const stem = unit?.image_path?.replace(/\.(png|webp|jpe?g)$/i, '') ?? ''
+        const stem = unit ? unitBattleSpriteStem(unit) : null
         if (unit && !loaded.get(id) && stem) {
           updateSession((current) =>
             reportBattleUnitTypeStatic(current, id, stem),
@@ -4923,103 +4918,27 @@ export function CombatScreen({
         }
       }
 
-      await Promise.all(
-        tiles.map(async (tile) => {
-          if (!tile.propFile) {
-            return
-          }
-          const hex = hexByKey.get(hexKey(tile.q, tile.r))
-          if (!hex) {
-            return
-          }
-          const texture = await loadPropTexture(tile.propFile, tile.propVariant)
-          if (!texture || cancelled) {
-            return
-          }
-          const code = parseFootprint(tile.propFootprint ?? '1x1')
-          const ext = footprintExtent(code)
-          // Horizontal prop footprints (e.g. gangplank 3x1): resolve by offset
-          // col/row so the span matches the deck–water–deck row on the grid.
-          let cover: Array<{ q: number; r: number }>
-          let bottoms: Array<{ q: number; r: number }>
-          if (
-            tile.col != null &&
-            tile.row != null &&
-            ext.rows === 1 &&
-            ext.cols > 1
-          ) {
-            const half = Math.floor(ext.cols / 2)
-            cover = []
-            for (let dc = -half; dc <= half; dc += 1) {
-              const cell = byOffset.get(`${tile.col + dc},${tile.row}`)
-              if (cell) {
-                cover.push({ q: cell.q, r: cell.r })
-              }
-            }
-            bottoms = cover
-          } else {
-            cover = footprintHexesCentered({ q: tile.q, r: tile.r }, code)
-            bottoms = footprintBottomRowCentered(
-              { q: tile.q, r: tile.r },
-              code,
-            )
-          }
-          const centers: Array<{ x: number; y: number }> = []
-          const bottomCenters: Array<{ x: number; y: number }> = []
-          for (const h of cover) {
-            const cell = hexByKey.get(hexKey(h.q, h.r))
-            if (!cell) {
-              continue
-            }
-            let cx = 0
-            let cy = 0
-            for (const c of cell.corners) {
-              cx += c.x + offsetX
-              cy += c.y + offsetY
-            }
-            centers.push({
-              x: cx / cell.corners.length,
-              y: cy / cell.corners.length,
-            })
-          }
-          for (const h of bottoms) {
-            const cell = hexByKey.get(hexKey(h.q, h.r))
-            if (!cell) {
-              continue
-            }
-            let cx = 0
-            let cy = 0
-            for (const c of cell.corners) {
-              cx += c.x + offsetX
-              cy += c.y + offsetY
-            }
-            bottomCenters.push({
-              x: cx / cell.corners.length,
-              y: cy / cell.corners.length,
-            })
-          }
-          if (centers.length === 0) {
-            let cx = 0
-            let cy = 0
-            for (const c of hex.corners) {
-              cx += c.x + offsetX
-              cy += c.y + offsetY
-            }
-            centers.push({
-              x: cx / hex.corners.length,
-              y: cy / hex.corners.length,
-            })
-          }
-          addFootprintPropSprite(
-            propLayer,
-            texture,
-            centers,
-            bottomCenters.length > 0 ? bottomCenters : centers,
-            hex.width,
-            hex.height,
-          )
-        }),
+      await paintCombatBattlefieldProps(
+        {
+          propLayer,
+          hexByKey,
+          byOffset,
+          offsetX,
+          offsetY,
+          hexWidth: grid.hexPrototype.width,
+          hexHeight: grid.hexPrototype.height,
+        },
+        tiles,
       )
+      battlePropPaintCtxRef.current = {
+        propLayer,
+        hexByKey,
+        byOffset,
+        offsetX,
+        offsetY,
+        hexWidth: grid.hexPrototype.width,
+        hexHeight: grid.hexPrototype.height,
+      }
       if (cancelled) {
         releaseCombatPixiApp(instance)
         return
@@ -5339,7 +5258,7 @@ export function CombatScreen({
             onHoverRef.current(null)
             return
           }
-          const tomb = tombstoneAt(currentBattle, hex.q, hex.r)
+          const tomb = tombstoneAt(currentBattle, hex.q, hex.r, currentCatalog)
           onHoverRef.current({
             icon: aoeAim ? 'aoe' : 'magic',
             q: hex.q,
@@ -5365,7 +5284,7 @@ export function CombatScreen({
         ) {
           drawReach([])
           setInspectHoverAt(currentBattle, currentCatalog, hex)
-          const tomb = tombstoneAt(currentBattle, hex.q, hex.r)
+          const tomb = tombstoneAt(currentBattle, hex.q, hex.r, currentCatalog)
           const tombKey = tomb
             ? `tomb:${tomb.id}:${hex.q},${hex.r}`
             : `idle:${hex.q},${hex.r}`
@@ -5491,7 +5410,7 @@ export function CombatScreen({
           )
           return
         }
-        const tomb = tombstoneAt(currentBattle, hex.q, hex.r)
+        const tomb = tombstoneAt(currentBattle, hex.q, hex.r, currentCatalog)
         if (tomb) {
           onHoverRef.current({
             icon: 'invalid',
@@ -5603,6 +5522,7 @@ export function CombatScreen({
       navalMaskApiRef.current = null
       activeApiRef.current = null
       targetApiRef.current = null
+      battlePropPaintCtxRef.current = null
       fieldRef.current = null
       if (app) {
         releaseCombatPixiApp(app)
@@ -5610,6 +5530,23 @@ export function CombatScreen({
       canvasHost.replaceChildren()
     }
   }, [attackerHeroId, defenderHeroId, siegeTownId, defenderMobId, navalLayout, catalog])
+
+  useEffect(() => {
+    const ctx = battlePropPaintCtxRef.current
+    const tiles = field?.tiles
+    if (!ctx || !tiles) {
+      return
+    }
+    let cancelled = false
+    void paintCombatBattlefieldProps(ctx, tiles).then(() => {
+      if (cancelled) {
+        return
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [field?.tiles, field?.battleStarts])
 
   useEffect(() => {
     navalMaskApiRef.current?.setVisible(navalMaskDebug)
@@ -5853,26 +5790,19 @@ export function CombatScreen({
                     <>
                       {renderZones('below_units')}
                       {(viewBattle.tombstones ?? []).map((tomb) => {
+                  if (!catalog) {
+                    return null
+                  }
                   const pos = anchorAt(field.anchors, tomb.q, tomb.r)
                   if (!pos) {
                     return null
                   }
-                  const box = stackArtBox(pos, field.hexPx, '1x1', tomb.side)
-                  const dieVisual = stackBattleVisuals[tomb.id]
-                  const dieSheet = unitBattleSheets.get(tomb.unitId)?.sheets.Die
-                  const dieCorpseVisible =
-                    isDieCorpseVisual(dieVisual) &&
-                    battleUnitDieSheetDrawable(dieSheet)
-                  const tombUnit = unitById(catalog, tomb.unitId)
-                  const tombTown = townNameForUnit(catalog, tombUnit)
+                  const tombFp = tombFootprintCode(tomb, catalog)
+                  const box = stackArtBox(pos, field.hexPx, tombFp, tomb.side)
                   return (
                     <div
                       key={`tomb:${tomb.id}`}
-                      className={
-                        dieCorpseVisible
-                          ? 'combat-stack combat-stack-on-hex combat-tombstone combat-tombstone-die-corpse'
-                          : 'combat-stack combat-stack-on-hex combat-tombstone'
-                      }
+                      className="combat-stack combat-stack-on-hex combat-tombstone combat-tombstone-die-corpse"
                       data-tombstone={tomb.id}
                       data-side={tomb.side}
                       style={{
@@ -5880,11 +5810,9 @@ export function CombatScreen({
                         height: box.height,
                         left: box.left,
                         top: box.top,
+                        ['--combat-tombstone-hex' as string]: `${field.hexPx}px`,
                       }}
                     >
-                      {!dieCorpseVisible ? (
-                        <TombstoneArt townName={tombTown} />
-                      ) : null}
                     </div>
                   )
                       })}
@@ -5963,6 +5891,7 @@ export function CombatScreen({
                       catalog,
                       unitBattleSheets,
                       stackVisual,
+                      paintNow,
                     )
                   const hideFootprintBox =
                     catalog != null &&

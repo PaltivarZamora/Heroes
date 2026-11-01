@@ -49,6 +49,8 @@ export type StackBattleVisual = {
   proceduralHit?: ProceduralHitMotion
   /** Shared die FX when the unit has no Die sheet. */
   dieFallbackFx?: DieFallbackFxSchedule
+  /** Static _Dead.png corpse after die fallback (or tomb without Die sheet). */
+  corpseBody?: boolean
 }
 
 export type CombatProjectileVisual = {

@@ -1,6 +1,7 @@
 import type { CombatSide } from './battle'
 import { footprintExtent, type FootprintCode } from './footprint'
 import type { BattleAnimSettings } from './battleAnimConfig'
+import { CORPSE_BODY_REST_HEIGHT_PX } from '../town/unitCorpsePicture'
 
 export type StackArtBox = {
   width: number
@@ -76,4 +77,20 @@ export function combatBattleUnitSpriteScale(
     }
   }
   return scale
+}
+
+/** Corpse still scale: target rest height ÷ 200 px art; no width cap. */
+export function combatCorpseBodySpriteScale(
+  hexPx: number,
+  code: FootprintCode,
+  side: CombatSide,
+  settings: BattleAnimSettings,
+): number {
+  const box = stackArtBox({ x: 0, y: hexPx }, hexPx, code, side)
+  const targetRest = combatBattleUnitTargetRestHeight(
+    box.height,
+    hexPx,
+    settings.spriteScalePct,
+  )
+  return targetRest / CORPSE_BODY_REST_HEIGHT_PX
 }

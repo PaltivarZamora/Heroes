@@ -18,11 +18,12 @@ import {
 } from './hex/debug'
 import { MainMenu, type MainMenuFlow } from './layout/MainMenu'
 import { DevPopup } from './layout/DevPopup'
+import { DevFpsOverlay } from './layout/devFpsOverlay'
 import { setDevPopupKeybindOpen } from './layout/devKeybindBridge'
 import { SettingsScreen } from './settings/SettingsScreen'
 import { useGameKeybindHandler } from './input/useGameKeybindHandler'
 import { tooltipWithKey } from './input/keybindEngine'
-import { loadPlayerSettings } from './settings/playerSettings'
+import { loadPlayerSettings, devToolsEnabled } from './settings/playerSettings'
 import { formatMovementPoints, HERO_MARKER_LABEL } from './hex/hero'
 import {
   DEFAULT_HEX_SCALE,
@@ -149,9 +150,6 @@ import {
   GAME_WINDOW_Y,
 } from './layout/stageConstants'
 import './App.css'
-
-/** Once Start Game runs, catalog bootstrap must not rewrite the chosen config. */
-let allowCatalogBootDefaults = true
 
 function idInDirection(
   currentId: string | null,
@@ -286,7 +284,7 @@ function App() {
     null,
   )
   const [optionsHudNotice, setOptionsHudNotice] = useState<string | null>(null)
-  const [mainMenuOpen, setMainMenuOpen] = useState(false)
+  const [mainMenuOpen, setMainMenuOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<
     'audio' | 'popups' | 'keybinds' | 'video'
@@ -1158,7 +1156,7 @@ function App() {
     }
     mapGeneratingRef.current = true
     setMapGenerating(true)
-    allowCatalogBootDefaults = false
+    setMainMenuOpen(false)
     setWelcomeTown(null)
     setHeroScreen(false)
     setTrade(null)
@@ -1179,6 +1177,7 @@ function App() {
     setMapInputLocked(false)
     setMapCameraFollowMoves(true)
     clearCachedGrid()
+    setMapInfo(null)
     setHexScale(config.hexSize)
     setGameDifficultyCatalog(config.difficultyId)
     setSession(createSessionFromConfig(config))
@@ -1449,12 +1448,20 @@ function App() {
   blockHeroMovementAnimationRef.current =
     keybindPopupOpen || Boolean(combat)
 
+  const gameRunning = mapEpoch > 0
+
   const onKeybindBack = useCallback(() => {
     if (devOpen) {
       setDevOpen(false)
+      if (!gameRunning) {
+        setMainMenuOpen(true)
+      }
       return
     }
     if (mainMenuOpen) {
+      if (!gameRunning) {
+        return
+      }
       setMainMenuOpen(false)
       return
     }
@@ -1556,8 +1563,9 @@ function App() {
     setMainMenuOpen(true)
   }, [
     mainMenuOpen,
-    settingsOpen,
+    gameRunning,
     devOpen,
+    settingsOpen,
     gameFlowPanel,
     endTurnConfirmOpen,
     gameLogOpen,
@@ -1682,7 +1690,9 @@ function App() {
       },
       onDevMenu: () => {
         setDevOpen(true)
-        setMainMenuOpen(false)
+        if (gameRunning) {
+          setMainMenuOpen(false)
+        }
       },
       onMainMenu: () => setMainMenuOpen(true),
     }),
@@ -1702,6 +1712,7 @@ function App() {
       closeMapView,
       openMapView,
       toggleQuestLog,
+      gameRunning,
     ],
   )
 
@@ -1932,18 +1943,8 @@ function App() {
       .then((catalog) => {
         if (!cancelled) {
           updateSession((current) => {
-            // F5 / bootstrap: re-apply New Game app_config defaults before spawn.
-            // Skip after Start Game so a slow catalog refresh cannot wipe picks.
-            if (
-              allowCatalogBootDefaults &&
-              current.heroes.length === 0 &&
-              current.towns.length === 0
-            ) {
-              const defaults = defaultGameConfig(catalog)
-              setHexScale(defaults.hexSize)
-              const session = createSessionFromConfig(defaults)
-              syncGameDifficultyFromSession(session)
-              return session
+            if (current.players.length === 0 && current.towns.length === 0) {
+              return current
             }
             syncGameDifficultyFromSession(current)
             return assignHeroesFromPool(current, catalog.hero_pool)
@@ -2160,6 +2161,7 @@ function App() {
         setAiPhase('idle')
         setMapInputLocked(false)
         setMapCameraFollowMoves(true)
+        setMainMenuOpen(false)
         setHexScale(parseHexSize(getSession().game.settings.hex_size))
         syncGameDifficultyFromSession(getSession())
         const catalog = getCachedCatalog()
@@ -2248,7 +2250,13 @@ function App() {
               id: 'menu',
               label: '☰ Menu',
               title: 'Main Menu',
-              onClick: () => setMainMenuOpen((open) => !open),
+              onClick: () => {
+                if (!gameRunning) {
+                  setMainMenuOpen(true)
+                  return
+                }
+                setMainMenuOpen((open) => !open)
+              },
               dimmed: false,
             },
             {
@@ -2305,9 +2313,11 @@ function App() {
             height: GAME_WINDOW_HEIGHT,
           }}
         >
+      {devToolsEnabled() ? <DevFpsOverlay /> : null}
       <MainMenu
         open={mainMenuOpen}
         inBattle={inCombat}
+        gameRunning={gameRunning}
         onClose={() => setMainMenuOpen(false)}
         onFlow={onMainMenuFlow}
         onSettings={() => {
@@ -2316,8 +2326,10 @@ function App() {
           setSettingsOpen(true)
         }}
         onDev={() => {
-          setMainMenuOpen(false)
           setDevOpen(true)
+          if (gameRunning) {
+            setMainMenuOpen(false)
+          }
         }}
       />
       <SettingsScreen
@@ -2341,7 +2353,20 @@ function App() {
       />
       <DevPopup
         open={devOpen}
-        onClose={() => setDevOpen(false)}
+        onClose={() => {
+          setDevOpen(false)
+          if (!gameRunning) {
+            setMainMenuOpen(true)
+          }
+        }}
+        gameRunning={gameRunning}
+        onGameSettings={() => {
+          setSettingsTab('audio')
+          setSettingsOpen(true)
+          if (gameRunning) {
+            setMainMenuOpen(false)
+          }
+        }}
         inCombat={inCombat}
         onNewGameWithSeed={() => {
           const raw = window.prompt(
@@ -2440,6 +2465,7 @@ function App() {
           }}
       />
       <div className="game-window-tools-anchor">{optionsMenu}</div>
+      {mapEpoch > 0 ? (
       <HexMap
         key={mapEpoch}
         hexSize={hexSize}
@@ -2469,6 +2495,9 @@ function App() {
         onMobMeet={onMobMeet}
         onMobAmbush={onMobAmbush}
       />
+      ) : (
+        <div className="world-map-idle" aria-hidden="true" />
+      )}
       {mapViewOpen && mapInfo && mapViewFocus ? (
         <MapView
           open={mapViewOpen}

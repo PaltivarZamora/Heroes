@@ -1,7 +1,8 @@
 import type { Axial } from '../hex/hero'
 import { hexDistance } from '../hex/pathfinding'
 import type { FootprintCode } from './footprint'
-import { unitById, unitHasTag, type ReferenceCatalog } from '../town/catalog'
+import { footprintBlockingCode } from './footprint'
+import { unitById, unitFootprint, unitHasTag, type ReferenceCatalog } from '../town/catalog'
 import type {
   CombatBattle,
   CombatSide,
@@ -56,26 +57,58 @@ export function makeTombstone(
   }
 }
 
-export function tombstoneFootprintHexes(tomb: CombatTombstone): Axial[] {
-  const code: FootprintCode = tomb.footprint ?? '1x1'
+export function tombBlockingFootprintCode(
+  tomb: CombatTombstone,
+  catalog: ReferenceCatalog,
+): FootprintCode {
+  if (tomb.footprint) {
+    return tomb.footprint
+  }
+  return footprintBlockingCode(unitFootprint(unitById(catalog, tomb.unitId)))
+}
+
+export function tombCorpseArtFootprintCode(
+  tomb: CombatTombstone,
+  catalog: ReferenceCatalog,
+): FootprintCode {
+  return unitFootprint(unitById(catalog, tomb.unitId))
+}
+
+export function tombstoneFootprintHexes(
+  tomb: CombatTombstone,
+  catalog: ReferenceCatalog,
+): Axial[] {
+  const code = tombBlockingFootprintCode(tomb, catalog)
   return footprintHexes({ q: tomb.q, r: tomb.r }, code, footprintAlong(tomb.side))
+}
+
+/** @deprecated Use tombCorpseArtFootprintCode for paint */
+export function tombFootprintCode(
+  tomb: CombatTombstone,
+  catalog: ReferenceCatalog,
+): FootprintCode {
+  return tombCorpseArtFootprintCode(tomb, catalog)
 }
 
 export function tombstoneOccupiesHex(
   tomb: CombatTombstone,
   q: number,
   r: number,
+  catalog: ReferenceCatalog,
 ): boolean {
-  return tombstoneFootprintHexes(tomb).some((hex) => hex.q === q && hex.r === r)
+  return tombstoneFootprintHexes(tomb, catalog).some(
+    (hex) => hex.q === q && hex.r === r,
+  )
 }
 
 /** Landing blockers only — units may path through tombstones but cannot stop on them. */
 export function tombstoneOccupancyBodies(
   tombstones: CombatTombstone[] | undefined,
+  catalog: ReferenceCatalog,
 ): OccupancyBody[] {
   return (tombstones ?? []).map((tomb) => ({
     id: tomb.id,
-    hexes: tombstoneFootprintHexes(tomb),
+    hexes: tombstoneFootprintHexes(tomb, catalog),
   }))
 }
 
@@ -83,10 +116,11 @@ export function tombstoneAt(
   battle: CombatBattle,
   q: number,
   r: number,
+  catalog: ReferenceCatalog,
 ): CombatTombstone | null {
   return (
     (battle.tombstones ?? []).find((tomb) =>
-      tombstoneOccupiesHex(tomb, q, r),
+      tombstoneOccupiesHex(tomb, q, r, catalog),
     ) ?? null
   )
 }
@@ -218,7 +252,9 @@ export function tombstoneHexKeys(
       tombstoneMatchesReviveTarget(tomb, casterSide, catalog, requiredTag),
     )
     .flatMap((tomb) =>
-      tombstoneFootprintHexes(tomb).map((hex) => occupancyKey(hex.q, hex.r)),
+      tombstoneFootprintHexes(tomb, catalog).map((hex) =>
+        occupancyKey(hex.q, hex.r),
+      ),
     )
 }
 
@@ -252,7 +288,7 @@ function reviveAnchorCandidates(
   }
   for (const tomb of battle.tombstones ?? []) {
     add({ q: tomb.q, r: tomb.r })
-    for (const hex of tombstoneFootprintHexes(tomb)) {
+    for (const hex of tombstoneFootprintHexes(tomb, catalog)) {
       add(hex)
     }
   }
@@ -273,9 +309,9 @@ export function nearestReviveAnchorForTombstone(
   if (!unit) {
     return null
   }
-  const code: FootprintCode = tomb.footprint ?? '1x1'
+  const code = tombBlockingFootprintCode(tomb, catalog)
   const along = footprintAlong(tomb.side)
-  const tombsExcept = tombstoneOccupancyBodies(battle.tombstones).filter(
+  const tombsExcept = tombstoneOccupancyBodies(battle.tombstones, catalog).filter(
     (body) => body.id !== tomb.id,
   )
   const occupied = occupiedHexes(

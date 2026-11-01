@@ -145,7 +145,7 @@ function moverStats(
 ) {
   const unit = unitById(catalog, stack.unitId)
   const kind = moveKindForUnit(unit, catalog)
-  const tombs = tombstoneOccupancyBodies(battle.tombstones)
+  const tombs = tombstoneOccupancyBodies(battle.tombstones, catalog)
   // Tombstones block landing only — units may path through them.
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
   const landOccupied = landingOccupiedForMover(

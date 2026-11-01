@@ -726,7 +726,7 @@ export function combatMovementReachable(
     return new Map([[here, []]])
   }
   const kind = moveKindForUnit(unit, catalog)
-  const tombs = tombstoneOccupancyBodies(battle.tombstones)
+  const tombs = tombstoneOccupancyBodies(battle.tombstones, catalog)
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
   const landOccupied = landingOccupiedForMover(
     battle.stacks,

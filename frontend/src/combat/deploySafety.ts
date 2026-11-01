@@ -99,7 +99,7 @@ function stackCanOccupy(
     battle.stacks,
     catalog,
     stack.id,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const enterCost = (q: number, r: number) => {
     const tile = tiles.find((row) => row.q === q && row.r === r)

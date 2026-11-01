@@ -7,6 +7,8 @@ export type MainMenuFlow = 'new' | 'load' | 'save' | 'restart' | 'quit' | null
 type MainMenuProps = {
   open: boolean
   inBattle: boolean
+  /** False at title screen before New Game / Load. */
+  gameRunning: boolean
   onClose: () => void
   onFlow: (flow: MainMenuFlow) => void
   onSettings: () => void
@@ -16,6 +18,7 @@ type MainMenuProps = {
 export function MainMenu({
   open,
   inBattle,
+  gameRunning,
   onClose,
   onFlow,
   onSettings,
@@ -25,9 +28,15 @@ export function MainMenu({
     return null
   }
   const dev = devToolsEnabled()
+  const menuLocked = !gameRunning
+  const tryClose = () => {
+    if (!menuLocked) {
+      onClose()
+    }
+  }
   return (
     <GameWindowOverlay>
-      <GameWindowModal aria-labelledby="main-menu-title" onBackdropClick={onClose}>
+      <GameWindowModal aria-labelledby="main-menu-title" onBackdropClick={tryClose}>
         <h1 id="main-menu-title">Main Menu</h1>
         <div className="main-menu-section">
           <p className="main-menu-heading">Game</p>
@@ -42,13 +51,24 @@ export function MainMenu({
           </button>
           <button
             type="button"
-            disabled={inBattle}
-            title={inBattle ? 'Not available during battle' : undefined}
+            disabled={inBattle || !gameRunning}
+            title={
+              inBattle
+                ? 'Not available during battle'
+                : !gameRunning
+                  ? 'Start or load a game first'
+                  : undefined
+            }
             onClick={() => onFlow('save')}
           >
             Save Game
           </button>
-          <button type="button" onClick={() => onFlow('restart')}>
+          <button
+            type="button"
+            disabled={!gameRunning}
+            title={!gameRunning ? 'Start or load a game first' : undefined}
+            onClick={() => onFlow('restart')}
+          >
             Restart
           </button>
         </div>
@@ -59,9 +79,11 @@ export function MainMenu({
           ) : null}
           <button type="button" onClick={() => onFlow('quit')}>Quit</button>
         </div>
-        <button type="button" className="date-notice-ok" onClick={onClose}>
-          Close
-        </button>
+        {menuLocked ? null : (
+          <button type="button" className="date-notice-ok" onClick={tryClose}>
+            Close
+          </button>
+        )}
       </GameWindowModal>
     </GameWindowOverlay>
   )

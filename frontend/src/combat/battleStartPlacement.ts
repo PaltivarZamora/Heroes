@@ -358,7 +358,7 @@ function stackFitsAt(
     stacksForPlacementOccupancy(battle, placedIds),
     catalog,
     stack.id,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const enterCost = (q: number, r: number) => {
     const tile = tiles.find((row) => row.q === q && row.r === r)
@@ -429,7 +429,7 @@ function fixedStackBlockKeys(
       keys.add(`${hex.q},${hex.r}`)
     }
   }
-  for (const body of tombstoneOccupancyBodies(battle.tombstones)) {
+  for (const body of tombstoneOccupancyBodies(battle.tombstones, catalog)) {
     for (const hex of body.hexes) {
       keys.add(`${hex.q},${hex.r}`)
     }

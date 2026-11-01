@@ -57,12 +57,32 @@ const sheetFailCache = new Map<string, { url: string; reason: string }>()
 const warnedMissingSheet = new Set<string>()
 const warnedMissingUnitType = new Set<number>()
 
-function imageStem(imagePath: string | null | undefined): string | null {
+/** Bare unit static filename from `unit.image_path` (no directory). */
+export function unitStaticImageFileName(
+  imagePath: string | null | undefined,
+): string | null {
   if (!imagePath?.trim()) {
     return null
   }
   const base = imagePath.trim().replace(/^.*[/\\]/, '')
-  return base.replace(/\.(png|webp|jpe?g)$/i, '') || null
+  return base || null
+}
+
+/**
+ * Battle anim / sound / _Dead stem: `{name}_Stand.png` → `{name}`.
+ * New unit static naming only — paths without `_Stand` before the extension yield null.
+ */
+function imageStem(imagePath: string | null | undefined): string | null {
+  const file = unitStaticImageFileName(imagePath)
+  if (!file) {
+    return null
+  }
+  const withoutExt = file.replace(/\.(png|webp|jpe?g)$/i, '')
+  if (!withoutExt || !/_Stand$/i.test(withoutExt)) {
+    return null
+  }
+  const stem = withoutExt.replace(/_Stand$/i, '')
+  return stem || null
 }
 
 export function unitBattleSpriteStem(unit: UnitRow | null | undefined): string | null {
@@ -596,10 +616,27 @@ export function battleUnitDieSheetDrawable(
   return Boolean(sheet && (sheet.frames.length > 0 || sheet.stand))
 }
 
+/** Die sheet loaded for this unit (not borrowed from basic partner). */
+export function battleUnitOwnDieSheetDrawable(
+  set: BattleUnitSheetSet | null | undefined,
+): boolean {
+  const die = set?.sheets.Die
+  if (!battleUnitDieSheetDrawable(die)) {
+    return false
+  }
+  return die?.borrowedGlow !== true
+}
+
 export function battleUnitHasDrawableDieSheet(
   set: BattleUnitSheetSet | null | undefined,
 ): boolean {
   return battleUnitDieSheetDrawable(set?.sheets.Die)
+}
+
+export function battleUnitHasOwnDrawableDieSheet(
+  set: BattleUnitSheetSet | null | undefined,
+): boolean {
+  return battleUnitOwnDieSheetDrawable(set)
 }
 
 const warnedDieNotDrawable = new Set<string>()

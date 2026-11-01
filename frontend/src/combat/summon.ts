@@ -198,7 +198,7 @@ function openHexesForUnit(
     battle.stacks,
     catalog,
     undefined,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
@@ -339,7 +339,7 @@ export function nearestOpenHexTo(
     battle.stacks,
     catalog,
     undefined,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
@@ -401,7 +401,7 @@ function frontOfTargetOpenHexes(
     battle.stacks,
     catalog,
     undefined,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = summonLandCost(tiles, kind)
@@ -1204,7 +1204,7 @@ export function applyRadiusBlockerPlacement(
     battle.stacks,
     catalog,
     undefined,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const open: Axial[] = []
   for (const tile of tiles) {

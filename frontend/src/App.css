@@ -50,6 +50,20 @@
   box-sizing: border-box;
 }
 
+.dev-fps-counter {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 40;
+  pointer-events: none;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  letter-spacing: 0.02em;
+}
+
 .game-left-panel {
   z-index: 5;
   padding: 0 46px;
@@ -734,12 +748,17 @@
   bottom: auto;
 }
 
-.game-window .hex-map {
+.game-window .hex-map,
+.game-window .world-map-idle {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   flex: none;
+}
+
+.game-window .world-map-idle {
+  background: #1a1a1a;
 }
 
 .game-window-embed {
@@ -2428,6 +2447,26 @@
   border-color: transparent;
   background: transparent;
   opacity: 1;
+}
+
+.combat-tombstone-generic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.combat-tombstone-generic .combat-stack-static-art {
+  width: var(--combat-tombstone-hex, 100%);
+  height: var(--combat-tombstone-hex, 100%);
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.combat-tombstone-generic .combat-stack-static-art img {
+  object-position: center center;
 }
 
 .combat-battle-corpse-layer {

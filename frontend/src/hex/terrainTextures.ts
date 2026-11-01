@@ -323,6 +323,10 @@ function punchBlackToAlpha(image: HTMLImageElement): Texture | null {
   return Texture.from(canvas)
 }
 
+const textureUrlCache = new Map<string, Texture>()
+const textureUrlFailed = new Set<string>()
+const textureUrlInflight = new Map<string, Promise<Texture | null>>()
+
 export function loadTextureUrl(
   url: string,
   punchBlack = false,
@@ -334,32 +338,60 @@ async function tryLoadTexture(
   url: string,
   punchBlack = false,
 ): Promise<Texture | null> {
-  try {
-    const response = await fetch(url, { method: 'HEAD' })
-    const contentType = response.headers.get('content-type') ?? ''
-    if (!response.ok || !contentType.startsWith('image/')) {
-      return null
-    }
-    if (punchBlack) {
-      try {
-        const image = new Image()
-        image.src = url
-        await image.decode()
-        const punched = punchBlackToAlpha(image)
-        if (punched && punched.width >= 1 && punched.height >= 1) {
-          return punched
-        }
-      } catch {
-        // Fall through to a normal load so the file still shows.
-      }
-    }
-    const texture = await Assets.load<Texture>(url)
-    if (texture.width < 1 || texture.height < 1) {
-      return null
-    }
-    return texture
-  } catch {
+  const key = `${url.trim()}|${punchBlack ? 1 : 0}`
+  if (!url.trim()) {
     return null
+  }
+  if (textureUrlFailed.has(key)) {
+    return null
+  }
+  const cached = textureUrlCache.get(key)
+  if (cached && !cached.destroyed) {
+    return cached
+  }
+  const inflight = textureUrlInflight.get(key)
+  if (inflight) {
+    return inflight
+  }
+  const promise = (async (): Promise<Texture | null> => {
+    try {
+      const response = await fetch(url, { method: 'HEAD' })
+      const contentType = response.headers.get('content-type') ?? ''
+      if (!response.ok || !contentType.startsWith('image/')) {
+        textureUrlFailed.add(key)
+        return null
+      }
+      if (punchBlack) {
+        try {
+          const image = new Image()
+          image.src = url
+          await image.decode()
+          const punched = punchBlackToAlpha(image)
+          if (punched && punched.width >= 1 && punched.height >= 1) {
+            textureUrlCache.set(key, punched)
+            return punched
+          }
+        } catch {
+          // Fall through to a normal load so the file still shows.
+        }
+      }
+      const texture = await Assets.load<Texture>(url)
+      if (texture.width < 1 || texture.height < 1) {
+        textureUrlFailed.add(key)
+        return null
+      }
+      textureUrlCache.set(key, texture)
+      return texture
+    } catch {
+      textureUrlFailed.add(key)
+      return null
+    }
+  })()
+  textureUrlInflight.set(key, promise)
+  try {
+    return await promise
+  } finally {
+    textureUrlInflight.delete(key)
   }
 }
 

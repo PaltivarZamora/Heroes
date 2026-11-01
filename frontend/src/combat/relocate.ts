@@ -50,7 +50,7 @@ export function landableHexes(
     battle.stacks,
     catalog,
     stack.id,
-    tombstoneOccupancyBodies(battle.tombstones),
+    tombstoneOccupancyBodies(battle.tombstones, catalog),
   )
   const kind = moveKindForUnit(unit, catalog)
   const enterCost = (q: number, r: number) => {

@@ -25,6 +25,12 @@ import {
   worldMobFootprintCenter,
 } from './worldMobFootprint'
 import {
+  captureWorldMobIdleBase,
+  shouldTickWorldMobProceduralIdle,
+  tickWorldMobProceduralIdle,
+  type WorldMobIdleBase,
+} from './worldMobProceduralIdle'
+import {
   applyWorldMobSpriteScale,
   applyWorldSpriteScale,
   ensureWorldSpriteMaxWidthWarning,
@@ -100,6 +106,7 @@ import {
 import {
   WorldChunkRenderer,
   setWorldRenderStats,
+  devRenderStatsSamplingEnabled,
 } from './worldRenderChunks'
 import { loadAbsoluteTexture, loadFeatureTexture } from './featureTextures'
 import {
@@ -883,10 +890,7 @@ export function HexMap({
 
     void (async () => {
       await fetchCatalog().catch(() => {})
-      // Do not call createSessionFromConfig(defaultGameConfig) here: Start Game
-      // leaves heroes/towns empty until ensureStartingHeroes below, and rewriting
-      // the session would clobber the form config (manual overrides and all).
-      // F5 / empty bootstrap is handled in App when the catalog loads.
+      // Map generation runs only after New Game / Load (HexMap mounts when mapEpoch > 0).
       const needsGrid = !cachedGrid || !gridHasResourceIds(cachedGrid)
       if (needsGrid) {
         const savedSeed = getSession().game.seed
@@ -1484,6 +1488,7 @@ export function HexMap({
           sprite: Sprite
           qty: Text
           glowApplied?: boolean
+          idleBase?: WorldMobIdleBase
         }
       >()
       const mobBorrowedArt = new Map<string, boolean>()
@@ -2363,6 +2368,15 @@ export function HexMap({
       }
 
       const camera = { x: 0, y: 0 }
+      let lastCullCameraX = Number.NaN
+      let lastCullCameraY = Number.NaN
+      const viewportCullThresholdPx = () => Math.max(hexSize * 0.75, 24)
+      type GlideDepthTrack = {
+        heroId: string
+        hexKey: string
+        hostKey: string
+      }
+      let glideDepthTrack: GlideDepthTrack | null = null
       const keys = new Set<string>()
       let dragging = false
       let pointerDown = false
@@ -2460,7 +2474,28 @@ export function HexMap({
         }
       }
 
-      const applyCamera = () => {
+      const applyViewportCullIfNeeded = (force = false) => {
+        if (!mapSceneLive()) {
+          return
+        }
+        const viewW = instance.screen.width
+        const viewH = instance.screen.height
+        const th = viewportCullThresholdPx()
+        if (
+          !force &&
+          Number.isFinite(lastCullCameraX) &&
+          Math.abs(camera.x - lastCullCameraX) < th &&
+          Math.abs(camera.y - lastCullCameraY) < th
+        ) {
+          return
+        }
+        lastCullCameraX = camera.x
+        lastCullCameraY = camera.y
+        chunkRenderer.updateCull(camera.x, camera.y, viewW, viewH)
+        applyActorCull()
+      }
+
+      const applyCamera = (forceCull = false) => {
         if (!mapSceneLive()) {
           return
         }
@@ -2477,8 +2512,7 @@ export function HexMap({
         camera.x = next.x
         camera.y = next.y
         world.position.set(-camera.x, -camera.y)
-        chunkRenderer.updateCull(camera.x, camera.y, viewW, viewH)
-        applyActorCull()
+        applyViewportCullIfNeeded(forceCull)
       }
 
       const paintRoads = () => {
@@ -2527,20 +2561,26 @@ export function HexMap({
         chunkRenderer.rebakeAll()
       }
 
+      const sampleWorldRenderStats = () => {
+        if (devRenderStatsSamplingEnabled()) {
+          setWorldRenderStats(chunkRenderer.stats(world))
+        }
+      }
+
       const finishPropAndCullRefresh = () => {
         if (!mapSceneLive()) {
           return
         }
         syncRuntimePickupViewsFromSession()
         syncMapArtDepth()
-        applyCamera()
-        setWorldRenderStats(chunkRenderer.stats(world))
+        applyCamera(true)
+        sampleWorldRenderStats()
       }
 
       const rebakeTerrain = () => {
         rebakeTerrainChunks()
-        applyCamera()
-        setWorldRenderStats(chunkRenderer.stats(world))
+        applyCamera(true)
+        sampleWorldRenderStats()
       }
 
       const exploreAround = (origin: Axial) => {
@@ -2565,9 +2605,11 @@ export function HexMap({
               }
             })
         }
-        updateSession((current) =>
-          persistActiveExplored(current, getExploredHexes()),
-        )
+        if (newly.length > 0) {
+          updateSession((current) =>
+            persistActiveExplored(current, getExploredHexes()),
+          )
+        }
       }
 
       rebakeTerrainRef.current = rebakeTerrain
@@ -2599,6 +2641,161 @@ export function HexMap({
           worldY >= cy - reach &&
           worldY <= cy + reach
         )
+      }
+
+      const townBoost = hexSize * 0.4
+
+      const townOcclusionHost = (
+        pos: { q: number; r: number },
+        worldX: number,
+        worldY: number,
+      ) => {
+        for (const entry of objectByKey.values()) {
+          if (
+            entry.view.destroyed ||
+            entry.data.kind !== 'town' ||
+            !entry.sprite.visible ||
+            entry.sprite.destroyed
+          ) {
+            continue
+          }
+          const keep = townBlockedHex(entry.data)
+          const keepHex = grid.getHex(keep) ?? grid.createHex(keep)
+          const kc = hexCenter(keepHex, offsetX, offsetY)
+          const entryHex =
+            grid.getHex(entry.data) ?? grid.createHex(entry.data)
+          const ec = hexCenter(entryHex, offsetX, offsetY)
+          const sp = entry.sprite
+          const groundY = entry.view.position.y + sp.position.y
+          const topY = groundY - Math.abs(sp.height) * sp.anchor.y
+          const midX =
+            entry.view.position.x +
+            sp.position.x +
+            (0.5 - sp.anchor.x) *
+              Math.abs(sp.width) *
+              Math.sign(sp.scale.x || 1)
+          const halfW = Math.max(Math.abs(sp.width) * 0.65, hexSize * 2)
+          const flipped = entry.data.flipped === true
+
+          if (entry.data.q === pos.q && entry.data.r === pos.r) {
+            const onGateSide = flipped
+              ? worldX <= midX + hexSize * 0.15
+              : worldX >= midX - hexSize * 0.15
+            const onDrawbridge =
+              onGateSide && worldY >= Math.min(kc.y, ec.y) - hexSize * 0.1
+            if (onDrawbridge) {
+              return null
+            }
+          }
+
+          const keepSide = flipped ? 1 : -1
+          const behind = (pos.q - keep.q) * keepSide
+          const nearKeep =
+            behind > 0 && behind <= 2 && pos.r <= keep.r && pos.r >= keep.r - 2
+          const onFootprint =
+            (pos.q === keep.q && pos.r === keep.r) ||
+            (pos.q === entry.data.q && pos.r === entry.data.r)
+          const underArt =
+            worldY < kc.y + hexSize * 0.5 &&
+            Math.abs(worldX - midX) <= halfW &&
+            worldY >= topY - hexSize * 0.5
+          if (nearKeep || onFootprint || underArt) {
+            return entry
+          }
+        }
+        return null
+      }
+
+      const placeActorUnitView = (
+        view: Container,
+        pos: { q: number; r: number },
+        worldX: number,
+        worldY: number,
+      ) => {
+        if (view.destroyed) {
+          return
+        }
+        const host = townOcclusionHost(pos, worldX, worldY)
+        if (host && !host.view.destroyed && !host.sprite.destroyed) {
+          const spriteIdx = host.view.getChildIndex(host.sprite)
+          host.view.addChildAt(view, Math.max(0, spriteIdx))
+          view.position.set(
+            worldX - host.view.position.x,
+            worldY - host.view.position.y,
+          )
+          return
+        }
+        heroLayer.addChild(view)
+        view.position.set(worldX, worldY)
+      }
+
+      const applyActorLayerZ = (
+        view: Container,
+        worldX: number,
+        worldY: number,
+      ) => {
+        if (view.destroyed || view.parent !== heroLayer) {
+          return
+        }
+        let z = Math.round(worldY * 1000) + ACTOR_ABOVE_NON_OVERLAP_PROP
+        const radius = hexSize * 0.45
+        for (const prop of chunkRenderer.blockingPropEntries()) {
+          if (prop.sprite.destroyed) {
+            continue
+          }
+          if (!unitOverlapsPropCull(prop.cull, worldX, worldY, radius)) {
+            continue
+          }
+          const propZ = Math.round(prop.sprite.y * 1000)
+          if (prop.sprite.y > worldY) {
+            z = Math.min(z, propZ - 1)
+          } else {
+            z = Math.max(z, propZ + 1)
+          }
+        }
+        view.zIndex = z
+      }
+
+      const syncGlidingHeroPlacement = (
+        heroId: string,
+        worldX: number,
+        worldY: number,
+        axialPos: { q: number; r: number },
+      ) => {
+        const marker = heroMarkers.get(heroId)
+        if (!marker?.view.visible) {
+          return
+        }
+        const hexAt = grid.pointToHex(
+          { x: worldX - offsetX, y: worldY - offsetY },
+          { allowOutside: true },
+        )
+        const hexKey = hexAt ? `${hexAt.q},${hexAt.r}` : `${Math.round(worldY)}`
+        const pos = hexAt ? { q: hexAt.q, r: hexAt.r } : axialPos
+        const host = townOcclusionHost(pos, worldX, worldY)
+        const hostKey = host ? `${host.data.q},${host.data.r}` : ''
+        const prev = glideDepthTrack
+        const samePlacement =
+          prev?.heroId === heroId &&
+          prev.hexKey === hexKey &&
+          prev.hostKey === hostKey
+        if (samePlacement) {
+          if (marker.view.parent === heroLayer) {
+            marker.view.position.set(worldX, worldY)
+          } else {
+            const parent = marker.view.parent as Container
+            marker.view.position.set(
+              worldX - parent.position.x,
+              worldY - parent.position.y,
+            )
+          }
+          return
+        }
+        glideDepthTrack = { heroId, hexKey, hostKey }
+        placeActorUnitView(marker.view, pos, worldX, worldY)
+        const { x, y } = markerWorldXY(marker.view)
+        applyActorLayerZ(marker.view, x, y)
+        heroLayer.sortChildren()
       }
 
       const syncTownActorDepth = () => {
@@ -2635,8 +2832,6 @@ export function HexMap({
         // sprite) when they are behind the keep. Entry/drawbridge stays a sibling
         // painted after the town so the unit stays on top. Missing hero art is
         // irrelevant — badge and sprite use the same Container.
-        const townBoost = hexSize * 0.4
-
         type DepthItem = { view: Container; z: number }
         const backItems: DepthItem[] = []
 
@@ -2659,123 +2854,6 @@ export function HexMap({
           const z = kc.y + townBoost
           entry.sortY = z
           backItems.push({ view: entry.view, z })
-        }
-
-        const townBehindWhich = (
-          pos: { q: number; r: number },
-          worldX: number,
-          worldY: number,
-        ) => {
-          for (const entry of objectByKey.values()) {
-            if (
-              entry.view.destroyed ||
-              entry.data.kind !== 'town' ||
-              !entry.sprite.visible ||
-              entry.sprite.destroyed
-            ) {
-              continue
-            }
-            const keep = townBlockedHex(entry.data)
-            const keepHex = grid.getHex(keep) ?? grid.createHex(keep)
-            const kc = hexCenter(keepHex, offsetX, offsetY)
-            const entryHex =
-              grid.getHex(entry.data) ?? grid.createHex(entry.data)
-            const ec = hexCenter(entryHex, offsetX, offsetY)
-            const sp = entry.sprite
-            const groundY = entry.view.position.y + sp.position.y
-            const topY = groundY - Math.abs(sp.height) * sp.anchor.y
-            const midX =
-              entry.view.position.x +
-              sp.position.x +
-              (0.5 - sp.anchor.x) *
-                Math.abs(sp.width) *
-                Math.sign(sp.scale.x || 1)
-            const halfW = Math.max(Math.abs(sp.width) * 0.65, hexSize * 2)
-            const flipped = entry.data.flipped === true
-
-            // Entry/drawbridge stays in front. Flipped towns put that gate on
-            // the left of the art; unflipped, it is on the right.
-            if (entry.data.q === pos.q && entry.data.r === pos.r) {
-              const onGateSide = flipped
-                ? worldX <= midX + hexSize * 0.15
-                : worldX >= midX - hexSize * 0.15
-              const onDrawbridge =
-                onGateSide && worldY >= Math.min(kc.y, ec.y) - hexSize * 0.1
-              if (onDrawbridge) {
-                return null
-              }
-            }
-
-            // Keep side only, a short way behind the building. The gate and
-            // the road leaving it are not "behind the keep".
-            const keepSide = flipped ? 1 : -1
-            const behind = (pos.q - keep.q) * keepSide
-            const nearKeep =
-              behind > 0 && behind <= 2 && pos.r <= keep.r && pos.r >= keep.r - 2
-            const onFootprint =
-              (pos.q === keep.q && pos.r === keep.r) ||
-              (pos.q === entry.data.q && pos.r === entry.data.r)
-            const underArt =
-              worldY < kc.y + hexSize * 0.5 &&
-              Math.abs(worldX - midX) <= halfW &&
-              worldY >= topY - hexSize * 0.5
-            if (nearKeep || onFootprint || underArt) {
-              return entry
-            }
-          }
-          return null
-        }
-
-        const placeUnit = (
-          view: Container,
-          pos: { q: number; r: number },
-          worldX: number,
-          worldY: number,
-        ) => {
-          if (view.destroyed) {
-            return
-          }
-          const host = townBehindWhich(pos, worldX, worldY)
-          if (host && !host.view.destroyed && !host.sprite.destroyed) {
-            // Insert just before the town sprite so opaque castle pixels cover
-            // the unit; transparent padding still shows the unit through.
-            const spriteIdx = host.view.getChildIndex(host.sprite)
-            host.view.addChildAt(view, Math.max(0, spriteIdx))
-            view.position.set(
-              worldX - host.view.position.x,
-              worldY - host.view.position.y,
-            )
-            return
-          }
-          heroLayer.addChild(view)
-          view.position.set(worldX, worldY)
-        }
-
-        const applyActorLayerZ = (
-          view: Container,
-          worldX: number,
-          worldY: number,
-        ) => {
-          if (view.destroyed || view.parent !== heroLayer) {
-            return
-          }
-          let z = Math.round(worldY * 1000) + ACTOR_ABOVE_NON_OVERLAP_PROP
-          const radius = hexSize * 0.45
-          for (const prop of chunkRenderer.blockingPropEntries()) {
-            if (prop.sprite.destroyed) {
-              continue
-            }
-            if (!unitOverlapsPropCull(prop.cull, worldX, worldY, radius)) {
-              continue
-            }
-            const propZ = Math.round(prop.sprite.y * 1000)
-            if (prop.sprite.y > worldY) {
-              z = Math.min(z, propZ - 1)
-            } else {
-              z = Math.max(z, propZ + 1)
-            }
-          }
-          view.zIndex = z
         }
 
         for (const hero of getSession().heroes) {
@@ -2805,7 +2883,7 @@ export function HexMap({
                 (index - (same.length - 1) / 2) * hexSize * 0.45
             }
           }
-          placeUnit(marker.view, hero.position, worldX, worldY)
+          placeActorUnitView(marker.view, hero.position, worldX, worldY)
         }
         for (const mob of getSession().mobs) {
           const marker = mobMarkers.get(mob.id)
@@ -2815,7 +2893,7 @@ export function HexMap({
           const hex =
             grid.getHex(mob.position) ?? grid.createHex(mob.position)
           const c = hexCenter(hex, offsetX, offsetY)
-          placeUnit(marker.view, mob.position, c.x, c.y)
+          placeActorUnitView(marker.view, mob.position, c.x, c.y)
         }
         for (const boat of getSession().boats ?? []) {
           if (boat.occupant_hero_id != null) {
@@ -2828,7 +2906,7 @@ export function HexMap({
           const hex =
             grid.getHex(boat.position) ?? grid.createHex(boat.position)
           const c = hexCenter(hex, offsetX, offsetY)
-          placeUnit(marker.view, boat.position, c.x, c.y)
+          placeActorUnitView(marker.view, boat.position, c.x, c.y)
         }
 
         backItems.sort((a, b) => a.z - b.z)
@@ -2947,10 +3025,11 @@ export function HexMap({
           boatMarkers.delete(id)
         }
         syncTownActorDepth()
-        applyActorCull()
+        applyViewportCullIfNeeded(true)
       }
 
-      const placeHeroMarkers = () => {
+      const placeHeroMarkers = (opts?: { glideHeroId?: string }) => {
+        const glideHeroId = opts?.glideHeroId
         const session = getSession()
         const catalog = getCachedCatalog()
         if (!mountMoveConfigChecked) {
@@ -2987,6 +3066,9 @@ export function HexMap({
         }
         const seen = new Set<string>()
         for (const hero of sessionHeroes) {
+          if (glideHeroId && hero.id !== glideHeroId) {
+            continue
+          }
           seen.add(hero.id)
           const travel = heroTravelSprite(hero, session)
           const moveStem = heroMoveSheetStem(hero, session, catalog)
@@ -3077,31 +3159,35 @@ export function HexMap({
             ownerTint(hero.player_id) ?? NEUTRAL_OBJECT_COLOR
           if (hasArt && texture) {
             entry.sprite.texture = texture
-            const appliedScale = applyWorldSpriteScale(
-              entry.sprite,
-              texture,
-              targetH,
-              flipX,
-              hexSize,
-              catalog,
-            )
-            const ringFactor = worldHeroRingScaleFactor(
-              texture.height * appliedScale,
-              hexSize,
-            )
-            entry.badge.clear()
-            entry.badge.circle(
-              0,
-              0,
-              hexSize * (selected ? 0.62 : 0.55) * ringFactor,
-            )
-            entry.badge.stroke({
-              width: selected ? 3 : 2,
-              color: selected ? 0xffffff : ownerColor,
-            })
-            entry.label.position.set(0, hexSize + Math.max(4, hexSize * 0.06))
-            entry.label.style.fill = 0xffffff
-          } else {
+            if (!glideHeroId) {
+              applyWorldSpriteScale(
+                entry.sprite,
+                texture,
+                targetH,
+                flipX,
+                hexSize,
+                catalog,
+              )
+            }
+            if (!glideHeroId) {
+              const ringFactor = worldHeroRingScaleFactor(
+                texture.height * Math.abs(entry.sprite.scale.y),
+                hexSize,
+              )
+              entry.badge.clear()
+              entry.badge.circle(
+                0,
+                0,
+                hexSize * (selected ? 0.62 : 0.55) * ringFactor,
+              )
+              entry.badge.stroke({
+                width: selected ? 3 : 2,
+                color: selected ? 0xffffff : ownerColor,
+              })
+              entry.label.position.set(0, hexSize + Math.max(4, hexSize * 0.06))
+              entry.label.style.fill = 0xffffff
+            }
+          } else if (!glideHeroId) {
             // Missing-art fallback: original circle + name token.
             const ringFactor = worldHeroRingScaleFactor(targetH, hexSize)
             entry.badge.clear()
@@ -3124,23 +3210,27 @@ export function HexMap({
           const index = indexOnHex.get(hero.id) ?? 0
           const spread =
             count > 1 ? (index - (count - 1) / 2) * hexSize * 0.45 : 0
-          if (moveVisual) {
-            entry.view.position.set(moveVisual.x, moveVisual.y)
-          } else {
-            entry.view.position.set(center.x + spread, center.y)
+          if (!glideHeroId) {
+            if (moveVisual) {
+              entry.view.position.set(moveVisual.x, moveVisual.y)
+            } else {
+              entry.view.position.set(center.x + spread, center.y)
+            }
           }
         }
-        for (const [id, entry] of heroMarkers) {
-          if (seen.has(id)) {
-            continue
+        if (!glideHeroId) {
+          for (const [id, entry] of heroMarkers) {
+            if (seen.has(id)) {
+              continue
+            }
+            entry.view.parent?.removeChild(entry.view)
+            entry.view.destroy({ children: true })
+            heroMarkers.delete(id)
           }
-          entry.view.parent?.removeChild(entry.view)
-          entry.view.destroy({ children: true })
-          heroMarkers.delete(id)
+          placeEmptyBoatMarkers()
+          syncTownActorDepth()
+          applyViewportCullIfNeeded(true)
         }
-        placeEmptyBoatMarkers()
-        syncTownActorDepth()
-        applyActorCull()
       }
       repaintHeroMarkers = placeHeroMarkers
       preloadHeroTravelSprites(getCachedCatalog())
@@ -3323,7 +3413,18 @@ export function HexMap({
               )
               entry.glowApplied = true
             }
+            entry.idleBase =
+              leadUnit != null && catalog
+                ? captureWorldMobIdleBase(
+                    mob.id,
+                    leadUnit,
+                    catalog,
+                    entry.sprite,
+                    entry.view,
+                  )
+                : undefined
           } else {
+            entry.idleBase = undefined
             entry.badge.clear()
             entry.badge.circle(0, 0, hexSize * 0.42)
             entry.badge.fill({ color: NEUTRAL_OBJECT_COLOR })
@@ -3349,7 +3450,7 @@ export function HexMap({
           mobMarkers.delete(id)
         }
         syncTownActorDepth()
-        applyActorCull()
+        applyViewportCullIfNeeded(true)
       }
       applyHeroMarkerLabel = () => {
         placeHeroMarkers()
@@ -3357,10 +3458,10 @@ export function HexMap({
         placeEmptyBoatMarkers()
       }
 
-      const panToWorldPoint = (worldX: number, worldY: number) => {
+      const panToWorldPoint = (worldX: number, worldY: number, forceCull = false) => {
         camera.x = worldX - instance.screen.width / 2
         camera.y = worldY - instance.screen.height / 2
-        applyCamera()
+        applyCamera(forceCull)
       }
 
       const panToHex = (q: number, r: number) => {
@@ -3389,7 +3490,7 @@ export function HexMap({
         }
         const slide = heroMoveVisuals.get(hero.id)
         if (slide) {
-          panToWorldPoint(slide.x, slide.y)
+          panToWorldPoint(slide.x, slide.y, false)
           return
         }
         panToHex(hero.q, hero.r)
@@ -4208,8 +4309,10 @@ export function HexMap({
         let animFrameAcc = prevVisual?.animFrameAcc ?? 0
         let lastTick = performance.now()
         const started = performance.now()
+        glideDepthTrack = null
         while (true) {
           if (signal.aborted) {
+            glideDepthTrack = null
             return
           }
           const now = performance.now()
@@ -4219,21 +4322,27 @@ export function HexMap({
             animFrameAcc += (deltaMs / 1000) * (animFps / stepCost)
           }
           const t = Math.min(1, (now - started) / durationMs)
+          const wx = startCenter.x + (endCenter.x - startCenter.x) * t
+          const wy = startCenter.y + (endCenter.y - startCenter.y) * t
           heroMoveVisuals.set(heroId, {
-            x: startCenter.x + (endCenter.x - startCenter.x) * t,
-            y: startCenter.y + (endCenter.y - startCenter.y) * t,
+            x: wx,
+            y: wy,
             flipX,
             moving: true,
             animFrameAcc,
             moveSheetStem,
           })
-          placeHeroMarkers()
-          followHero()
+          placeHeroMarkers({ glideHeroId: heroId })
+          syncGlidingHeroPlacement(heroId, wx, wy, from)
+          if (cameraFollowMoves) {
+            panToWorldPoint(wx, wy, false)
+          }
           if (t >= 1) {
             break
           }
           await sleep(16, signal)
         }
+        glideDepthTrack = null
       }
 
       const tryMoveTo = (
@@ -5707,8 +5816,17 @@ export function HexMap({
           return
         }
         chunkRenderer.noteFrame(ticker.deltaMS)
+        const catalog = getCachedCatalog()
+        if (shouldTickWorldMobProceduralIdle(mobMarkers.values(), catalog)) {
+          tickWorldMobProceduralIdle(
+            mobMarkers.values(),
+            catalog,
+            hexSize,
+            performance.now(),
+          )
+        }
         perfFrame += 1
-        if (perfFrame % 15 === 0) {
+        if (perfFrame % 15 === 0 && devRenderStatsSamplingEnabled()) {
           setWorldRenderStats(chunkRenderer.stats(world))
         }
         if (moving || mapInputLocked) {
@@ -5742,12 +5860,12 @@ export function HexMap({
         const w = Math.max(1, host.clientWidth)
         const h = Math.max(1, host.clientHeight)
         instance.renderer.resize(w, h)
-        applyCamera()
+        applyCamera(true)
       }
       syncRuntimeGroundItemsFn = syncGroundItemViewsFromSession
 
       const resizeObserver = new ResizeObserver(() => {
-        applyCamera()
+        applyCamera(true)
       })
       resizeObserver.observe(host)
       signal.addEventListener('abort', () => {

@@ -10,7 +10,8 @@ import { appendBattleAnimWorldLog } from './battleAnimConfig'
 import type { BattleAnimSettings } from './battleAnimConfig'
 import type { BattleUnitFrame } from './battleUnitSheet'
 
-const EFFECT_DIR = '/assets/effects'
+export const DIE_FALLBACK_EFFECT_DIR = '/assets/effects'
+const EFFECT_DIR = DIE_FALLBACK_EFFECT_DIR
 const SOUND_DIR = '/assets/sounds'
 
 export type DieFallbackEffectSheet = {
@@ -88,6 +89,17 @@ export function warnDieFallbackUnavailable(
 
 export function resetDieFallbackSessionWarnings(): void {
   warnedFallbackConfig = false
+}
+
+export function formatDieFallbackCombatLogLine(
+  unitName: string,
+  effectName: string,
+  sheet: DieFallbackEffectSheet | null | undefined,
+): string {
+  if (sheet) {
+    return `${unitName} Die fallback: ${effectName} (loaded, ${sheet.frames.length} frames)`
+  }
+  return `${unitName} Die fallback: ${effectName} (missing: ${EFFECT_DIR}/${effectName}.json)`
 }
 
 function buildEffectSheet(
@@ -340,6 +352,17 @@ export function dieFallbackFxOpacity(
   return 1
 }
 
+/** Static _Dead corpse under the skull once fade-in completes (die phase start). */
+export function dieFallbackCorpseBodyVisible(
+  schedule: DieFallbackFxSchedule | undefined,
+  nowMs: number,
+): boolean {
+  if (!schedule) {
+    return true
+  }
+  return nowMs >= schedule.diePhaseStartMs
+}
+
 export function dieFallbackFxFrame(
   sheet: DieFallbackEffectSheet,
   schedule: DieFallbackFxSchedule,
@@ -497,7 +520,17 @@ export async function runBattleDieFallbackTimeline(opts: {
       return prev
     }
     const { dieFallbackFx: _drop, ...rest } = row
-    return { ...prev, [opts.stackId]: rest }
+    return {
+      ...prev,
+      [opts.stackId]: {
+        ...rest,
+        kind: 'idle' as const,
+        startedMs: performance.now(),
+        frameOffset: 0,
+        flipX: rest.flipX ?? row.flipX,
+        corpseBody: true,
+      },
+    }
   })
   return true
 }
@@ -529,7 +562,17 @@ export async function runBattleDieFallbackAfterHit(opts: {
       return prev
     }
     const { dieFallbackFx: _drop, ...rest } = row
-    return { ...prev, [opts.stackId]: rest }
+    return {
+      ...prev,
+      [opts.stackId]: {
+        ...rest,
+        kind: 'idle' as const,
+        startedMs: performance.now(),
+        frameOffset: 0,
+        flipX: rest.flipX ?? row.flipX,
+        corpseBody: true,
+      },
+    }
   })
 }
 

@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { DebugSections } from '../hex/debug'
-import { getWorldRenderStats, type WorldRenderStats } from '../hex/worldRenderChunks'
+import {
+  getWorldRenderStats,
+  setDevRenderStatsSampling,
+  type WorldRenderStats,
+} from '../hex/worldRenderChunks'
 import { GameWindowModal } from './GameWindowModal'
 import { GameWindowOverlay } from './GameWindowOverlay'
 import type { LevelUpNotice } from '../session/xp'
@@ -29,12 +33,15 @@ type DevPopupProps = {
   townHexNumbers?: { enabled: boolean; onToggle: () => void }
   aiTraces?: string[]
   inCombat?: boolean
+  gameRunning?: boolean
+  onGameSettings?: () => void
 }
 
 export function DevPopup(props: DevPopupProps) {
   const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
 
   useEffect(() => {
+    setDevRenderStatsSampling(props.open)
     if (!props.open) {
       setWorldPerf(null)
       return
@@ -77,6 +84,8 @@ export function DevPopup(props: DevPopupProps) {
           townHexNumbers={props.townHexNumbers}
           aiTraces={props.aiTraces}
           inCombat={props.inCombat}
+          gameRunning={props.gameRunning ?? true}
+          onGameSettings={props.onGameSettings}
         />
       </GameWindowModal>
     </GameWindowOverlay>

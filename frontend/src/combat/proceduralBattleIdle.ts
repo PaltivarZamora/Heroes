@@ -71,6 +71,69 @@ export function idleWave(nowMs: number, motion: ProceduralIdleMotion): number {
   return Math.sin((tSec * (Math.PI * 2)) / motion.periodSec + motion.phaseRad)
 }
 
+export type ProceduralIdleMotionAdjust = {
+  scaleYMult: number
+  offsetX: number
+  offsetY: number
+  /** Local Y offset so scaleY(breath) keeps the foot planted when anchor is not at the foot. */
+  spriteOffsetY: number
+}
+
+/**
+ * Compensate vertical scale about `anchorY` (0=top, 1=bottom) so the foot (y=1) stays fixed.
+ * `displayHeight` is the rendered height at breath multiplier 1.
+ */
+export function proceduralIdleBreathFootPlantSpriteOffsetY(
+  scaleYMult: number,
+  displayHeight: number,
+  anchorY: number,
+): number {
+  if (Math.abs(scaleYMult - 1) < 0.0001 || displayHeight <= 0) {
+    return 0
+  }
+  return -(1 - anchorY) * displayHeight * (scaleYMult - 1)
+}
+
+/** Shared breath / bob / drift from battle_idle_* config. */
+export function proceduralIdleMotionAdjust(
+  nowMs: number,
+  motion: ProceduralIdleMotion,
+  moveKind: MoveKind,
+  hexPx: number,
+  settings: BattleIdleSettings,
+  footPlant?: { displayHeight: number; anchorY: number },
+): ProceduralIdleMotionAdjust | null {
+  if (!settings.enabled) {
+    return null
+  }
+  const wave = idleWave(nowMs, motion)
+  if (moveKind === 'flying') {
+    const bobPx = hexPx * (settings.bobPct / 100)
+    const up = bobPx * (0.5 - 0.5 * wave)
+    return { scaleYMult: 1, offsetX: 0, offsetY: -up, spriteOffsetY: 0 }
+  }
+  if (moveKind === 'hover') {
+    const driftPx = hexPx * (settings.driftPct / 100)
+    return {
+      scaleYMult: 1,
+      offsetX: driftPx * wave,
+      offsetY: 0,
+      spriteOffsetY: 0,
+    }
+  }
+  const breath = settings.breathPct / 100
+  const scaleYMult = 1 + breath * wave
+  const spriteOffsetY =
+    footPlant != null
+      ? proceduralIdleBreathFootPlantSpriteOffsetY(
+          scaleYMult,
+          footPlant.displayHeight,
+          footPlant.anchorY,
+        )
+      : 0
+  return { scaleYMult, offsetX: 0, offsetY: 0, spriteOffsetY }
+}
+
 /** CSS transform fragment (before flip); origin is the sprite foot anchor. */
 export function proceduralIdleTransformCss(
   nowMs: number,
@@ -79,20 +142,25 @@ export function proceduralIdleTransformCss(
   hexPx: number,
   settings: BattleIdleSettings,
 ): string | undefined {
-  if (!settings.enabled) {
+  const adj = proceduralIdleMotionAdjust(
+    nowMs,
+    motion,
+    moveKind,
+    hexPx,
+    settings,
+  )
+  if (!adj) {
     return undefined
   }
-  const wave = idleWave(nowMs, motion)
-  if (moveKind === 'flying') {
-    const bobPx = hexPx * (settings.bobPct / 100)
-    const up = bobPx * (0.5 - 0.5 * wave)
-    return `translateY(${-up}px)`
+  if (adj.offsetY !== 0) {
+    return `translateY(${adj.offsetY}px)`
   }
-  if (moveKind === 'hover') {
-    const driftPx = hexPx * (settings.driftPct / 100)
-    return `translateX(${driftPx * wave}px)`
+  if (adj.offsetX !== 0) {
+    return `translateX(${adj.offsetX}px)`
   }
-  const breath = settings.breathPct / 100
-  const scaleY = 1 + breath * wave
-  return `scaleY(${scaleY})`
+  if (adj.scaleYMult !== 1) {
+    // transform-origin is the sprite foot anchor (see CombatBattleUnitArt).
+    return `scaleY(${adj.scaleYMult})`
+  }
+  return undefined
 }

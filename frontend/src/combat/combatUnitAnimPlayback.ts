@@ -30,7 +30,7 @@ import {
 import type { CombatSide } from './battle'
 import {
   battleUnitDieSheetDrawable,
-  battleUnitHasDrawableDieSheet,
+  battleUnitHasOwnDrawableDieSheet,
   battleUnitSheetForUnit,
   flipBattleUnitForSide,
   reportBattleUnitDieNotDrawable,
@@ -45,6 +45,8 @@ import {
 import {
   applyDieFallbackScheduleVisual,
   dieFallbackEffectNames,
+  formatDieFallbackCombatLogLine,
+  pickRandomLoadedDieFallbackEffect,
   runBattleDieFallbackAfterHit,
   runBattleDieFallbackTimeline,
   tryPrimeDieFallbackSchedule,
@@ -187,11 +189,19 @@ export function stackShowsBattleSprites(
   catalog: ReferenceCatalog | null | undefined,
   sheets: Map<number, BattleUnitSheetSet | null>,
   visual: StackBattleVisual | undefined,
+  paintNowMs?: number,
 ): boolean {
   if (!catalog || isHeroStack(stack)) {
     return false
   }
   if (!sheets.get(stack.unitId)?.animated) {
+    return false
+  }
+  if (
+    visual?.dieFallbackFx &&
+    paintNowMs != null &&
+    paintNowMs >= visual.dieFallbackFx.diePhaseStartMs
+  ) {
     return false
   }
   if (stack.qty > 0) {
@@ -278,16 +288,20 @@ export async function runBattleHitReactionPhase(opts: {
       : 0
   const soundDelayMs = durationMs * soundPct
   const startedMs = opts.actionStartedMs ?? performance.now()
-  opts.setStackVisuals((prev) => ({
-    ...prev,
-    [opts.stackId]: {
-      kind: 'Hit',
-      startedMs,
-      frameOffset: 0,
-      flipX: opts.sideFlipX,
-      ...(opts.proceduralHit ? { proceduralHit: opts.proceduralHit } : {}),
-    },
-  }))
+  opts.setStackVisuals((prev) => {
+    const dieFallbackFx = prev[opts.stackId]?.dieFallbackFx
+    return {
+      ...prev,
+      [opts.stackId]: {
+        kind: 'Hit',
+        startedMs,
+        frameOffset: 0,
+        flipX: opts.sideFlipX,
+        ...(opts.proceduralHit ? { proceduralHit: opts.proceduralHit } : {}),
+        ...(dieFallbackFx ? { dieFallbackFx } : {}),
+      },
+    }
+  })
   if (opts.proceduralHit) {
     appendBattleAnimCombatLog(
       formatProceduralHitDevLog(
@@ -410,7 +424,7 @@ async function runBattleWipedDeathAnim(opts: {
   proceduralHit: ProceduralHitMotion | null
   onDieStart?: () => void
 }): Promise<void> {
-  const hasDieSheet = battleUnitHasDrawableDieSheet(opts.set)
+  const hasDieSheet = battleUnitHasOwnDrawableDieSheet(opts.set)
   const hasHitSheet = opts.set ? battleUnitHasHitSheet(opts.set) : false
   let hitStartMs: number | null = null
   let primedSchedule: ReturnType<typeof tryPrimeDieFallbackSchedule> = null
@@ -434,6 +448,23 @@ async function runBattleWipedDeathAnim(opts: {
           opts.stackId,
           primedSchedule.schedule,
         )
+        const logLine = formatDieFallbackCombatLogLine(
+          opts.unitName ?? opts.stackId,
+          primedSchedule.effect.name,
+          primedSchedule.effect,
+        )
+        opts.onLogged?.(logLine)
+        appendBattleAnimCombatLog(logLine)
+      } else if (dieFallbackEffectNames(opts.catalog).length > 0) {
+        const pickName =
+          dieFallbackEffectNames(opts.catalog)[0] ?? 'Effect_Die_Skull'
+        const logLine = formatDieFallbackCombatLogLine(
+          opts.unitName ?? opts.stackId,
+          pickName,
+          opts.dieFallbackEffects.get(pickName),
+        )
+        opts.onLogged?.(logLine)
+        appendBattleAnimCombatLog(logLine)
       }
     }
     const hitPlayed = await runBattleHitReactionPhase({
@@ -480,6 +511,19 @@ async function runBattleWipedDeathAnim(opts: {
     return
   }
 
+  const effect = pickRandomLoadedDieFallbackEffect(
+    opts.catalog,
+    opts.dieFallbackEffects,
+  )
+  if (effect) {
+    const logLine = formatDieFallbackCombatLogLine(
+      opts.unitName ?? opts.stackId,
+      effect.name,
+      effect,
+    )
+    opts.onLogged?.(logLine)
+    appendBattleAnimCombatLog(logLine)
+  }
   const played = await runBattleDieFallbackTimeline({
     stackId: opts.stackId,
     catalog: opts.catalog,
@@ -745,7 +789,7 @@ export function anyTargetReactionAnimNeeded(
         return true
       }
     }
-    if (wiped && battleUnitHasDrawableDieSheet(set)) {
+    if (wiped && battleUnitHasOwnDrawableDieSheet(set)) {
       return true
     }
     if (wiped && catalog && dieFallbackEffectNames(catalog).length > 0) {

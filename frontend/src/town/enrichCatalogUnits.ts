@@ -89,8 +89,8 @@ export function enrichCatalogUnits(catalog: ReferenceCatalog): void {
     let image_path = unit.image_path
     let image_path_alt = unit.image_path_alt
     if (unitHasNamedTag(catalog, unit, 'unstable_rift')) {
-      image_path = image_path ?? 'Unstable_Rift_1.png'
-      image_path_alt = image_path_alt ?? 'Silent_Rift_1.png'
+      image_path = image_path ?? 'Unstable_Rift_1_Stand.png'
+      image_path_alt = image_path_alt ?? 'Silent_Rift_1_Stand.png'
     }
     return {
       ...unit,

@@ -686,7 +686,7 @@ export function pickFleeSteps(
     return []
   }
   const kind = moveKindForUnit(unit, catalog)
-  const tombs = tombstoneOccupancyBodies(battle.tombstones)
+  const tombs = tombstoneOccupancyBodies(battle.tombstones, catalog)
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
   const landOccupied = landingOccupiedForMover(
     battle.stacks,
@@ -777,7 +777,7 @@ export function pickRetreatSteps(
     return []
   }
   const kind = moveKindForUnit(unit, catalog)
-  const tombs = tombstoneOccupancyBodies(battle.tombstones)
+  const tombs = tombstoneOccupancyBodies(battle.tombstones, catalog)
   const occupied = occupiedForMover(battle.stacks, catalog, stack.id, kind)
   const landOccupied = landingOccupiedForMover(
     battle.stacks,

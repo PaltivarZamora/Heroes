@@ -84,6 +84,9 @@ export type DevToolsPanelProps = {
   townHexNumbers?: DevToggle
   aiTraces?: string[]
   inCombat?: boolean
+  /** Title screen: only reload / new seed / game settings. */
+  gameRunning?: boolean
+  onGameSettings?: () => void
 }
 
 type DevSectionId =
@@ -161,6 +164,8 @@ export function DevToolsPanel({
   sections,
   worldPerf,
   inCombat = false,
+  gameRunning = true,
+  onGameSettings,
 }: DevToolsPanelProps) {
   const [reloading, setReloading] = useState(false)
   const [stepsUnlimited, setStepsUnlimited] = useState(false)
@@ -182,15 +187,17 @@ export function DevToolsPanel({
       const status = await reloadReferenceData()
       onDataStatus?.(status)
       await fetchCatalog()
-      setSession(restoreAllHeroMovement(getSession()))
       const session = getSession()
-      const selectedId = getSelectedMapHeroId()
-      const liveHero =
-        (selectedId
-          ? session.heroes.find((row) => row.id === selectedId)
-          : undefined) ?? session.heroes[0]
-      if (liveHero) {
-        setHeroMovementRemaining(liveHero.movement_remaining)
+      if (session.heroes.length > 0) {
+        setSession(restoreAllHeroMovement(session))
+        const selectedId = getSelectedMapHeroId()
+        const liveHero =
+          (selectedId
+            ? session.heroes.find((row) => row.id === selectedId)
+            : undefined) ?? getSession().heroes[0]
+        if (liveHero) {
+          setHeroMovementRemaining(liveHero.movement_remaining)
+        }
       }
       flash(status.ok ? 'Reference data reloaded' : 'Reload finished with errors')
     } catch (err: unknown) {
@@ -366,6 +373,21 @@ export function DevToolsPanel({
           </button>
         ) : null}
 
+        {onGameSettings ? (
+          <button
+            type="button"
+            className="dev-popup-btn"
+            onClick={() => {
+              onGameSettings()
+              onClose?.()
+            }}
+          >
+            Game Settings
+          </button>
+        ) : null}
+
+        {gameRunning ? (
+          <>
         <DevSection
           sectionId="towns"
           title="Towns"
@@ -646,6 +668,8 @@ display objects: ${worldPerf.displayObjectsVisible} visible / ${worldPerf.displa
               <pre className="dev-popup-pre">{sections.rest}</pre>
             ) : null}
           </DevSection>
+        ) : null}
+          </>
         ) : null}
       </div>
     </div>
