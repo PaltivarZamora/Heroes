@@ -1,3 +1,4 @@
+import { logConfigOnce } from '../session/configLog'
 import type { ReferenceCatalog } from '../town/catalog'
 import { parseStatTags } from '../town/statCatalog'
 
@@ -134,7 +135,8 @@ export function auditItemSlotTypes(catalog: ReferenceCatalog): void {
   )
   for (const item of catalog.item) {
     if (!slotIds.has(item.slot_type_id)) {
-      console.warn(
+      logConfigOnce(
+        `items:slot_type:${item.id}`,
         `[items] item.id=${item.id} slot_type_id=${item.slot_type_id} is not a kind-1 slot row`,
       )
     }

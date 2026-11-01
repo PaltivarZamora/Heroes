@@ -12,8 +12,7 @@ import java.util.Set;
 
 /**
  * World mobs (BR S9-25), pipeline layer 6. Random, gap, road, and guard mobs
- * share one sub-seed. They are not terrain blockers; the final check still runs
- * after this layer.
+ * share one sub-seed. Footprints reserve full shapes; L7 treats them as blockers.
  */
 final class MobsLayer {
 
@@ -45,10 +44,12 @@ final class MobsLayer {
         Set<String> features = featureKeys(ctx);
         List<int[]> towns = townFootprints(ctx);
         List<int[]> starts = startingTowns(ctx);
+        Set<String> townKeys = townFootprintKeySet(towns);
 
         int chest = 0;
         int pocket = 0;
         int island = 0;
+        int[] skipCount = new int[1];
         List<MapMobData> mobs = new ArrayList<>();
 
         int groundItemGuards = 0;
@@ -63,11 +64,15 @@ final class MobsLayer {
                     rng,
                     mobs,
                     occupied,
+                    features,
+                    townKeys,
                     obj.guardQ(),
                     obj.guardR(),
                     cat.chestTiers(level),
                     townType,
-                    advancedPct)) {
+                    advancedPct,
+                    "chest_guard",
+                    skipCount)) {
                 chest++;
             }
         }
@@ -83,11 +88,15 @@ final class MobsLayer {
                     rng,
                     mobs,
                     occupied,
+                    features,
+                    townKeys,
                     obj.guardQ(),
                     obj.guardR(),
                     tiers,
                     townType,
-                    advancedPct)) {
+                    advancedPct,
+                    "ground_item_guard",
+                    skipCount)) {
                 groundItemGuards++;
             }
         }
@@ -108,11 +117,15 @@ final class MobsLayer {
                         rng,
                         mobs,
                         occupied,
+                        features,
+                        townKeys,
                         door[0],
                         door[1],
                         List.of(door[2]),
                         townType,
-                        advancedPct)) {
+                        advancedPct,
+                        "pocket_guard",
+                        skipCount)) {
                     pocket++;
                 }
             }
@@ -137,11 +150,15 @@ final class MobsLayer {
                         rng,
                         mobs,
                         occupied,
+                        features,
+                        townKeys,
                         landing[0],
                         landing[1],
                         List.of(landing[2]),
                         townType,
-                        advancedPct)) {
+                        advancedPct,
+                        "island_guard",
+                        skipCount)) {
                     island++;
                 }
             }
@@ -174,7 +191,21 @@ final class MobsLayer {
             }
             int[] pick = spots.get(rng.nextInt(spots.size()));
             if (placeRandom(
-                    ctx, cat, rng, mobs, occupied, pick, starts, tierMax, bands, townType, advancedPct)) {
+                    ctx,
+                    cat,
+                    rng,
+                    mobs,
+                    occupied,
+                    features,
+                    townKeys,
+                    pick,
+                    starts,
+                    tierMax,
+                    bands,
+                    townType,
+                    advancedPct,
+                    "gap",
+                    skipCount)) {
                 gaps++;
             }
         }
@@ -205,12 +236,16 @@ final class MobsLayer {
                             rng,
                             mobs,
                             occupied,
+                            features,
+                            townKeys,
                             hex,
                             starts,
                             tierMax,
                             bands,
                             townType,
-                            advancedPct)) {
+                            advancedPct,
+                            "road",
+                            skipCount)) {
                 roads++;
                 roadLeft--;
             }
@@ -226,12 +261,27 @@ final class MobsLayer {
                 continue;
             }
             if (placeRandom(
-                    ctx, cat, rng, mobs, occupied, hex, starts, tierMax, bands, townType, advancedPct)) {
+                    ctx,
+                    cat,
+                    rng,
+                    mobs,
+                    occupied,
+                    features,
+                    townKeys,
+                    hex,
+                    starts,
+                    tierMax,
+                    bands,
+                    townType,
+                    advancedPct,
+                    "scatter",
+                    skipCount)) {
                 scatter++;
             }
         }
 
         ctx.mobs = mobs;
+        ctx.mobShapeBlockKeys = WorldMobPlacement.allMobShapeKeys(mobs, cat.unitFootprintById);
         String detail =
                 "gap="
                         + gaps
@@ -247,25 +297,20 @@ final class MobsLayer {
                         + pocket
                         + " island="
                         + island
+                        + " skipped="
+                        + skipCount[0]
                         + " total="
                         + mobs.size();
         MapGenTimings.current().layerDetail("L6", detail);
         MapGenPipeline.logCounts("mobs", detail);
     }
 
-    private static boolean placeGuard(
-            MapGenContext ctx,
-            Catalog cat,
-            Random rng,
-            List<MapMobData> mobs,
-            Set<String> occupied,
-            int q,
-            int r,
-            List<Integer> tiers,
-            int townType,
-            int advancedPct) {
-        return placeGuard(
-                ctx, cat, rng, mobs, occupied, q, r, tiers, townType, advancedPct, true);
+    private static Set<String> townFootprintKeySet(List<int[]> towns) {
+        Set<String> keys = new HashSet<>();
+        for (int[] town : towns) {
+            keys.add(HexCoords.key(town[0], town[1]));
+        }
+        return keys;
     }
 
     private static boolean placeGuard(
@@ -274,22 +319,53 @@ final class MobsLayer {
             Random rng,
             List<MapMobData> mobs,
             Set<String> occupied,
+            Set<String> featureKeys,
+            Set<String> townKeys,
             int q,
             int r,
             List<Integer> tiers,
             int townType,
             int advancedPct,
-            boolean guardsLoot) {
-        String key = HexCoords.key(q, r);
-        if (occupied.contains(key) || tiers.isEmpty()) {
-            return false;
-        }
-        int col = HexCoords.colOf(q, r);
-        if (col < 0 || r < 0 || col >= ctx.width || r >= ctx.height) {
-            return false;
-        }
-        HexTerrain terrain = ctx.cells[r][col];
-        if (terrain == null || terrain.blocked()) {
+            String skipKind,
+            int[] skipCount) {
+        return placeGuard(
+                ctx,
+                cat,
+                rng,
+                mobs,
+                occupied,
+                featureKeys,
+                townKeys,
+                q,
+                r,
+                tiers,
+                townType,
+                advancedPct,
+                true,
+                skipKind,
+                skipCount);
+    }
+
+    private static boolean placeGuard(
+            MapGenContext ctx,
+            Catalog cat,
+            Random rng,
+            List<MapMobData> mobs,
+            Set<String> occupied,
+            Set<String> featureKeys,
+            Set<String> townKeys,
+            int q,
+            int r,
+            List<Integer> tiers,
+            int townType,
+            int advancedPct,
+            boolean guardsLoot,
+            String skipKind,
+            int[] skipCount) {
+        if (tiers.isEmpty()) {
+            MapGenPipeline.logRepair(
+                    "mobs", "skip " + skipKind + " @" + q + "," + r + " (empty tiers)");
+            skipCount[0]++;
             return false;
         }
         List<Unit> pool = cat.pool(tiers, townType, false);
@@ -297,11 +373,37 @@ final class MobsLayer {
             pool = cat.pool(tiers, 0, false);
         }
         if (pool.isEmpty()) {
+            MapGenPipeline.logRepair(
+                    "mobs", "skip " + skipKind + " @" + q + "," + r + " (empty unit pool)");
+            skipCount[0]++;
             return false;
         }
         Unit unit = pool.get(rng.nextInt(pool.size()));
-        mobs.add(new MapMobData(q, r, cat.composition(unit, advancedPct), guardsLoot));
-        occupied.add(key);
+        List<MapMobData.Stack> stacks = cat.composition(unit, advancedPct);
+        String footprint =
+                WorldMobPlacement.footprintForStacks(stacks, cat.unitFootprintById);
+        int[] anchor =
+                WorldMobPlacement.findAnchor(
+                        ctx, occupied, featureKeys, townKeys, q, r, footprint);
+        if (anchor == null) {
+            MapGenPipeline.logRepair(
+                    "mobs",
+                    "skip "
+                            + skipKind
+                            + " @"
+                            + q
+                            + ","
+                            + r
+                            + " footprint="
+                            + footprint
+                            + " (no anchor within "
+                            + WorldMobPlacement.ANCHOR_SEARCH_RADIUS
+                            + ")");
+            skipCount[0]++;
+            return false;
+        }
+        mobs.add(new MapMobData(anchor[0], anchor[1], stacks, guardsLoot));
+        WorldMobPlacement.reserveShape(occupied, anchor[0], anchor[1], footprint);
         return true;
     }
 
@@ -311,30 +413,40 @@ final class MobsLayer {
             Random rng,
             List<MapMobData> mobs,
             Set<String> occupied,
+            Set<String> featureKeys,
+            Set<String> townKeys,
             int[] hex,
             List<int[]> starts,
             int tierMax,
             List<int[]> bands,
             int townType,
-            int advancedPct) {
+            int advancedPct,
+            String skipKind,
+            int[] skipCount) {
         int maxTier = Math.min(tierMax, tierForDistance(hexDistanceTo(hex[0], hex[1], starts), bands));
         maxTier = Math.max(1, maxTier);
         List<Integer> tiers = new ArrayList<>();
         for (int t = 1; t <= maxTier; t++) {
             tiers.add(t);
         }
-        return placeGuard(
-                ctx,
-                cat,
-                rng,
-                mobs,
-                occupied,
-                hex[0],
-                hex[1],
-                tiers,
-                townType,
-                advancedPct,
-                false);
+        boolean placed =
+                placeGuard(
+                        ctx,
+                        cat,
+                        rng,
+                        mobs,
+                        occupied,
+                        featureKeys,
+                        townKeys,
+                        hex[0],
+                        hex[1],
+                        tiers,
+                        townType,
+                        advancedPct,
+                        false,
+                        skipKind,
+                        skipCount);
+        return placed;
     }
 
     private static boolean randomHexOk(
@@ -578,18 +690,22 @@ final class MobsLayer {
         final List<Unit> units;
         final Map<Integer, List<Integer>> chestTiersByLevel;
         final Set<Integer> enabledTownIds;
+        final Map<Integer, String> unitFootprintById;
 
         Catalog(
                 List<Unit> units,
                 Map<Integer, List<Integer>> chestTiersByLevel,
-                Set<Integer> enabledTownIds) {
+                Set<Integer> enabledTownIds,
+                Map<Integer, String> unitFootprintById) {
             this.units = units;
             this.chestTiersByLevel = chestTiersByLevel;
             this.enabledTownIds = enabledTownIds;
+            this.unitFootprintById = unitFootprintById;
         }
 
         static Catalog load(ReferenceData data) {
             Map<Integer, int[]> buildings = new HashMap<>();
+            Map<Integer, String> unitFootprintById = new HashMap<>();
             for (Map<String, Object> row : data.rows("building")) {
                 Integer id = asInt(row.get("id"));
                 if (id == null) {
@@ -627,11 +743,14 @@ final class MobsLayer {
                 if (tier <= 0) {
                     continue;
                 }
+                String footprint =
+                        Footprint.parseFootprint(row.get("footprint"), row.get("hex_size"));
+                unitFootprintById.put(id, footprint);
                 units.add(new Unit(id, townId, rawTown, tier, rawClass, level, growth));
             }
             units.sort(Comparator.comparingInt(u -> u.id));
             Set<Integer> enabledTownIds = new HashSet<>(TownEnablement.enabledTownTypeIds(data));
-            return new Catalog(units, loadChestTiers(data), enabledTownIds);
+            return new Catalog(units, loadChestTiers(data), enabledTownIds, unitFootprintById);
         }
 
         List<Integer> chestTiers(int level) {

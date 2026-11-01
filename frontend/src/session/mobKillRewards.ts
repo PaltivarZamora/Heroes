@@ -17,22 +17,7 @@ import { mobLabel, mobLeadStack } from './mobs'
 import type { GameSession, Mob } from './types'
 import { equipBestItemsForHero } from '../ai/itemEquip'
 
-let warnedGoldPct = false
-let warnedItemPct = false
-
-function warnGoldOnce(message: string): void {
-  if (!warnedGoldPct) {
-    warnedGoldPct = true
-    console.warn(`[mob-rewards] ${message}`)
-  }
-}
-
-function warnItemOnce(message: string): void {
-  if (!warnedItemPct) {
-    warnedItemPct = true
-    console.warn(`[mob-rewards] ${message}`)
-  }
-}
+import { logConfigOnce } from './configLog'
 
 function parsePctRange(raw: unknown): [number, number] | null {
   if (!Array.isArray(raw) || raw.length < 2) {
@@ -52,12 +37,18 @@ export function mobKillGoldPctRoll(
 ): number | null {
   const raw = mapCfg(catalog, 'mob_gold_pct')
   if (raw == null) {
-    warnGoldOnce('map_config.mob_gold_pct missing')
+    logConfigOnce(
+      'mob-rewards:mob_gold_pct',
+      '[mob-rewards] map_config.mob_gold_pct missing',
+    )
     return null
   }
   const range = parsePctRange(raw)
   if (!range) {
-    warnGoldOnce('map_config.mob_gold_pct not a [lo,hi] range')
+    logConfigOnce(
+      'mob-rewards:mob_gold_pct_range',
+      '[mob-rewards] map_config.mob_gold_pct not a [lo,hi] range',
+    )
     return null
   }
   const [lo, hi] = range
@@ -122,7 +113,10 @@ export function grantMobKillGold(
 function rollMobItemPct(catalog: ReferenceCatalog | null, rng: () => number): boolean {
   const raw = mapCfg(catalog, 'mob_item_pct')
   if (raw == null) {
-    warnItemOnce('map_config.mob_item_pct missing')
+    logConfigOnce(
+      'mob-rewards:mob_item_pct',
+      '[mob-rewards] map_config.mob_item_pct missing',
+    )
     return false
   }
   const pct = Number(raw)

@@ -1,3 +1,4 @@
+import { logConfigOnce } from '../session/configLog'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
@@ -65,7 +66,8 @@ export function passiveTownIdFromFilter(
       const warnKey = `${hero?.class_id ?? 0}:${legacy}`
       if (!warnedLegacyTownFilter.has(warnKey)) {
         warnedLegacyTownFilter.add(warnKey)
-        console.warn(
+        logConfigOnce(
+          `passive_town_filter:${warnKey}`,
           `[passive_town_filter] legacy town name "${legacy}" ignored for hero_type.id=${hero?.class_id ?? '?'}; use town id or omit for own town`,
         )
       }

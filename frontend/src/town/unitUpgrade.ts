@@ -45,6 +45,24 @@ export function advancedUnitsFor(
   )
 }
 
+/** Level-1 partner for an advanced unit (same town, tier, class); null if none or ambiguous. */
+export function basicPartnerForAdvanced(
+  catalog: ReferenceCatalog | null | undefined,
+  unit: UnitRow | null | undefined,
+): UnitRow | null {
+  if (!catalog || !unit || unitDwellingLevel(unit) !== 2) {
+    return null
+  }
+  if (classBranchId(unit) == null) {
+    return null
+  }
+  const matches = catalog.unit.filter(
+    (row) =>
+      sameUpgradeBranch(row, unit) && unitDwellingLevel(row) === 1,
+  )
+  return matches.length === 1 ? matches[0]! : null
+}
+
 export type UpgradePairingIssue = {
   unitId: number
   unitName: string

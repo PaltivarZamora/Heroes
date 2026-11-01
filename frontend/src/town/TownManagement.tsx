@@ -89,6 +89,8 @@ type TownManagementProps = {
   readOnly?: boolean
   /** After a successful Hanger flight launch — sync map hero / camera. */
   onHeroFlew?: (heroId: string) => void
+  /** Human tavern hire — select the new hero on map and army panel. */
+  onHeroHired?: (heroId: string) => void
   embedded?: boolean
   /** Dev: draw town-grid hex numbers and outlines. */
   showHexNumbers?: boolean
@@ -108,6 +110,7 @@ export function TownManagement({
   onArchiveLearn,
   readOnly = false,
   onHeroFlew,
+  onHeroHired,
   embedded = false,
   showHexNumbers = false,
 }: TownManagementProps) {
@@ -352,14 +355,19 @@ export function TownManagement({
       return false
     }
     let error: string | null = null
+    let hiredId: string | undefined
     updateSession((current) => {
       const result = hireHeroFromPool(current, townId, pick)
       error = result.error
+      hiredId = result.heroId
       return result.error ? current : result.session
     })
     if (error) {
       setMessage(error)
       return false
+    }
+    if (hiredId) {
+      onHeroHired?.(hiredId)
     }
     closePanel()
     return true

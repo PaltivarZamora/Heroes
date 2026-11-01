@@ -43,6 +43,17 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>${project.basedir}/../shared</directory>
+                <includes>
+                    <include>footprint-shapes.json</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

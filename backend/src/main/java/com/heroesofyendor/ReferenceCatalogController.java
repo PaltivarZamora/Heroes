@@ -61,6 +61,7 @@ public class ReferenceCatalogController {
         body.put("item", decodeRows(referenceData.rows("item"), resourceNameToId));
         body.put("item_adj", decodeRows(referenceData.rows("item_adj"), resourceNameToId));
         body.put("app_config", decodeRows(referenceData.rows("app_config"), resourceNameToId));
+        body.put("keybind", decodeRows(referenceData.rows("keybind"), resourceNameToId));
         body.put("combat_config", decodeRows(referenceData.rows("combat_config"), resourceNameToId));
         body.put("map_config", decodeRows(referenceData.rows("map_config"), resourceNameToId));
         body.put("ai_config", decodeRows(referenceData.rows("ai_config"), resourceNameToId));
@@ -69,6 +70,11 @@ public class ReferenceCatalogController {
         body.put("levels", decodeRows(referenceData.rows("levels"), resourceNameToId));
         body.put("hero_levels", decodeRows(referenceData.rows("hero_levels"), resourceNameToId));
         body.put("ground_effect", decodeRows(referenceData.rows("ground_effect"), resourceNameToId));
+        body.put("event", decodeRows(referenceData.rows("event"), resourceNameToId));
+        body.put(
+                "battle_hit_reaction",
+                decodeRows(referenceData.rows("battle_hit_reaction"), resourceNameToId));
+        body.put("anim_config", decodeRows(referenceData.rows("anim_config"), resourceNameToId));
         return body;
     }
 

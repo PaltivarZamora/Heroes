@@ -1,4 +1,5 @@
 import { defineHex, Grid, Orientation, rectangle, type Hex } from 'honeycomb-grid'
+import { logConfigOnce } from '../session/configLog'
 import { HEX_SCALES } from '../hex/hexScale'
 import {
   COMBAT_COLUMNS,
@@ -142,7 +143,8 @@ function warnSkippedMirrorHex(n: number, ctx: TownHexPlaceContext): void {
   const slot =
     ctx.slot != null ? ` slot ${ctx.slot}` : ''
   const role = ctx.role ? ` (${ctx.role})` : ''
-  console.warn(
+  logConfigOnce(
+    `town_map:mirror:${ctx.townName}:${n}`,
     `[town map] Flipped town "${ctx.townName}"${slot}: layout hex ${n}${role} has no mirror; skipped.`,
   )
 }

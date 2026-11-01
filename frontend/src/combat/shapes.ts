@@ -13,7 +13,11 @@ import {
   type CombatStack,
   type CombatTile,
 } from './battle'
-import { occupancyKey, stackOccupyingHex } from './occupancy'
+import { occupancyKey, stackFootprint, stackOccupyingHex, stacksOccupyingHex } from './occupancy'
+import {
+  shapeActionOrigin,
+  type ShapeGeometryOpts,
+} from './actionOrigin'
 import { isUntargetableStack, liveWallLosKeys } from './siege'
 
 export type ShapeHit = {
@@ -361,20 +365,19 @@ function hexHits(
   const hits: ShapeHit[] = []
   const seen = new Set<string>()
   for (const hex of hexes) {
-    const stack = occupant(battle, hex, catalog)
-    if (isFriendly(stack, side) && !allowFriendly) {
-      continue
-    }
-    if (stack && isUntargetableStack(stack, catalog)) {
-      continue
-    }
-    if (stack) {
+    for (const stack of stacksOccupyingHex(battle.stacks, hex.q, hex.r, catalog)) {
+      if (isFriendly(stack, side) && !allowFriendly) {
+        continue
+      }
+      if (isUntargetableStack(stack, catalog)) {
+        continue
+      }
       if (seen.has(stack.id)) {
         continue
       }
       seen.add(stack.id)
+      hits.push({ hex, stack, dmgPct })
     }
-    hits.push({ hex, stack, dmgPct })
   }
   return hits
 }
@@ -422,6 +425,38 @@ export function chargeLineHexes(
   return out
 }
 
+export function pulseFootprintAreaHexes(
+  geometry: ShapeGeometryOpts,
+  catalog: ReferenceCatalog,
+  radius: number,
+  board: ReadonlySet<string>,
+): Axial[] {
+  const stand = geometry.standAnchor
+  const body = { ...geometry.attacker, q: stand.q, r: stand.r }
+  const own = new Set(
+    stackFootprint(body, catalog).map((hex) => keyOf(hex)),
+  )
+  const seen = new Set<string>()
+  const out: Axial[] = []
+  for (const bodyHex of stackFootprint(body, catalog)) {
+    for (const diskHex of hexDisk(bodyHex, radius)) {
+      const key = keyOf(diskHex)
+      if (own.has(key)) {
+        continue
+      }
+      if (!onBoard(diskHex, board)) {
+        continue
+      }
+      if (seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      out.push(diskHex)
+    }
+  }
+  return out
+}
+
 export function geometricHexes(
   spec: UnitCombatAbilities,
   from: Axial,
@@ -431,26 +466,41 @@ export function geometricHexes(
   side: CombatStack['side'],
   tiles: CombatTile[],
   catalog: ReferenceCatalog,
+  geometry?: ShapeGeometryOpts | null,
 ): Axial[] {
+  const origin = geometry
+    ? shapeActionOrigin(geometry, catalog, aim)
+    : from
   switch (spec.shape) {
     case 'cleave':
-      return uniqueHexes(cleaveHexes(from, aim), board)
+      return uniqueHexes(cleaveHexes(origin, aim), board)
     case 'aoe':
       return uniqueHexes(hexDisk(aim, spec.radius), board)
     case 'pulse':
-      return uniqueHexes(hexDisk(from, spec.radius), board)
+      if (geometry) {
+        return uniqueHexes(
+          pulseFootprintAreaHexes(
+            geometry,
+            catalog,
+            Math.max(1, spec.radius ?? 1),
+            board,
+          ),
+          board,
+        )
+      }
+      return uniqueHexes(hexDisk(origin, spec.radius), board)
     case 'beam':
-      return uniqueHexes(hexLine(from, aim), board)
+      return uniqueHexes(hexLine(origin, aim), board)
     case 'charge_line':
-      return uniqueHexes(chargeLineHexes(from, aim, board), board)
+      return uniqueHexes(chargeLineHexes(origin, aim, board), board)
     case 'line':
       // Full length clipped in resolveShapeHits / preview via stackMaxRange.
-      return uniqueHexes(lineHexesToRange(from, aim, 99, board), board)
+      return uniqueHexes(lineHexesToRange(origin, aim, 99, board), board)
     case 'breath':
-      return uniqueHexes(breathHexes(from, aim, spec.rows), board)
+      return uniqueHexes(breathHexes(origin, aim, spec.rows), board)
     case 'rain':
       return uniqueHexes(
-        losEnemies(battle, side, from, tiles, catalog).map((row) => ({
+        losEnemies(battle, side, origin, tiles, catalog).map((row) => ({
           q: row.q,
           r: row.r,
         })),
@@ -472,8 +522,7 @@ export function previewImpactKeys(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
-  /** charge_line: corridor from pre-move origin (defaults to attacker hex). */
-  chargePathOrigin?: Axial | null,
+  geometry?: ShapeGeometryOpts | null,
 ): string[] {
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   if (spec.shape === 'multi') {
@@ -481,13 +530,20 @@ export function previewImpactKeys(
   }
   const acting = actorAt(attacker, battle)
   const board = boardKeys(tiles)
-  const from = { q: acting.attacker.q, r: acting.attacker.r }
-  const origin = chargePathOrigin ?? from
+  const standAnchor = geometry?.standAnchor ?? {
+    q: acting.attacker.q,
+    r: acting.attacker.r,
+  }
+  const geo: ShapeGeometryOpts = geometry ?? {
+    standAnchor,
+    attacker: acting.attacker,
+  }
+  const origin = shapeActionOrigin(geo, catalog, aim)
   let hexes: Axial[]
   if (spec.shape === 'line') {
     hexes = clipHexesAtLosBlocker(
       lineHexesToRange(
-        from,
+        origin,
         aim,
         stackMaxRange(acting.attacker, catalog),
         board,
@@ -495,7 +551,7 @@ export function previewImpactKeys(
       tiles,
       battle.stacks,
       catalog,
-      from,
+      origin,
     )
   } else if (spec.shape === 'charge_line') {
     hexes = clipHexesAtLosBlocker(
@@ -509,29 +565,31 @@ export function previewImpactKeys(
     hexes = clipHexesAtLosBlocker(
       geometricHexes(
         spec,
-        from,
+        origin,
         aim,
         acting.battle,
         board,
         acting.attacker.side,
         tiles,
         catalog,
+        geo,
       ),
       tiles,
       battle.stacks,
       catalog,
-      from,
+      origin,
     )
   } else {
     hexes = geometricHexes(
       spec,
-      from,
+      origin,
       aim,
       acting.battle,
       board,
       acting.attacker.side,
       tiles,
       catalog,
+      geo,
     )
   }
   const keys: string[] = []
@@ -566,8 +624,10 @@ export function resolveShapeHits(
   allowFriendly = false,
   options?: {
     allowRepeatTarget?: boolean
-    /** charge_line: pre-move origin for the pierce corridor. */
+    /** charge_line: pre-move stand anchor for the pierce corridor. */
     chargePathOrigin?: Axial | null
+    wedgeZone?: number | null
+    standAnchor?: Axial | null
   },
 ): ShapeHit[] {
   const base = unitAttackShape(unitById(catalog, attacker.unitId))
@@ -576,7 +636,18 @@ export function resolveShapeHits(
     : base
   const acting = actorAt(attacker, battle)
   const board = boardKeys(tiles)
-  const from = { q: acting.attacker.q, r: acting.attacker.r }
+  const anchor = {
+    q: acting.attacker.q,
+    r: acting.attacker.r,
+  }
+  const standAnchor = options?.standAnchor ?? anchor
+  const geometry: ShapeGeometryOpts = {
+    standAnchor,
+    attacker: acting.attacker,
+    wedgeZone: options?.wedgeZone,
+    chargeStandAnchor: options?.chargePathOrigin,
+  }
+  const origin = shapeActionOrigin(geometry, catalog, aim)
   const side = acting.attacker.side
   const field = acting.battle
   const allowRepeat = options?.allowRepeatTarget === true
@@ -596,7 +667,7 @@ export function resolveShapeHits(
     let prevId = first.id
     const total = Math.max(1, spec.jumps)
     for (let i = 1; i < total; i += 1) {
-      const enemies = losEnemies(field, side, from, tiles, catalog)
+      const enemies = losEnemies(field, side, origin, tiles, catalog)
       const pool = allowRepeat
         ? enemies
         : enemies.filter((row) => row.id !== prevId)
@@ -612,7 +683,7 @@ export function resolveShapeHits(
   }
 
   if (spec.shape === 'multi') {
-    const pool = losEnemies(field, side, from, tiles, catalog)
+    const pool = losEnemies(field, side, origin, tiles, catalog)
     const hits: ShapeHit[] = []
     const n = Math.max(1, spec.targets)
     for (let i = 0; i < n; i += 1) {
@@ -626,10 +697,6 @@ export function resolveShapeHits(
   }
 
   if (spec.shape === 'line' || spec.shape === 'charge_line') {
-    const origin =
-      spec.shape === 'charge_line'
-        ? (options?.chargePathOrigin ?? from)
-        : from
     const perHex = Math.max(1, spec.dmgIncreasePerHex ?? 1)
     const minDmg = Math.max(0, stackMinDmg(acting.attacker, catalog))
     const rawHexes =
@@ -679,13 +746,33 @@ export function resolveShapeHits(
   const geoHexes =
     spec.shape === 'beam'
       ? clipHexesAtLosBlocker(
-          geometricHexes(spec, from, aim, field, board, side, tiles, catalog),
+          geometricHexes(
+            spec,
+            origin,
+            aim,
+            field,
+            board,
+            side,
+            tiles,
+            catalog,
+            geometry,
+          ),
           tiles,
           field.stacks,
           catalog,
-          from,
+          origin,
         )
-      : geometricHexes(spec, from, aim, field, board, side, tiles, catalog)
+      : geometricHexes(
+          spec,
+          origin,
+          aim,
+          field,
+          board,
+          side,
+          tiles,
+          catalog,
+          geometry,
+        )
   return hexHits(
     geoHexes,
     field,

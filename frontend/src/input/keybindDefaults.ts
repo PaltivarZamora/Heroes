@@ -3,6 +3,7 @@ import type { KeybindRow } from '../town/catalog'
 /** Fallback rows only when the catalog `keybind` table omits an action (warn first). */
 export const FALLBACK_KEYBIND_ROWS: KeybindRow[] = [
   { action: 'end_turn', label: 'End Turn', key: 'e', alt_key: 'enter', scope: 'world', rebindable: true, sort_order: 10 },
+  { action: 'advance_week', label: 'Advance Week', key: 'w', alt_key: null, scope: 'world', rebindable: true, sort_order: 15 },
   { action: 'hero_screen', label: 'Hero Screen', key: 'h', alt_key: null, scope: 'world', rebindable: true, sort_order: 20 },
   { action: 'town_screen', label: 'Town Screen', key: 't', alt_key: null, scope: 'world', rebindable: true, sort_order: 30 },
   { action: 'next_actionable', label: 'Next Actionable', key: 'tab', alt_key: null, scope: 'world', rebindable: true, sort_order: 40 },

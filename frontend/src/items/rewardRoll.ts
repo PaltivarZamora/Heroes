@@ -4,18 +4,10 @@ import type { GameSession } from '../session/types'
 import { allocateItemUid } from './state'
 import type { RolledItem } from './types'
 
-let warnedPct = false
-let warnedRarity = false
+import { logConfigOnce } from '../session/configLog'
 
 function warnOnce(kind: 'pct' | 'rarity', message: string): void {
-  if (kind === 'pct' && !warnedPct) {
-    warnedPct = true
-    console.warn(`[items] ${message}`)
-  }
-  if (kind === 'rarity' && !warnedRarity) {
-    warnedRarity = true
-    console.warn(`[items] ${message}`)
-  }
+  logConfigOnce(`items:${kind}:${message}`, `[items] ${message}`)
 }
 
 export function mapConfigRewardPct(catalog: ReferenceCatalog | null): number | null {

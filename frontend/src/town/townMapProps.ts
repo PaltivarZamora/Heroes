@@ -1,3 +1,4 @@
+import { logConfigOnce } from '../session/configLog'
 import {
   hexTerrainByName,
   mapCfg,
@@ -35,7 +36,8 @@ export function townPropScatterPct(
   const raw = mapCfg(catalog, 'town_prop_pct', null)
   if (raw === undefined || raw === null) {
     if (!warnedTownPropPct) {
-      console.warn(
+      logConfigOnce(
+        'town_map:town_prop_pct',
         '[town map] map_config.town_prop_pct missing — no town props',
       )
       warnedTownPropPct = true

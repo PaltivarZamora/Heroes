@@ -1,4 +1,3 @@
-import { hexDistance } from '../hex/pathfinding'
 import {
   unitAttackShape,
   unitById,
@@ -6,6 +5,7 @@ import {
 } from '../town/catalog'
 import type { CombatStack, CombatTile } from './battle'
 import { isVanished } from './condition'
+import { minFootprintHexDistance } from './occupancy'
 import { pullRangeOk } from './pullTarget'
 import { hasLineOfSight } from './shapes'
 import { isUntargetableStack } from './siege'
@@ -26,7 +26,12 @@ export function qualifiesForExtraShots(
   if (mainTarget.side === attacker.side || mainTarget.qty <= 0) {
     return false
   }
-  const dist = hexDistance(attacker, mainTarget)
+  const dist = minFootprintHexDistance(
+    { q: attacker.q, r: attacker.r },
+    attacker,
+    mainTarget,
+    catalog,
+  )
   if (dist <= 1) {
     return false
   }

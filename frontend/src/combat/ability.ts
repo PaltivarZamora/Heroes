@@ -104,7 +104,10 @@ import {
   stackFromTombstone,
   syncTombstonesFromWipes,
   tombstoneHexKeys,
+  tombstoneAt,
   tombstoneMatchesReviveTarget,
+  nearestReviveAnchorForTombstone,
+  tombstoneFootprintHexes,
 } from './tombstone'
 import {
   applyBreaksOnDamage,
@@ -141,9 +144,8 @@ export type AbilityFlash = {
   color: HitFlashColor
 }
 
-/** One paced multi-hit beat (Earth Spikes): show flash/log, then wait before the next. */
+/** One paced multi-hit beat (Earth Spikes): flash pacing only — never setBattle. */
 export type AbilityBeat = {
-  battle: CombatBattle
   lines: string[]
   flashes: AbilityFlash[]
 }
@@ -2174,7 +2176,6 @@ function applyOneEffect(
       return
     }
     beats.push({
-      battle: { ...battle, stacks: stacks.map((row) => ({ ...row })) },
       lines: beatLines,
       flashes: beatFlashes,
     })
@@ -3284,10 +3285,11 @@ const hitOne = (target: CombatStack, raw: number) => {
       }
       if (!revivedAny && aimHex) {
         const requiredTag = asFinite(stats.target_tag_required)
-        const tomb =
-          tombstones.find(
-            (row) => row.q === aimHex.q && row.r === aimHex.r,
-          ) ?? null
+        const tomb = tombstoneAt(
+          { ...battle, stacks, tombstones },
+          aimHex.q,
+          aimHex.r,
+        )
         if (
           tomb &&
           tombstoneMatchesReviveTarget(
@@ -3303,13 +3305,33 @@ const hitOne = (target: CombatStack, raw: number) => {
               dead,
               Math.max(1, Math.floor((dead * percent) / 100)),
             )
-            const raised = stackFromTombstone(tomb, catalog, revived)
-            stacks = [...stacks.filter((row) => row.id !== raised.id), raised]
-            tombstones = tombstones.filter((row) => row.id !== tomb.id)
-            lines.push(
-              `${ability.name}: ${stackName(catalog, raised)} revived +${revived}.`,
+            const anchor = nearestReviveAnchorForTombstone(
+              { ...battle, stacks, tombstones },
+              catalog,
+              tomb,
+              workingTiles,
             )
-            buffKeys.push(occupancyKey(raised.q, raised.r))
+            if (!anchor) {
+              lines.push(
+                `${ability.name}: no room to revive ${unitById(catalog, tomb.unitId)?.name ?? 'unit'}.`,
+              )
+            } else {
+              const raised = stackFromTombstone(tomb, catalog, revived)
+              raised.q = anchor.q
+              raised.r = anchor.r
+              stacks = [...stacks.filter((row) => row.id !== raised.id), raised]
+              tombstones = tombstones.filter((row) => row.id !== tomb.id)
+              lines.push(
+                `${ability.name}: ${stackName(catalog, raised)} revived +${revived}.`,
+              )
+              for (const hex of tombstoneFootprintHexes({
+                ...tomb,
+                q: anchor.q,
+                r: anchor.r,
+              })) {
+                buffKeys.push(occupancyKey(hex.q, hex.r))
+              }
+            }
           }
         }
       }

@@ -43,6 +43,10 @@ import {
   type NavalLayoutKind,
 } from './naval'
 import { ensureValidDeployments } from './deploySafety'
+import {
+  applyBattleStartPlacement,
+  battleStartDisplayMarkers,
+} from './battleStartPlacement'
 import { seedBattlePropsFromWorld } from './battleProps'
 import {
   addChunkMaskedTerrain,
@@ -56,7 +60,67 @@ import { addFootprintPropSprite, loadPropTexture } from '../hex/propTextures'
 import { parseCssHexColor, wedgesForHex } from '../hex/terrainTransition'
 import { terrainFillColor } from '../hex/world'
 import { setNavalMaskDebugState } from './navalMaskDebugBridge'
-import { formatMp, MOVE_STEP_MS } from '../hex/hero'
+import { formatMp } from '../hex/hero'
+import {
+  battleAnimSettings,
+  battleIdleSettings,
+  ensureBattleAnimConfigWarnings,
+  ensureBattleIdleConfigWarnings,
+  ensureBattleHitConfigWarnings,
+} from './battleAnimConfig'
+import {
+  preloadBattleUnitSheetsForBattleOpening,
+  BATTLE_OPENING_SHEET_PRELOAD_MS,
+  flushBattleSheetLoadFailuresToLog,
+  reportBattleUnitTypeStatic,
+  resetBattleUnitSheetSessionWarnings,
+  battleUnitDieSheetDrawable,
+  type BattleUnitSheetSet,
+} from './battleUnitSheet'
+import { resetBattleUnitSoundWarnings } from './battleUnitSound'
+import {
+  ensureAdvFallbackGlowWarning,
+  resetAdvancedBorrowSessionLog,
+} from '../town/unitArtFallback'
+import { cutMountMoveSound } from '../audio/heroMountMoveSound'
+import {
+  CombatBattleAnimLayer,
+  CombatBattleCorpseLayer,
+  CombatBattleDieFxLayer,
+} from './CombatBattleAnimLayer'
+import { setBattleAnimLogSink } from './battleAnimLogBridge'
+import {
+  dieFallbackEffectNames,
+  preloadDieFallbackEffects,
+  resetDieFallbackSessionWarnings,
+  warnDieFallbackUnavailable,
+  type DieFallbackEffectSheet,
+} from './battleDieFallbackEffect'
+import {
+  buildAttackExchanges,
+  cloneBattleForAttackDisplay,
+  preAttackDisplayStacks,
+  runAttackBeatPresentation,
+} from './attackPresentation'
+import {
+  anyTargetReactionAnimNeeded,
+  awaitBattleMovePathWaypoint,
+  beginBattleMovePathVisual,
+  buildBattleMovePathFeet,
+  endBattleMovePathVisual,
+  runWipeDieAnimsForTombs,
+  stackHidesFootprintBoxChrome,
+  stackShowsBattleSprites,
+  stackUsesBattleAnim,
+} from './combatUnitAnimPlayback'
+import {
+  idleVisualsForLivingStacks,
+  mergeIdleSeedVisuals,
+  combatUnitDrawFootPosition,
+  isDieCorpseVisual,
+  type CombatProjectileVisual,
+  type StackBattleVisual,
+} from './combatUnitAnimVisual'
 import { axialNeighborDirs } from '../hex/pathfinding'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
 import { getSession, subscribe, updateSession } from '../session/store'
@@ -66,6 +130,7 @@ import {
   subscribeCatalog,
   shapePulsesOnMove,
   unitAttackShape,
+  townNameForUnit,
   unitById,
   unitIsStationary,
   unitTakesTurns,
@@ -89,12 +154,14 @@ import {
 } from './tombstone'
 import { formatAmount } from '../hex/resources'
 import type { UnitStackView } from '../town/unitStack'
+import { UnitStaticArtImg } from '../town/unitStack'
 import {
   activeStack,
   advanceTurn,
   applyOwnSilenceAfterTurn,
   clearFervorStreak,
   createBattle,
+  type SlotStart,
   endStackTurn,
   grantFervorExtraTurn,
   moveStack,
@@ -109,12 +176,13 @@ import {
   stackCombatSpeed,
   stackMoveSpeed,
 } from './battle'
+import { stackArtBox } from './combatStackArtBox'
 import {
+  footprintBottomRow,
   footprintBottomRowCentered,
   footprintExtent,
   footprintHexesCentered,
   parseFootprint,
-  type FootprintCode,
 } from './footprint'
 import {
   canCombatStep,
@@ -131,9 +199,15 @@ import {
   stackOccupyingHex,
   stopOnlyForMover,
 } from './movement'
+import {
+  expandAnchorKeysForFootprint,
+  expandHitFlashHexKeys,
+  footprintAlong,
+  stackFootprint,
+} from './occupancy'
 import { deathKnightShadowMoveAdjust } from './shadow'
 import { auraRadiusHexKeys } from './templePassive'
-import { chanceRollLog } from './combatLog'
+import { chanceRollLog, combatRoundMarkerLines } from './combatLog'
 import {
   tryLeaveGroundEffectOnMoveOrigin,
   tryLeaveGroundEffectOnMoveStep,
@@ -142,7 +216,15 @@ import {
   placeSiegeMoatGroundEffect,
 } from './groundEffect'
 import { warRoomSiegeMult } from '../town/townUniques'
-import { resolveAttack, pickAutoAttackTarget, heroForSide, type HitFlashColor } from './attack'
+import { errorMessage, logConfigOnce } from '../session/configLog'
+import {
+  resolveAttack,
+  type AttackAnimPhase,
+  pickAutoAttackTarget,
+  autoActSkipLogLine,
+  heroForSide,
+  type HitFlashColor,
+} from './attack'
 import { combatOwnerPlayer, decideCombatAction } from '../ai/combat'
 import { decideHeroAbility } from '../ai/heroAbility'
 import { allyHealMissingConfigLogLine } from '../ai/allyHealCombat'
@@ -351,6 +433,8 @@ type FieldView = {
   height: number
   hexPx: number
   markers: StackMarker[]
+  battleStarts: SlotStart[]
+  deployCols: { attackerCol: number; defenderCol: number }
   anchors: HexAnchor[]
   tiles: CombatTile[]
   siege: SiegeSetup | null
@@ -358,6 +442,10 @@ type FieldView = {
     atk?: { q: number; r: number }
     def?: { q: number; r: number }
   }
+  /** World positions for battle-prop sampling (unchanged for the fight). */
+  propSampleAttacker: { q: number; r: number }
+  propSampleDefender: { q: number; r: number }
+  propSeed: number
 }
 
 function CombatHoverTip({
@@ -433,15 +521,20 @@ function HeroHexArt({
   }, [filename])
   return (
     <>
-      {!filename || missing ? (
-        <span className="town-building-slot-filename">{filename || 'Hero'}</span>
-      ) : (
-        <img
-          src={heroPortraitUrl(filename)}
-          alt=""
-          onError={() => setMissing(true)}
-        />
-      )}
+      <div className="combat-stack-static-art">
+        {!filename || missing ? (
+          <span className="town-building-slot-filename unit-art-placeholder">
+            {filename || 'Hero'}
+          </span>
+        ) : (
+          <img
+            className="unit-art-flippable"
+            src={heroPortraitUrl(filename)}
+            alt=""
+            onError={() => setMissing(true)}
+          />
+        )}
+      </div>
       <span
         className={
           acted ? 'combat-hero-status combat-hero-status-acted' : 'combat-hero-status combat-hero-status-ready'
@@ -454,36 +547,71 @@ function HeroHexArt({
   )
 }
 
-function CombatStackArt({ view }: { view: UnitStackView }) {
-  const [missing, setMissing] = useState(false)
-  useEffect(() => {
-    setMissing(false)
-  }, [view.filename])
-  if (view.filename && !missing) {
-    return (
-      <img
-        src={unitPortraitUrl(view.filename)}
-        alt=""
-        onError={() => setMissing(true)}
-      />
-    )
+function targetStackIdsFromResolved(
+  before: CombatStack[],
+  after: CombatStack[],
+  hitKeys: string[],
+): string[] {
+  const ids = new Set<string>()
+  for (const stack of before) {
+    const next = after.find((row) => row.id === stack.id)
+    if (!next) {
+      ids.add(stack.id)
+    } else if (next.qty < stack.qty) {
+      ids.add(stack.id)
+    }
   }
+  for (const key of hitKeys) {
+    const [qs, rs] = key.split(',')
+    const q = Number(qs)
+    const r = Number(rs)
+    if (!Number.isFinite(q) || !Number.isFinite(r)) {
+      continue
+    }
+    for (const stack of before) {
+      if (stack.q === q && stack.r === r) {
+        ids.add(stack.id)
+      }
+    }
+    for (const stack of after) {
+      if (stack.q === q && stack.r === r) {
+        ids.add(stack.id)
+      }
+    }
+  }
+  for (const stack of after) {
+    const prev = before.find((row) => row.id === stack.id)
+    if (prev && prev.qty > stack.qty) {
+      ids.add(stack.id)
+    }
+  }
+  return [...ids]
+}
+
+function CombatStackArt({
+  view,
+  catalog,
+}: {
+  view: UnitStackView
+  catalog: ReturnType<typeof getCachedCatalog>
+}) {
   return (
-    <span className="town-building-slot-filename">{view.filename || 'Unknown'}</span>
+    <div className="combat-stack-static-art">
+      <UnitStaticArtImg
+        filename={view.filename}
+        townName={view.townName}
+        catalog={catalog}
+        unitId={view.unitId}
+      />
+    </div>
   )
 }
 
-function TombstoneArt() {
-  const [missing, setMissing] = useState(false)
-  if (missing) {
-    return <span className="town-building-slot-filename">{TOMBSTONE_ART}</span>
-  }
+function TombstoneArt({ townName }: { townName?: string | null }) {
   return (
-    <img
-      src={unitPortraitUrl(TOMBSTONE_ART)}
-      alt=""
-      onError={() => setMissing(true)}
-    />
+    <div className="combat-stack-static-art">
+      <UnitStaticArtImg filename={TOMBSTONE_ART} townName={townName} />
+    </div>
   )
 }
 
@@ -559,11 +687,35 @@ function anchorAt(anchors: HexAnchor[], q: number, r: number): HexAnchor | null 
   return anchors.find((row) => row.q === q && row.r === r) ?? null
 }
 
-/** Bottom of the screen first so higher tokens overlap lower ones and keep qty visible. */
-function stacksBottomUp(stacks: CombatStack[], anchors: HexAnchor[]): CombatStack[] {
+/** Bottom of the screen first; sort by footprint foot row so lower stacks paint in front. */
+function stacksBottomUp(
+  stacks: CombatStack[],
+  anchors: HexAnchor[],
+  catalog: ReturnType<typeof getCachedCatalog> | null,
+): CombatStack[] {
+  const footScreenY = (stack: CombatStack): number => {
+    const anchor = anchorAt(anchors, stack.q, stack.r)
+    if (!catalog || isHeroStack(stack)) {
+      return anchor?.y ?? 0
+    }
+    const code = combatStackFootprint(stack, catalog)
+    const bottom = footprintBottomRow(
+      { q: stack.q, r: stack.r },
+      code,
+      footprintAlong(stack.side),
+    )
+    let maxY = anchor?.y ?? 0
+    for (const hex of bottom) {
+      const pos = anchorAt(anchors, hex.q, hex.r)
+      if (pos && pos.y > maxY) {
+        maxY = pos.y
+      }
+    }
+    return maxY
+  }
   return [...stacks].sort((a, b) => {
-    const ya = anchorAt(anchors, a.q, a.r)?.y ?? 0
-    const yb = anchorAt(anchors, b.q, b.r)?.y ?? 0
+    const ya = footScreenY(a)
+    const yb = footScreenY(b)
     if (yb !== ya) {
       return yb - ya
     }
@@ -571,29 +723,6 @@ function stacksBottomUp(stacks: CombatStack[], anchors: HexAnchor[]): CombatStac
     const xb = anchorAt(anchors, b.q, b.r)?.x ?? 0
     return xa - xb
   })
-}
-
-function stackArtBox(
-  pos: { x: number; y: number },
-  hexPx: number,
-  codeOrSize: FootprintCode | number,
-  side: CombatSide,
-) {
-  const code =
-    typeof codeOrSize === 'number'
-      ? codeOrSize <= 1
-        ? '1x1'
-        : codeOrSize === 2
-          ? '2x1'
-          : '1x1'
-      : codeOrSize
-  const ext = footprintExtent(code)
-  const width = hexPx * ext.cols
-  // Pointy-top row pitch ≈ ¾ hex height.
-  const height = hexPx * (1 + Math.max(0, ext.rows - 1) * 0.75)
-  const left =
-    side === 'def' ? pos.x + hexPx / 2 - width : pos.x - hexPx / 2
-  return { width, height, left, top: pos.y - height }
 }
 
 function stackViewFromCombat(
@@ -623,6 +752,8 @@ function stackViewFromCombat(
     empty: false,
     filename,
     qty: stack.qty,
+    townName: townNameForUnit(catalog, unit),
+    unitId: stack.unitId,
   }
 }
 
@@ -665,9 +796,12 @@ export function CombatScreen({
     null,
   )
   const [navalMaskDebug, setNavalMaskDebug] = useState(false)
-  const activeApiRef = useRef<{ setKey: (key: string | null) => void } | null>(
+  const activeApiRef = useRef<{ setKeys: (keys: string[]) => void } | null>(
     null,
   )
+  const targetApiRef = useRef<{
+    set: (outline: { keys: string[]; color: 'red' | 'green' } | null) => void
+  } | null>(null)
   const onHexClickRef = useRef<
     (q: number, r: number, zone: HexZone, shiftKey?: boolean) => void
   >(() => {})
@@ -686,6 +820,8 @@ export function CombatScreen({
       resolved: NonNullable<ReturnType<typeof resolveAttack>>,
       extraLines: string[],
       skipStandingHazards?: boolean,
+      /** Battle after any same-turn move, before strike damage (avoids stale battleRef). */
+      preAttackBattle?: CombatBattle,
     ) => void
   >(() => {})
   const presentTurnEndRef = useRef<
@@ -719,6 +855,8 @@ export function CombatScreen({
   const tryAiHeroAbilityRef = useRef<() => boolean>(() => false)
   const dismissLogRef = useRef<() => void>(() => {})
   const queueBattleLogRef = useRef<(payload: BattleLog) => void>(() => {})
+  const pendingBattleLogPopupRef = useRef<BattleLog | null>(null)
+  const pendingSummaryAfterAnimsRef = useRef(false)
   const combatTranscriptRef = useRef<string[]>([])
   const escapeMetaRef = useRef<{
     kind: 'flee' | 'surrender'
@@ -749,9 +887,42 @@ export function CombatScreen({
     return () => ro.disconnect()
   }, [field])
   const [battle, setBattle] = useState<CombatBattle | null>(null)
+  /** G12-30: display-only battle during attack beat list (before state unchanged until end). */
+  const [attackDisplayBattle, setAttackDisplayBattle] =
+    useState<CombatBattle | null>(null)
   const [log, setLog] = useState<BattleLog | null>(null)
+  const battleLogScrollRef = useRef<HTMLDivElement | null>(null)
+  const battleLogStickBottomRef = useRef(true)
   const [catalogReady, setCatalogReady] = useState(false)
   const [moving, setMoving] = useState(false)
+  const [unitBattleSheets, setUnitBattleSheets] = useState<
+    Map<number, BattleUnitSheetSet | null>
+  >(new Map())
+  const [dieFallbackEffects, setDieFallbackEffects] = useState<
+    Map<string, DieFallbackEffectSheet | null>
+  >(new Map())
+  const [stackBattleVisuals, setStackBattleVisuals] = useState<
+    Record<string, StackBattleVisual>
+  >({})
+  /** Shadow Step: hide stack sprite at landing hex until pop-in delay ends. */
+  const [teleportVanishStackId, setTeleportVanishStackId] = useState<
+    string | null
+  >(null)
+  const [battleProjectiles, setBattleProjectiles] = useState<
+    CombatProjectileVisual[]
+  >([])
+  const knownTombsRef = useRef<Set<string>>(new Set())
+  const strikeReactionTargetsRef = useRef<Set<string>>(new Set())
+  const wipeAnimGenRef = useRef(0)
+  const unitBattleSheetsRef = useRef(unitBattleSheets)
+  unitBattleSheetsRef.current = unitBattleSheets
+  const dieFallbackEffectsRef = useRef(dieFallbackEffects)
+  dieFallbackEffectsRef.current = dieFallbackEffects
+  const [battleSheetPreloadKey, setBattleSheetPreloadKey] = useState(0)
+  const [battleFieldPaintReady, setBattleFieldPaintReady] = useState(false)
+  const battlePaintNowRef = useRef(performance.now())
+  const [, battlePaintTick] = useState(0)
+  void battlePaintTick
   const [hoverTarget, setHoverTarget] = useState<CombatHover | null>(null)
   const [hitFlash, setHitFlash] = useState<{
     n: number
@@ -797,7 +968,7 @@ export function CombatScreen({
   // that handler closes over the map-init array and must not use a stale copy.
   // Only sync when markers match: assigning on every render made createBattle
   // see prev===field and skip the initial army spawn.
-  if (field && fieldRef.current?.markers === field.markers) {
+  if (field && fieldRef.current?.battleStarts === field.battleStarts) {
     fieldRef.current = field
   }
   {
@@ -833,6 +1004,10 @@ export function CombatScreen({
           ? stand
           : (intent.aimHex ?? { q: intent.q, r: intent.r }),
       stand,
+      wedgeZone:
+        intent.arrowDeg != null
+          ? (((intent.arrowDeg / 60) % 6) + 6) % 6
+          : undefined,
     }
     if (intent.steps.length === 0 && fire) {
       const resolved = resolveAttack(
@@ -850,7 +1025,7 @@ export function CombatScreen({
         return false
       }
       setHoverTarget(null)
-      presentAttackRef.current(resolved, prefix)
+      presentAttackRef.current(resolved, prefix, false, current)
       return true
     }
     if (intent.steps.length === 0) {
@@ -892,8 +1067,56 @@ export function CombatScreen({
           }
         }
       }
+      const moveSettings = battleAnimSettings(catalog)
+      const pathStartStack = latest.stacks.find((row) => row.id === stack.id)
+      const pathStartQ = pathStartStack?.q ?? stack.q
+      const pathStartR = pathStartStack?.r ?? stack.r
+      const pathFeet = buildBattleMovePathFeet(
+        field.anchors,
+        field.hexPx,
+        moveSettings.footOffsetPct,
+        combatStackFootprint(stack, catalog),
+        stack.side,
+        pathStartQ,
+        pathStartR,
+        intent.steps,
+      )
+      const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
+      const pathUseMoveSheet =
+        stackUsesBattleAnim(stack, catalog, unitBattleSheetsRef.current) &&
+        Boolean(pathAnimSet?.sheets.Move)
+      const pathStartedMs = await beginBattleMovePathVisual({
+        stackId: stack.id,
+        pathFeet,
+        settings: moveSettings,
+        moveStem: pathUseMoveSheet ? pathAnimSet!.stem : null,
+        movePartnerStem: pathAnimSet?.partnerSoundStem ?? null,
+        useMoveSheet: pathUseMoveSheet,
+        moveFrameCount: pathAnimSet?.sheets.Move?.frames.length ?? 1,
+        setStackVisuals: setStackBattleVisuals,
+      })
+      const endPathVisual = () =>
+        endBattleMovePathVisual({
+          stackId: stack.id,
+          idleFrameCount: pathAnimSet?.sheets.Idle?.frames.length ?? 1,
+          useMoveSheet: pathUseMoveSheet,
+          setStackVisuals: setStackBattleVisuals,
+        })
+      let waypointIndex = 0
       for (const step of intent.steps) {
         if (walkGenRef.current !== gen) {
+          await endPathVisual()
+          return
+        }
+        waypointIndex += 1
+        await awaitBattleMovePathWaypoint(
+          pathStartedMs,
+          moveSettings.moveSecPerHex,
+          waypointIndex,
+          () => walkGenRef.current !== gen,
+        )
+        if (walkGenRef.current !== gen) {
+          await endPathVisual()
           return
         }
         // Vacated-hex leave-behind is ground_effect only (Void GE id 5).
@@ -943,14 +1166,13 @@ export function CombatScreen({
           })
         }
         setBattle(latest)
-        await sleep(MOVE_STEP_MS)
-        // Mid-walk Stun (e.g. Explosive Trap): abort remaining move/attack.
-        // This interrupted turn is the stun skip (consume like start-of-turn).
         const walker = latest.stacks.find((row) => row.id === stack.id)
         if (!walker || walker.qty <= 0) {
           if (walkGenRef.current !== gen) {
+            await endPathVisual()
             return
           }
+          await endPathVisual()
           setMoving(false)
           presentTurnEndRef.current(
             latest,
@@ -970,8 +1192,10 @@ export function CombatScreen({
         }
         if (isStunned(walker, catalog)) {
           if (walkGenRef.current !== gen) {
+            await endPathVisual()
             return
           }
+          await endPathVisual()
           setMoving(false)
           const stunId = stunConditionId(catalog)
           const name = unitById(catalog, walker.unitId)?.name ?? 'Unknown'
@@ -993,6 +1217,7 @@ export function CombatScreen({
           return
         }
       }
+      await endPathVisual()
       if (walkGenRef.current !== gen) {
         return
       }
@@ -1033,6 +1258,7 @@ export function CombatScreen({
           allowFriendly,
         )
         if (resolved) {
+          battleRef.current = latest
           presentAttackRef.current(
             resolved,
             [
@@ -1042,6 +1268,7 @@ export function CombatScreen({
               movementLogLine(stack, catalog, stepsDone),
             ],
             true,
+            latest,
           )
         } else {
           presentTurnEndRef.current(
@@ -1399,7 +1626,20 @@ export function CombatScreen({
       }
       presentPendingCombatSummary()
     }).catch((error) => {
-      console.error('[combat] mob kill item reward failed', error)
+      logConfigOnce(
+        'combat:mob_kill_item',
+        `[combat] mob kill item reward failed: ${errorMessage(error, 'unknown error')}`,
+      )
+      const base = pendingSummaryRef.current
+      if (base) {
+        pendingSummaryRef.current = {
+          ...base,
+          rewardLines: [
+            ...(base.rewardLines ?? []),
+            `[rewards] Item drop failed: ${errorMessage(error, 'unknown error')}`,
+          ],
+        }
+      }
       presentPendingCombatSummary()
     })
   }
@@ -1438,6 +1678,10 @@ export function CombatScreen({
     const pending = pendingSummaryRef.current
     if (!pending) {
       return false
+    }
+    if (movingRef.current) {
+      pendingSummaryAfterAnimsRef.current = true
+      return true
     }
     presentPendingCombatSummary()
     return true
@@ -1607,7 +1851,16 @@ export function CombatScreen({
     }
   }
 
+  const appendRoundMarkerIfNew = (advanced: CombatBattle) => {
+    const prevRound = battleRef.current?.round ?? 0
+    if (advanced.round > prevRound) {
+      combatTranscriptRef.current.push(...combatRoundMarkerLines(advanced.round))
+      onLiveLogLines?.([...combatTranscriptRef.current])
+    }
+  }
+
   const presentRoundAdvance = (advanced: CombatBattle) => {
+    appendRoundMarkerIfNew(advanced)
     const groups = [
       {
         keys: advanced.roundHitKeys ?? [],
@@ -1649,6 +1902,14 @@ export function CombatScreen({
     }
     const hold = currentLog.holdTurn === true
     setLog(null)
+    if (
+      pendingSummaryAfterAnimsRef.current &&
+      pendingSummaryRef.current
+    ) {
+      pendingSummaryAfterAnimsRef.current = false
+      presentPendingCombatSummary()
+      return
+    }
     if (!hold) {
       const advanced = advanceTurn(current, cat, Math.random, {
         tiles: fieldRef.current?.tiles,
@@ -1657,6 +1918,40 @@ export function CombatScreen({
       presentRoundAdvance(advanced)
     }
   }
+  const flushCombatPopupsAfterAnims = () => {
+    if (movingRef.current) {
+      return
+    }
+    const pendingLog = pendingBattleLogPopupRef.current
+    if (pendingLog) {
+      pendingBattleLogPopupRef.current = null
+      const skipPopup =
+        pendingLog.lines.length === 0 ||
+        effectiveCombatLogTimerSec() === 0
+      if (!skipPopup) {
+        setLog(pendingLog)
+      } else if (pendingLog.holdTurn !== true) {
+        const current = battleRef.current
+        const cat = catalogRef.current
+        if (current && cat && !finishCombat(current)) {
+          const advanced = advanceTurn(current, cat, Math.random, {
+            tiles: fieldRef.current?.tiles,
+            heroes: combatHeroesRef.current,
+          })
+          presentRoundAdvance(advanced)
+        }
+      }
+    }
+    if (
+      pendingSummaryAfterAnimsRef.current &&
+      pendingSummaryRef.current &&
+      !logRef.current
+    ) {
+      pendingSummaryAfterAnimsRef.current = false
+      presentPendingCombatSummary()
+    }
+  }
+
   /** Show battle log, or skip entirely when combat_log_timer is 0. */
   const queueBattleLog = (payload: BattleLog) => {
     if (payload.lines.length > 0) {
@@ -1688,12 +1983,19 @@ export function CombatScreen({
       }
       return
     }
+    if (movingRef.current) {
+      pendingBattleLogPopupRef.current = payload
+      return
+    }
     setLog(payload)
   }
   queueBattleLogRef.current = queueBattleLog
   dismissLogRef.current = dismissLog
 
   const applyOutcomeIfOver = (current: CombatBattle) => {
+    if (movingRef.current) {
+      return
+    }
     if (pendingSummaryRef.current || !catalog || !defeatedSide(current, catalog)) {
       return
     }
@@ -1809,25 +2111,33 @@ export function CombatScreen({
       const gen = (walkGenRef.current += 1)
       setMoving(true)
       const moverId = aim.targetId
-      // Pop out: remove from board, wait, then land at destination.
-      const hidden = {
-        ...resolved.preMoveBattle,
-        stacks: resolved.preMoveBattle.stacks.filter((row) => row.id !== moverId),
+      const next = resolved.endsRound
+        ? resolved.battle
+        : markHeroActed(resolved.battle, heroStackId)
+      setBattle(next)
+      if (resolved.tiles) {
+        setField((prev) =>
+          prev ? { ...prev, tiles: resolved.tiles! } : prev,
+        )
+        field.tiles.splice(0, field.tiles.length, ...resolved.tiles)
       }
-      setBattle(hidden)
       if (resolved.flashes.length > 0) {
         setHitFlash({ n: Date.now(), groups: resolved.flashes })
       }
+      setTeleportVanishStackId(moverId)
       void (async () => {
         await sleep(resolved.moveDelayMs ?? 500)
         if (walkGenRef.current !== gen) {
+          movingRef.current = false
+          setMoving(false)
+          setTeleportVanishStackId(null)
+          setBattle(next)
+          applyOutcomeIfOver(next)
           return
         }
+        movingRef.current = false
         setMoving(false)
-        const next = resolved.endsRound
-          ? resolved.battle
-          : markHeroActed(resolved.battle, heroStackId)
-        setBattle(next)
+        setTeleportVanishStackId(null)
         applyOutcomeIfOver(next)
         queueBattleLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
       })()
@@ -1837,28 +2147,28 @@ export function CombatScreen({
     if (beats && beats.length > 0) {
       const gen = (walkGenRef.current += 1)
       setMoving(true)
+      const next = resolved.endsRound
+        ? resolved.battle
+        : markHeroActed(resolved.battle, heroStackId)
+      setBattle(next)
+      if (resolved.tiles) {
+        setField((prev) =>
+          prev ? { ...prev, tiles: resolved.tiles! } : prev,
+        )
+        field.tiles.splice(0, field.tiles.length, ...resolved.tiles)
+      }
       void (async () => {
         for (const beat of beats) {
           if (walkGenRef.current !== gen) {
-            return
+            break
           }
-          setBattle(beat.battle)
           if (beat.flashes.length > 0) {
             setHitFlash({ n: Date.now(), groups: beat.flashes })
           }
-          if (beat.lines.length > 0) {
-            queueBattleLog({ lines: beat.lines, holdTurn: true })
-          }
           await sleep(ABILITY_BEAT_MS)
         }
-        if (walkGenRef.current !== gen) {
-          return
-        }
+        movingRef.current = false
         setMoving(false)
-        const next = resolved.endsRound
-          ? resolved.battle
-          : markHeroActed(resolved.battle, heroStackId)
-        setBattle(next)
         applyOutcomeIfOver(next)
         queueBattleLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
       })()
@@ -2019,9 +2329,10 @@ export function CombatScreen({
     }
   }
 
-  presentAttackRef.current = (resolved, extraLines, skipStandingHazards = false) => {
-    const cat = catalogRef.current
-    const tiles = field?.tiles ?? []
+  const syncPresentAttackStrike = (
+    resolved: NonNullable<ReturnType<typeof resolveAttack>>,
+    opts?: { skipHitFlash?: boolean },
+  ) => {
     if (resolved.heroes) {
       const nextAtk = resolved.heroes.atk
       const nextDef = resolved.heroes.def
@@ -2038,6 +2349,26 @@ export function CombatScreen({
         }),
       }))
     }
+    setBattle(resolved.battle)
+    if (opts?.skipHitFlash) {
+      return
+    }
+    const groups = [
+      { keys: resolved.hitKeys, color: resolved.hitColor },
+      { keys: resolved.healKeys, color: 'green' as HitFlashColor },
+    ].filter((group) => group.keys.length > 0)
+    if (groups.length > 0) {
+      setHitFlash({ n: Date.now(), groups })
+    }
+  }
+
+  const syncPresentAttackAfterStrike = (
+    resolved: NonNullable<ReturnType<typeof resolveAttack>>,
+    extraLines: string[],
+    skipStandingHazards = false,
+  ) => {
+    const cat = catalogRef.current
+    const tiles = field?.tiles ?? []
     const actor = activeStack(resolved.battle)
     const tick =
       cat && actor && !skipStandingHazards
@@ -2064,7 +2395,6 @@ export function CombatScreen({
     const fervorLines: string[] = []
     if (resolved.grantExtraTurn && liveActor && liveActor.qty > 0) {
       next = grantFervorExtraTurn(next, liveActor.id)
-      // Log line already added in resolveAttack (Inquisitor Grand).
     } else if (cat && liveActor && liveActor.qty > 0) {
       const fervor = tryFervorChain(liveActor)
       if (fervor.chancePct > 0) {
@@ -2084,13 +2414,12 @@ export function CombatScreen({
     } else if (liveActor?.fervor) {
       next = clearFervorStreak(next, liveActor.id)
     }
-    const groups = [
-      { keys: resolved.hitKeys, color: resolved.hitColor },
-      { keys: resolved.healKeys, color: 'green' as HitFlashColor },
-      { keys: tick.hitKeys, color: 'red' as HitFlashColor },
-    ].filter((group) => group.keys.length > 0)
-    if (groups.length > 0) {
-      setHitFlash({ n: Date.now(), groups })
+    const hazardFlash =
+      tick.hitKeys.length > 0
+        ? [{ keys: tick.hitKeys, color: 'red' as HitFlashColor }]
+        : []
+    if (hazardFlash.length > 0) {
+      setHitFlash({ n: Date.now(), groups: hazardFlash })
     }
     const trapSet = resolved.log.trapSetLine
     const trapSetLines: string[] = []
@@ -2148,11 +2477,142 @@ export function CombatScreen({
     }
   }
 
-  useEffect(() => {
-    if (battle) {
-      applyOutcomeIfOver(battle)
+  presentAttackRef.current = (
+    resolved,
+    extraLines,
+    skipStandingHazards = false,
+    preAttackBattle?: CombatBattle,
+  ) => {
+    const cat = catalogRef.current
+    const fieldView = fieldRef.current
+    const baseBattle = preAttackBattle ?? battleRef.current
+    if (!cat || !fieldView || !baseBattle) {
+      syncPresentAttackStrike(resolved)
+      syncPresentAttackAfterStrike(resolved, extraLines, skipStandingHazards)
+      return
     }
-  }, [battle, catalog, attackerHeroId, defenderHeroId])
+    const actor = activeStack(baseBattle)
+    if (!actor) {
+      syncPresentAttackStrike(resolved)
+      syncPresentAttackAfterStrike(resolved, extraLines, skipStandingHazards)
+      return
+    }
+    const beforeStacks = preAttackDisplayStacks(baseBattle, resolved)
+    const targetIds = targetStackIdsFromResolved(
+      beforeStacks,
+      resolved.battle.stacks,
+      resolved.hitKeys,
+    )
+    const tombsAfterStrike = resolved.battle.tombstones ?? []
+    const settings = battleAnimSettings(cat)
+    const needsTargetReactions = anyTargetReactionAnimNeeded(
+      targetIds,
+      beforeStacks,
+      resolved.battle.stacks,
+      tombsAfterStrike,
+      unitBattleSheetsRef.current,
+      cat,
+    )
+    const attackerAnim = stackUsesBattleAnim(
+      actor,
+      cat,
+      unitBattleSheetsRef.current,
+    )
+    if (!attackerAnim && !needsTargetReactions) {
+      syncPresentAttackStrike(resolved)
+      syncPresentAttackAfterStrike(resolved, extraLines, skipStandingHazards)
+      return
+    }
+    const phases: AttackAnimPhase[] =
+      resolved.animPhases && resolved.animPhases.length > 0
+        ? resolved.animPhases
+        : [
+            {
+              attackerId: actor.id,
+              targetStackIds: targetIds,
+              hitKeys: resolved.hitKeys,
+              strikeStacks: resolved.battle.stacks,
+              strikeTombstones: resolved.battle.tombstones ?? [],
+            },
+          ]
+    const fallbackExchange = {
+      strikerId: actor.id,
+      targetIds,
+      beforeStacks,
+      strikeStacks: resolved.battle.stacks,
+      strikeTombstones: resolved.battle.tombstones ?? [],
+      hitKeys: resolved.hitKeys,
+    }
+    const exchanges = buildAttackExchanges(phases, beforeStacks, fallbackExchange)
+    const attackGen = walkGenRef.current
+    void (async () => {
+      setMoving(true)
+      const displayStart = cloneBattleForAttackDisplay(baseBattle, beforeStacks)
+      setAttackDisplayBattle(displayStart)
+      const allTargetIds = new Set<string>()
+      for (const ex of exchanges) {
+        allTargetIds.add(ex.strikerId)
+        for (const id of ex.targetIds) {
+          allTargetIds.add(id)
+        }
+      }
+      strikeReactionTargetsRef.current = allTargetIds
+      try {
+        await runAttackBeatPresentation({
+          exchanges,
+          display: displayStart,
+          onDisplayChange: setAttackDisplayBattle,
+          catalog: cat,
+          settings,
+          sheets: unitBattleSheetsRef.current,
+          dieFallbackEffects: dieFallbackEffectsRef.current,
+          anchors: fieldView.anchors,
+          hexPx: fieldView.hexPx,
+          hitColor: resolved.hitColor,
+          setStackVisuals: setStackBattleVisuals,
+          setProjectiles: setBattleProjectiles,
+          onHitFlash: (keys) => {
+            if (keys.length > 0) {
+              setHitFlash({
+                n: Date.now(),
+                groups: [{ keys, color: resolved.hitColor }],
+              })
+            }
+          },
+          isCancelled: () => walkGenRef.current !== attackGen,
+        })
+      } finally {
+        setAttackDisplayBattle(null)
+        const cancelled = walkGenRef.current !== attackGen
+        if (!cancelled) {
+          for (const ex of exchanges) {
+            for (const id of [ex.strikerId, ...ex.targetIds]) {
+              if (tombsAfterStrike.some((row) => row.id === id)) {
+                knownTombsRef.current.add(id)
+              }
+            }
+          }
+        }
+        movingRef.current = false
+        setMoving(false)
+        syncPresentAttackStrike(resolved, { skipHitFlash: true })
+        syncPresentAttackAfterStrike(
+          resolved,
+          extraLines,
+          skipStandingHazards,
+        )
+        strikeReactionTargetsRef.current.clear()
+        flushCombatPopupsAfterAnims()
+      }
+    })()
+  }
+
+  useEffect(() => {
+    if (!battle || !catalog || moving) {
+      return
+    }
+    applyOutcomeIfOver(battle)
+  }, [battle, catalog, attackerHeroId, defenderHeroId, moving])
 
   onHoverRef.current = (hover) => {
     setHoverTarget(hover)
@@ -2166,6 +2626,196 @@ export function CombatScreen({
       .catch(() => {})
       .finally(() => setCatalogReady(true))
   }, [])
+
+  useEffect(() => {
+    if (!battle || !catalog || battleSheetPreloadKey === 0) {
+      setBattleFieldPaintReady(false)
+      return
+    }
+    setBattleFieldPaintReady(false)
+    resetBattleUnitSheetSessionWarnings()
+    resetBattleUnitSoundWarnings()
+    resetDieFallbackSessionWarnings()
+    resetAdvancedBorrowSessionLog()
+    setDieFallbackEffects(new Map())
+    let cancelled = false
+    const unitIds = [
+      ...new Set(
+        battle.stacks
+          .filter((row) => !isHeroStack(row))
+          .map((row) => row.unitId),
+      ),
+    ]
+    const battleStacks = battle.stacks
+    const applyLoaded = (loaded: Map<number, BattleUnitSheetSet | null>) => {
+      setUnitBattleSheets(loaded)
+      setStackBattleVisuals((prev) =>
+        mergeIdleSeedVisuals(
+          prev,
+          idleVisualsForLivingStacks(
+            battleStacks,
+            loaded,
+            (stack) => stackUsesBattleAnim(stack, catalog, loaded),
+            catalog,
+            battleIdleSettings(catalog),
+          ),
+        ),
+      )
+      updateSession((current) => flushBattleSheetLoadFailuresToLog(current))
+      for (const id of unitIds) {
+        const unit = unitById(catalog, id)
+        const stem = unit?.image_path?.replace(/\.(png|webp|jpe?g)$/i, '') ?? ''
+        if (unit && !loaded.get(id) && stem) {
+          updateSession((current) =>
+            reportBattleUnitTypeStatic(current, id, stem),
+          )
+        }
+      }
+    }
+    void (async () => {
+      updateSession((current) => {
+        let next = ensureBattleAnimConfigWarnings(current, catalog)
+        next = ensureBattleIdleConfigWarnings(next, catalog)
+        next = ensureBattleHitConfigWarnings(next, catalog)
+        next = ensureAdvFallbackGlowWarning(next, catalog)
+        return next
+      })
+      const [opening, fxLoaded] = await Promise.all([
+        preloadBattleUnitSheetsForBattleOpening(
+          catalog,
+          unitIds,
+          (id) => unitById(catalog, id),
+          BATTLE_OPENING_SHEET_PRELOAD_MS,
+        ),
+        preloadDieFallbackEffects(catalog),
+      ])
+      const { sheets, finishRemaining } = opening
+      if (cancelled) {
+        return
+      }
+      setDieFallbackEffects(fxLoaded)
+      const fxNames = dieFallbackEffectNames(catalog)
+      if (
+        fxNames.length > 0 &&
+        !fxNames.some((name) => fxLoaded.get(name) != null)
+      ) {
+        updateSession((current) =>
+          warnDieFallbackUnavailable(
+            current,
+            'no configured effect could be loaded — tombstone only.',
+          ),
+        )
+      } else if (fxNames.length === 0) {
+        updateSession((current) =>
+          warnDieFallbackUnavailable(
+            current,
+            'die_fallback_effects empty or missing — tombstone only.',
+          ),
+        )
+      }
+      applyLoaded(sheets)
+      setBattleFieldPaintReady(true)
+      void finishRemaining().then((full) => {
+        if (cancelled) {
+          return
+        }
+        applyLoaded(full)
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [catalog, battleSheetPreloadKey])
+
+  useEffect(() => {
+    if (!battle || summary) {
+      return
+    }
+    let raf = 0
+    const loop = () => {
+      battlePaintNowRef.current = performance.now()
+      battlePaintTick((n) => (n + 1) % 1_000_000)
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [battle, summary])
+
+  useEffect(() => {
+    setBattleAnimLogSink((line) => {
+      combatTranscriptRef.current.push(line)
+      onLiveLogLines?.([...combatTranscriptRef.current])
+    })
+    return () => setBattleAnimLogSink(null)
+  }, [onLiveLogLines])
+
+  useLayoutEffect(() => {
+    if (!log) {
+      return
+    }
+    battleLogStickBottomRef.current = true
+    const el = battleLogScrollRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [log])
+
+  useLayoutEffect(() => {
+    if (!log || !battleLogStickBottomRef.current) {
+      return
+    }
+    const el = battleLogScrollRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [log?.lines])
+
+  useEffect(() => {
+    if (!moving) {
+      flushCombatPopupsAfterAnims()
+    }
+  })
+
+  useEffect(() => {
+    if (!battle || !catalog || moving) {
+      return
+    }
+    const tombs = battle.tombstones ?? []
+    const pending = tombs.filter(
+      (tomb) =>
+        !knownTombsRef.current.has(tomb.id) &&
+        !strikeReactionTargetsRef.current.has(tomb.id) &&
+        stackBattleVisuals[tomb.id]?.kind !== 'Die' &&
+        !stackBattleVisuals[tomb.id]?.dieFallbackFx,
+    )
+    if (pending.length === 0) {
+      return
+    }
+    for (const tomb of tombs) {
+      knownTombsRef.current.add(tomb.id)
+    }
+    const settings = battleAnimSettings(catalog)
+    const gen = ++wipeAnimGenRef.current
+    void (async () => {
+      setMoving(true)
+      try {
+        await runWipeDieAnimsForTombs({
+          tombs: pending,
+          catalog,
+          settings,
+          sheets: unitBattleSheetsRef.current,
+          dieFallbackEffects: dieFallbackEffectsRef.current,
+          setStackVisuals: setStackBattleVisuals,
+          isCancelled: () => wipeAnimGenRef.current !== gen,
+        })
+      } finally {
+        if (wipeAnimGenRef.current === gen) {
+          movingRef.current = false
+          setMoving(false)
+        }
+      }
+    })()
+  }, [battle?.tombstones, catalog, moving, unitBattleSheets])
 
   useEffect(() => {
     if (log || summary || (heroCast && heroCast.abilityId == null)) {
@@ -2318,10 +2968,43 @@ export function CombatScreen({
     const stack =
       battle && !log && !moving && !summary ? activeStack(battle) : null
     const show = stack && !stack.hasActedThisRound
-    activeApiRef.current?.setKey(
-      show ? hexKey(stack.q, stack.r) : null,
+    if (!show || !stack || !catalog || !battleFieldPaintReady) {
+      activeApiRef.current?.setKeys([])
+      return
+    }
+    activeApiRef.current?.setKeys(
+      stackFootprint(stack, catalog).map((hex) => hexKey(hex.q, hex.r)),
     )
-  }, [battle, log, moving])
+  }, [battle, catalog, log, moving, summary, battleFieldPaintReady])
+
+  useEffect(() => {
+    if (
+      !hoverTarget?.fire ||
+      !hoverTarget.attackTargetId ||
+      !battle ||
+      !catalog ||
+      log ||
+      moving ||
+      summary ||
+      heroCast
+    ) {
+      targetApiRef.current?.set(null)
+      return
+    }
+    const target = battle.stacks.find(
+      (row) => row.id === hoverTarget.attackTargetId,
+    )
+    if (!target || target.qty <= 0) {
+      targetApiRef.current?.set(null)
+      return
+    }
+    targetApiRef.current?.set({
+      keys: stackFootprint(target, catalog).map((hex) =>
+        hexKey(hex.q, hex.r),
+      ),
+      color: hoverTarget.allowFriendly ? 'green' : 'red',
+    })
+  }, [hoverTarget, battle, catalog, log, moving, summary, heroCast])
 
   // Divine Aura Master: light-blue radius disk while the unit is acting.
   useEffect(() => {
@@ -2366,7 +3049,7 @@ export function CombatScreen({
     // back to opening hexes and the just-placed ground effect is discarded.
     if (
       prev &&
-      prev.markers === field.markers &&
+      prev.battleStarts === field.battleStarts &&
       prev.siege === field.siege &&
       prev.heroStarts === field.heroStarts
     ) {
@@ -2374,13 +3057,14 @@ export function CombatScreen({
       return
     }
     fieldRef.current = field
+    cutMountMoveSound()
     const session = getSession()
     let created = createBattle(
       session,
       catalog,
       attackerHeroId,
       defenderHeroId,
-      field.markers,
+      field.battleStarts,
       Math.random,
       field.siege,
       field.heroStarts,
@@ -2395,6 +3079,14 @@ export function CombatScreen({
         moatMult,
       )
     }
+    const placement = applyBattleStartPlacement(created, catalog, field.tiles, {
+      siege: Boolean(field.siege),
+      attackerCol: field.deployCols.attackerCol,
+      defenderCol: field.deployCols.defenderCol,
+      sessionHeroName: (heroId) =>
+        session.heroes.find((hero) => hero.id === heroId)?.name ?? null,
+    })
+    created = placement.battle
     const deployFix = ensureValidDeployments(
       created,
       catalog,
@@ -2403,6 +3095,27 @@ export function CombatScreen({
         session.heroes.find((hero) => hero.id === heroId)?.name ?? null,
     )
     created = deployFix.battle
+    const tilesWithProps = seedBattlePropsFromWorld(
+      field.tiles,
+      catalog,
+      field.propSampleAttacker,
+      field.propSampleDefender,
+      {
+        seed: field.propSeed,
+        siege: Boolean(field.siege),
+        battle: created,
+      },
+    )
+    const displayMarkers = battleStartDisplayMarkers(
+      field.markers,
+      created.stacks,
+      field.anchors,
+    )
+    setField((prev) =>
+      prev && prev.battleStarts === field.battleStarts
+        ? { ...prev, tiles: tilesWithProps, markers: displayMarkers }
+        : prev,
+    )
     const attacker = session.heroes.find((hero) => hero.id === attackerHeroId)
     const defender = defenderHeroId
       ? session.heroes.find((hero) => hero.id === defenderHeroId)
@@ -2410,7 +3123,7 @@ export function CombatScreen({
     const totems = applyShamanBattleStartTotems(
       created,
       catalog,
-      field.tiles,
+      tilesWithProps,
       { atk: attacker, def: defender },
       Math.random,
       { fillToCap: true },
@@ -2424,13 +3137,18 @@ export function CombatScreen({
         used_abilities_this_battle: [],
       })),
     }))
-    combatTranscriptRef.current = []
+    combatTranscriptRef.current = [...combatRoundMarkerLines(created.round)]
     escapeMetaRef.current = null
-    onLiveLogLines?.([])
+    onLiveLogLines?.([...combatTranscriptRef.current])
     setBattle(created)
+    setStackBattleVisuals({})
+    setUnitBattleSheets(new Map())
+    setBattleSheetPreloadKey((key) => key + 1)
+    knownTombsRef.current = new Set()
+    strikeReactionTargetsRef.current.clear()
     setOpening(snap)
     openingRef.current = snap
-    const startLines = [...deployFix.lines, ...totems.lines]
+    const startLines = [...placement.lines, ...deployFix.lines, ...totems.lines]
     if (startLines.length > 0) {
       queueBattleLog({ lines: startLines })
     } else {
@@ -2950,8 +3668,56 @@ export function CombatScreen({
               }
             }
           }
+          const moveSettings = battleAnimSettings(catalog)
+          const pathStartStack = latest.stacks.find((row) => row.id === stack.id)
+          const pathStartQ = pathStartStack?.q ?? stack.q
+          const pathStartR = pathStartStack?.r ?? stack.r
+          const pathFeet = buildBattleMovePathFeet(
+            field.anchors,
+            field.hexPx,
+            moveSettings.footOffsetPct,
+            combatStackFootprint(stack, catalog),
+            stack.side,
+            pathStartQ,
+            pathStartR,
+            steps,
+          )
+          const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
+          const pathUseMoveSheet =
+            stackUsesBattleAnim(stack, catalog, unitBattleSheetsRef.current) &&
+            Boolean(pathAnimSet?.sheets.Move)
+          const pathStartedMs = await beginBattleMovePathVisual({
+            stackId: stack.id,
+            pathFeet,
+            settings: moveSettings,
+            moveStem: pathUseMoveSheet ? pathAnimSet!.stem : null,
+            movePartnerStem: pathAnimSet?.partnerSoundStem ?? null,
+            useMoveSheet: pathUseMoveSheet,
+            moveFrameCount: pathAnimSet?.sheets.Move?.frames.length ?? 1,
+            setStackVisuals: setStackBattleVisuals,
+          })
+          const endPathVisual = () =>
+            endBattleMovePathVisual({
+              stackId: stack.id,
+              idleFrameCount: pathAnimSet?.sheets.Idle?.frames.length ?? 1,
+              useMoveSheet: pathUseMoveSheet,
+              setStackVisuals: setStackBattleVisuals,
+            })
+          let waypointIndex = 0
           for (const step of steps) {
             if (walkGenRef.current !== gen) {
+              await endPathVisual()
+              return
+            }
+            waypointIndex += 1
+            await awaitBattleMovePathWaypoint(
+              pathStartedMs,
+              moveSettings.moveSecPerHex,
+              waypointIndex,
+              () => walkGenRef.current !== gen,
+            )
+            if (walkGenRef.current !== gen) {
+              await endPathVisual()
               return
             }
             latest = moveStack(latest, stack.id, step.q, step.r)
@@ -2999,12 +3765,13 @@ export function CombatScreen({
               })
             }
             setBattle(latest)
-            await sleep(MOVE_STEP_MS)
             const walker = latest.stacks.find((row) => row.id === stack.id)
             if (!walker || walker.qty <= 0) {
               if (walkGenRef.current !== gen) {
+                await endPathVisual()
                 return
               }
+              await endPathVisual()
               setMoving(false)
               presentTurnEndRef.current(
                 latest,
@@ -3024,8 +3791,10 @@ export function CombatScreen({
             }
             if (isStunned(walker, catalog)) {
               if (walkGenRef.current !== gen) {
+                await endPathVisual()
                 return
               }
+              await endPathVisual()
               setMoving(false)
               const stunId = stunConditionId(catalog)
               presentTurnEndRef.current(
@@ -3046,6 +3815,7 @@ export function CombatScreen({
               return
             }
           }
+          await endPathVisual()
           if (walkGenRef.current !== gen) {
             return
           }
@@ -3197,8 +3967,56 @@ export function CombatScreen({
               }
             }
           }
+          const moveSettings = battleAnimSettings(catalog)
+          const pathStartStack = latest.stacks.find((row) => row.id === stack.id)
+          const pathStartQ = pathStartStack?.q ?? stack.q
+          const pathStartR = pathStartStack?.r ?? stack.r
+          const pathFeet = buildBattleMovePathFeet(
+            field.anchors,
+            field.hexPx,
+            moveSettings.footOffsetPct,
+            combatStackFootprint(stack, catalog),
+            stack.side,
+            pathStartQ,
+            pathStartR,
+            steps,
+          )
+          const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
+          const pathUseMoveSheet =
+            stackUsesBattleAnim(stack, catalog, unitBattleSheetsRef.current) &&
+            Boolean(pathAnimSet?.sheets.Move)
+          const pathStartedMs = await beginBattleMovePathVisual({
+            stackId: stack.id,
+            pathFeet,
+            settings: moveSettings,
+            moveStem: pathUseMoveSheet ? pathAnimSet!.stem : null,
+            movePartnerStem: pathAnimSet?.partnerSoundStem ?? null,
+            useMoveSheet: pathUseMoveSheet,
+            moveFrameCount: pathAnimSet?.sheets.Move?.frames.length ?? 1,
+            setStackVisuals: setStackBattleVisuals,
+          })
+          const endPathVisual = () =>
+            endBattleMovePathVisual({
+              stackId: stack.id,
+              idleFrameCount: pathAnimSet?.sheets.Idle?.frames.length ?? 1,
+              useMoveSheet: pathUseMoveSheet,
+              setStackVisuals: setStackBattleVisuals,
+            })
+          let waypointIndex = 0
           for (const step of steps) {
             if (walkGenRef.current !== gen) {
+              await endPathVisual()
+              return
+            }
+            waypointIndex += 1
+            await awaitBattleMovePathWaypoint(
+              pathStartedMs,
+              moveSettings.moveSecPerHex,
+              waypointIndex,
+              () => walkGenRef.current !== gen,
+            )
+            if (walkGenRef.current !== gen) {
+              await endPathVisual()
               return
             }
             latest = moveStack(latest, stack.id, step.q, step.r)
@@ -3246,12 +4064,13 @@ export function CombatScreen({
               })
             }
             setBattle(latest)
-            await sleep(MOVE_STEP_MS)
             const walker = latest.stacks.find((row) => row.id === stack.id)
             if (!walker || walker.qty <= 0) {
               if (walkGenRef.current !== gen) {
+                await endPathVisual()
                 return
               }
+              await endPathVisual()
               setMoving(false)
               presentTurnEndRef.current(
                 applyConsumedCondition(latest, stack.id, fearId),
@@ -3271,8 +4090,10 @@ export function CombatScreen({
             }
             if (isStunned(walker, catalog)) {
               if (walkGenRef.current !== gen) {
+                await endPathVisual()
                 return
               }
+              await endPathVisual()
               setMoving(false)
               const stunId = stunConditionId(catalog)
               presentTurnEndRef.current(
@@ -3297,6 +4118,7 @@ export function CombatScreen({
               return
             }
           }
+          await endPathVisual()
           if (walkGenRef.current !== gen) {
             return
           }
@@ -3345,7 +4167,7 @@ export function CombatScreen({
           presentTurnEndRef.current(
             battle,
             stack.id,
-            [`${stack.qty} ${name} find no target in range.`],
+            [autoActSkipLogLine(stack, catalog)],
             false,
             true,
           )
@@ -3678,7 +4500,7 @@ export function CombatScreen({
         : 'Necropolis'
       const downTex = siegeLayout?.drawbridgeMoat
         ? await loadTextureUrl(
-            unitPortraitUrl(siegeDrawbridgeDownArt(townName)),
+            unitPortraitUrl(siegeDrawbridgeDownArt(townName), townName),
             true,
           )
         : null
@@ -3691,6 +4513,7 @@ export function CombatScreen({
       const reach = new Graphics()
       const auraMark = new Graphics()
       const activeMark = new Graphics()
+      const targetMark = new Graphics()
       const deckArtLayer = new Container()
       const landFillLayer = new Container()
       const waterStripLayer = new Container()
@@ -3727,13 +4550,7 @@ export function CombatScreen({
             seed,
             attackerPos,
           )
-        : seedBattlePropsFromWorld(
-            combatTilesFromHexField(field, catalog, Boolean(siegeLayout)),
-            catalog,
-            attackerPos,
-            defenderPos,
-            { seed, siege: Boolean(siegeLayout) },
-          )
+        : combatTilesFromHexField(field, catalog, Boolean(siegeLayout))
 
       // Naval deck art (Boat.png): stretch to fill each side's deck columns only
       // (outer edge → water column start, full battlefield height). No aspect lock.
@@ -4246,6 +5063,7 @@ export function CombatScreen({
         auraMark,
         reach,
         activeMark,
+        targetMark,
       )
       instance.stage.addChild(world)
       navalMaskApiRef.current = {
@@ -4320,37 +5138,78 @@ export function CombatScreen({
         },
       }
 
-      let activeHexKey: string | null = null
+      let activeHexKeys: string[] = []
       activeApiRef.current = {
-        setKey(next) {
-          activeHexKey = next
+        setKeys(next) {
+          activeHexKeys = next
         },
       }
       const pulseActive = () => {
         activeMark.clear()
-        if (!activeHexKey) {
-          return
-        }
-        const hex = hexByKey.get(activeHexKey)
-        if (!hex) {
+        if (activeHexKeys.length === 0) {
           return
         }
         const pulse = (Math.sin(performance.now() / 140) + 1) / 2
-        activeMark.poly(
-          hex.corners.map((corner) => ({
-            x: corner.x + offsetX,
-            y: corner.y + offsetY,
-          })),
-        )
-        // Darker blue + thicker stroke so the active unit is easy to spot.
-        activeMark.fill({ color: 0x1565c0, alpha: 0.1 + 0.22 * pulse })
-        activeMark.stroke({
-          width: 5,
-          color: 0x0d47a1,
-          alpha: 0.7 + 0.3 * pulse,
-        })
+        for (const key of activeHexKeys) {
+          const hex = hexByKey.get(key)
+          if (!hex) {
+            continue
+          }
+          activeMark.poly(
+            hex.corners.map((corner) => ({
+              x: corner.x + offsetX,
+              y: corner.y + offsetY,
+            })),
+          )
+          activeMark.fill({ color: 0x1565c0, alpha: 0.1 + 0.22 * pulse })
+          activeMark.stroke({
+            width: 5,
+            color: 0x0d47a1,
+            alpha: 0.7 + 0.3 * pulse,
+          })
+        }
       }
       instance.ticker.add(pulseActive)
+
+      let targetOutline: { keys: string[]; color: 'red' | 'green' } | null =
+        null
+      targetApiRef.current = {
+        set(outline) {
+          targetOutline = outline
+        },
+      }
+      const pulseTarget = () => {
+        targetMark.clear()
+        if (!targetOutline || targetOutline.keys.length === 0) {
+          return
+        }
+        const pulse = (Math.sin(performance.now() / 140) + 1) / 2
+        const enemy = targetOutline.color === 'red'
+        const fillTint = enemy ? 0xc62828 : 0x43a047
+        const strokeTint = enemy ? 0xb71c1c : 0x2e7d32
+        for (const key of targetOutline.keys) {
+          const hex = hexByKey.get(key)
+          if (!hex) {
+            continue
+          }
+          targetMark.poly(
+            hex.corners.map((corner) => ({
+              x: corner.x + offsetX,
+              y: corner.y + offsetY,
+            })),
+          )
+          targetMark.fill({
+            color: fillTint,
+            alpha: 0.1 + 0.22 * pulse,
+          })
+          targetMark.stroke({
+            width: 5,
+            color: strokeTint,
+            alpha: 0.7 + 0.3 * pulse,
+          })
+        }
+      }
+      instance.ticker.add(pulseTarget)
 
       const canvas = instance.canvas
       canvas.style.cursor = 'pointer'
@@ -4592,14 +5451,15 @@ export function CombatScreen({
               })()
             : null
         const preview = previewFromPlan ?? intent
-        const gold = [
+        const goldAnchors = [
           ...planKeys,
           ...(preview?.steps ?? hoverSteps).map((step) =>
             hexKey(step.q, step.r),
           ),
+          ...(preview?.pullLandingKeys ?? []),
         ]
         drawReach(
-          [...gold, ...(preview?.pullLandingKeys ?? [])],
+          expandAnchorKeysForFootprint(goldAnchors, stack, currentCatalog),
           preview?.impactKeys ?? [],
         )
         if (preview || plan) {
@@ -4696,11 +5556,23 @@ export function CombatScreen({
       canvas.addEventListener('pointerleave', onPointerLeave)
       canvas.addEventListener('pointerdown', onPointerDown)
 
+      const battleStarts: SlotStart[] = markers.map((marker) => ({
+        side: marker.side,
+        slot: marker.slot,
+        q: marker.q,
+        r: marker.r,
+      }))
+
       setField({
         width: layout.canvasWidth,
         height: layout.canvasHeight,
         hexPx,
         markers,
+        battleStarts,
+        deployCols: { attackerCol, defenderCol },
+        propSampleAttacker: attackerPos,
+        propSampleDefender: defenderPos,
+        propSeed: seed,
         anchors,
         tiles,
         siege: siegeLayout,
@@ -4712,10 +5584,12 @@ export function CombatScreen({
         canvas.removeEventListener('pointerleave', onPointerLeave)
         canvas.removeEventListener('pointerdown', onPointerDown)
         instance.ticker.remove(pulseActive)
+        instance.ticker.remove(pulseTarget)
         reachApiRef.current = null
         auraApiRef.current = null
         bridgeArtApiRef.current = null
         activeApiRef.current = null
+        targetApiRef.current = null
         releaseCombatPixiApp(instance)
       }
     })()
@@ -4728,6 +5602,7 @@ export function CombatScreen({
       bridgeArtApiRef.current = null
       navalMaskApiRef.current = null
       activeApiRef.current = null
+      targetApiRef.current = null
       fieldRef.current = null
       if (app) {
         releaseCombatPixiApp(app)
@@ -4885,10 +5760,19 @@ export function CombatScreen({
             }
           >
             <div ref={canvasHostRef} className="combat-field-canvas" />
-            {field && battle
+            {field && battle && !battleFieldPaintReady ? (
+              <div
+                className="combat-battle-preparing-overlay"
+                aria-live="polite"
+              >
+                Preparing battle…
+              </div>
+            ) : null}
+            {field && battle && battleFieldPaintReady
               ? (() => {
+                  const viewBattle = attackDisplayBattle ?? battle
                   const atkSample =
-                    battle.stacks.find((row) => row.side === 'atk') ?? null
+                    viewBattle.stacks.find((row) => row.side === 'atk') ?? null
                   const defSample =
                     battle.stacks.find((row) => row.side === 'def') ?? null
                   const atkPlayer = atkSample
@@ -4922,6 +5806,7 @@ export function CombatScreen({
                     viewerSide = 'def'
                   }
                   const zones = visibleGroundEffects(battle, viewerSide)
+                  const paintNow = battlePaintNowRef.current
                   const renderZones = (layer: 'below_units' | 'above_units') =>
                     zones
                       .filter((zone) => (zone.layer ?? 'below_units') === layer)
@@ -4967,7 +5852,56 @@ export function CombatScreen({
                   return (
                     <>
                       {renderZones('below_units')}
-                      {stacksBottomUp(battle.stacks, field.anchors).map((stack) => {
+                      {(viewBattle.tombstones ?? []).map((tomb) => {
+                  const pos = anchorAt(field.anchors, tomb.q, tomb.r)
+                  if (!pos) {
+                    return null
+                  }
+                  const box = stackArtBox(pos, field.hexPx, '1x1', tomb.side)
+                  const dieVisual = stackBattleVisuals[tomb.id]
+                  const dieSheet = unitBattleSheets.get(tomb.unitId)?.sheets.Die
+                  const dieCorpseVisible =
+                    isDieCorpseVisual(dieVisual) &&
+                    battleUnitDieSheetDrawable(dieSheet)
+                  const tombUnit = unitById(catalog, tomb.unitId)
+                  const tombTown = townNameForUnit(catalog, tombUnit)
+                  return (
+                    <div
+                      key={`tomb:${tomb.id}`}
+                      className={
+                        dieCorpseVisible
+                          ? 'combat-stack combat-stack-on-hex combat-tombstone combat-tombstone-die-corpse'
+                          : 'combat-stack combat-stack-on-hex combat-tombstone'
+                      }
+                      data-tombstone={tomb.id}
+                      data-side={tomb.side}
+                      style={{
+                        width: box.width,
+                        height: box.height,
+                        left: box.left,
+                        top: box.top,
+                      }}
+                    >
+                      {!dieCorpseVisible ? (
+                        <TombstoneArt townName={tombTown} />
+                      ) : null}
+                    </div>
+                  )
+                      })}
+                      {catalog ? (
+                        <CombatBattleCorpseLayer
+                          battle={viewBattle}
+                          field={field}
+                          catalog={catalog}
+                          unitSheets={unitBattleSheets}
+                          stackVisuals={stackBattleVisuals}
+                          paintNowMs={paintNow}
+                        />
+                      ) : null}
+                      {stacksBottomUp(viewBattle.stacks, field.anchors, catalog).map((stack) => {
+                  if (stack.id === teleportVanishStackId) {
+                    return null
+                  }
                   const pos = anchorAt(field.anchors, stack.q, stack.r)
                   if (!pos) {
                     return null
@@ -4978,27 +5912,79 @@ export function CombatScreen({
                   const view = hero
                     ? null
                     : stackViewFromCombat(stack, catalog, siegeTownArtName)
-                  const box = stackArtBox(
+                  const moveSettings = catalog
+                    ? battleAnimSettings(catalog)
+                    : null
+                  const stackVisual = stackBattleVisuals[stack.id]
+                  let box = stackArtBox(
                     pos,
                     field.hexPx,
                     catalog ? combatStackFootprint(stack, catalog) : '1x1',
                     stack.side,
                   )
+                  if (moveSettings && stackVisual?.slide) {
+                    const stackFp = catalog
+                      ? combatStackFootprint(stack, catalog)
+                      : '1x1'
+                    const baseFoot = combatUnitDrawFootPosition(
+                      pos,
+                      field.hexPx,
+                      moveSettings.footOffsetPct,
+                      stackFp,
+                      stack.side,
+                      undefined,
+                      paintNow,
+                    )
+                    const foot = combatUnitDrawFootPosition(
+                      pos,
+                      field.hexPx,
+                      moveSettings.footOffsetPct,
+                      stackFp,
+                      stack.side,
+                      stackVisual,
+                      paintNow,
+                    )
+                    box = {
+                      ...box,
+                      left: box.left + (foot.footX - baseFoot.footX),
+                      top: box.top + (foot.footY - baseFoot.footY),
+                    }
+                  }
                   const unit = hero ? null : unitById(catalog, stack.unitId)
                   const fixture = isSiegeFixtureArt(unit)
                   const current = activeStack(battle)
                   const speed = catalog
                     ? (stackCombatSpeed(stack, catalog) ?? 0)
                     : 0
+                  const useBattleAnim =
+                    catalog != null &&
+                    stackShowsBattleSprites(
+                      stack,
+                      catalog,
+                      unitBattleSheets,
+                      stackVisual,
+                    )
+                  const hideFootprintBox =
+                    catalog != null &&
+                    stackHidesFootprintBoxChrome(
+                      stack,
+                      catalog,
+                      unitBattleSheets,
+                      battleSheetPreloadKey > 0,
+                      stackVisual,
+                    )
                   return (
                     <div
                       key={stack.id}
                       className={
                         fixture
                           ? 'combat-stack combat-stack-on-hex combat-stack-fixture'
-                          : 'combat-stack combat-stack-on-hex'
+                          : hideFootprintBox
+                            ? 'combat-stack combat-stack-on-hex combat-stack-battle-anim'
+                            : 'combat-stack combat-stack-on-hex'
                       }
                       data-combat-stack={stack.id}
+                      data-side={stack.side}
                       data-slot={isHeroStack(stack) ? undefined : stack.slot + 1}
                       data-speed={isHeroStack(stack) ? undefined : speed}
                       data-hero={isHeroStack(stack) ? 'true' : undefined}
@@ -5021,7 +6007,9 @@ export function CombatScreen({
                         />
                       ) : (
                         <>
-                          <CombatStackArt view={view!} />
+                          {!useBattleAnim && !hideFootprintBox ? (
+                            <CombatStackArt view={view!} catalog={catalog} />
+                          ) : null}
                           <span className="combat-stack-qty">
                             {formatAmount(view!.qty)}
                           </span>
@@ -5030,36 +6018,41 @@ export function CombatScreen({
                     </div>
                   )
                       })}
-                      {(battle.tombstones ?? []).map((tomb) => {
-                  const pos = anchorAt(field.anchors, tomb.q, tomb.r)
-                  if (!pos) {
-                    return null
-                  }
-                  const box = stackArtBox(pos, field.hexPx, 1, tomb.side)
-                  return (
-                    <div
-                      key={`tomb:${tomb.id}`}
-                      className="combat-stack combat-stack-on-hex combat-tombstone"
-                      data-tombstone={tomb.id}
-                      style={{
-                        width: box.width,
-                        height: box.height,
-                        left: box.left,
-                        top: box.top,
-                      }}
-                    >
-                      <TombstoneArt />
-                    </div>
-                  )
-                      })}
+                      {catalog ? (
+                        <CombatBattleAnimLayer
+                          battle={viewBattle}
+                          field={field}
+                          catalog={catalog}
+                          unitSheets={unitBattleSheets}
+                          stackVisuals={stackBattleVisuals}
+                          projectiles={battleProjectiles}
+                          paintNowMs={paintNow}
+                        />
+                      ) : null}
+                      {catalog ? (
+                        <CombatBattleDieFxLayer
+                          battle={viewBattle}
+                          field={field}
+                          catalog={catalog}
+                          unitSheets={unitBattleSheets}
+                          stackVisuals={stackBattleVisuals}
+                          dieFallbackEffects={dieFallbackEffects}
+                          paintNowMs={paintNow}
+                        />
+                      ) : null}
                       {renderZones('above_units')}
                     </>
                   )
                 })()
               : null}
-            {field && hitFlash
-              ? hitFlash.groups.flatMap((group) =>
-                  [...new Set(group.keys)].map((key) => {
+            {field && hitFlash && catalog && (attackDisplayBattle ?? battle)
+              ? hitFlash.groups.flatMap((group) => {
+                  const keys = expandHitFlashHexKeys(
+                    group.keys,
+                    (attackDisplayBattle ?? battle)!.stacks,
+                    catalog,
+                  )
+                  return [...new Set(keys)].map((key) => {
                   const [qs, rs] = key.split(',')
                   const pos = anchorAt(field.anchors, Number(qs), Number(rs))
                   if (!pos) {
@@ -5077,8 +6070,8 @@ export function CombatScreen({
                       }}
                     />
                   )
-                }),
-                )
+                  })
+                })
               : null}
             {field && hoverTarget && !log && !summary && heroCast?.abilityId !== null
               ? (() => {
@@ -5155,7 +6148,7 @@ export function CombatScreen({
                       return null
                     }
                     const tipText = heroTooltipText(catalog, hero, session)
-                    const box = stackArtBox(pos, field.hexPx, 1, stack.side)
+                    const box = stackArtBox(pos, field.hexPx, '1x1', stack.side)
                     const tipEstimatePx = 10 + tipText.split('\n').length * 17
                     const placeBelow = box.top - 4 - tipEstimatePx < 0
                     return (
@@ -5363,11 +6356,25 @@ export function CombatScreen({
           {log && !summary ? (
             <GameWindowModal
               aria-label="Battle log"
+              className="combat-battle-log-modal"
               onBackdropClick={() => dismissLogRef.current()}
             >
-              {log.lines.map((line, index) => (
-                <p key={index}>{line}</p>
-              ))}
+              <div
+                className="combat-battle-log-scroll"
+                ref={battleLogScrollRef}
+                onScroll={() => {
+                  const el = battleLogScrollRef.current
+                  if (!el) {
+                    return
+                  }
+                  const gap = el.scrollHeight - el.scrollTop - el.clientHeight
+                  battleLogStickBottomRef.current = gap < 12
+                }}
+              >
+                {log.lines.map((line, index) => (
+                  <p key={index}>{line}</p>
+                ))}
+              </div>
             </GameWindowModal>
           ) : null}
           {summary ? (

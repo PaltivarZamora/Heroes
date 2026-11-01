@@ -248,9 +248,12 @@ export function tryApplyStatShredFromHit(
     })
     return {
       stack: next,
-      lines: [
-        `${attackerName} debuffed ${targetName} ${statName} ${beforeMin}–${beforeMax} → ${afterMin}–${afterMax}`,
-      ],
+      lines:
+        afterMin !== beforeMin || afterMax !== beforeMax
+          ? [
+              `${attackerName} debuffed ${targetName} ${statName} ${beforeMin}–${beforeMax} → ${afterMin}–${afterMax}`,
+            ]
+          : [],
     }
   }
 
@@ -264,9 +267,12 @@ export function tryApplyStatShredFromHit(
     })
     return {
       stack: next,
-      lines: [
-        `${attackerName} debuffed ${targetName} ${statName} ${before.pct}%/${before.amt}% → ${afterPct}%/${afterAmt}%`,
-      ],
+      lines:
+        afterPct !== before.pct || afterAmt !== before.amt
+          ? [
+              `${attackerName} debuffed ${targetName} ${statName} ${before.pct}%/${before.amt}% → ${afterPct}%/${afterAmt}%`,
+            ]
+          : [],
     }
   }
 
@@ -283,9 +289,12 @@ export function tryApplyStatShredFromHit(
     }
     return {
       stack: next,
-      lines: [
-        `${attackerName} debuffed ${targetName} ${statName} ${before} → ${after}`,
-      ],
+      lines:
+        after !== before
+          ? [
+              `${attackerName} debuffed ${targetName} ${statName} ${before} → ${after}`,
+            ]
+          : [],
     }
   }
 
@@ -316,8 +325,11 @@ export function tryApplyStatShredFromHit(
   const next = syncPermanentLayers(target, patch)
   return {
     stack: next,
-    lines: [
-      `${attackerName} debuffed ${targetName} ${statName} ${before} → ${after}`,
-    ],
+    lines:
+      after !== before
+        ? [
+            `${attackerName} debuffed ${targetName} ${statName} ${before} → ${after}`,
+          ]
+        : [],
   }
 }

@@ -65,7 +65,10 @@ public class ReferenceData {
             "ai_arch_weight",
             "levels",
             "hero_levels",
-            "ground_effect");
+            "ground_effect",
+            "event",
+            "battle_hit_reaction",
+            "anim_config");
 
     private static final Logger log = LoggerFactory.getLogger(ReferenceData.class);
 

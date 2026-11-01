@@ -40,10 +40,29 @@ export function GameLogModal({
   const catalog = useSyncExternalStore(subscribeCatalog, getCachedCatalog)
   const [tab, setTab] = useState<GameLogTab>(initialTab)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
+
+  const scrollLogToBottom = () => {
+    const el = scrollRef.current
+    if (!el) {
+      return
+    }
+    el.scrollTop = el.scrollHeight
+  }
+
+  const onLogScroll = () => {
+    const el = scrollRef.current
+    if (!el) {
+      return
+    }
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight
+    stickToBottomRef.current = gap < 12
+  }
 
   useEffect(() => {
     if (open) {
       setTab(initialTab)
+      stickToBottomRef.current = true
     }
   }, [open, initialTab])
 
@@ -60,6 +79,16 @@ export function GameLogModal({
     const live: FormattedLogLine[] = liveCombat.map((text) => ({ text }))
     return [...archived, ...live]
   }, [session, catalog, playerId, tab, liveCombat])
+
+  useEffect(() => {
+    if (!open || !stickToBottomRef.current) {
+      return
+    }
+    if (focusCombatId && tab === 'combat') {
+      return
+    }
+    requestAnimationFrame(() => scrollLogToBottom())
+  }, [open, tab, lines.length, focusCombatId, liveCombatLines.length])
 
   useEffect(() => {
     if (!open || !focusCombatId || tab !== 'combat') {
@@ -91,13 +120,20 @@ export function GameLogModal({
               role="tab"
               aria-selected={tab === item.id}
               className={tab === item.id ? 'game-log-tab-active' : undefined}
-              onClick={() => setTab(item.id)}
+              onClick={() => {
+                stickToBottomRef.current = true
+                setTab(item.id)
+              }}
             >
               {item.label}
             </button>
           ))}
         </div>
-        <div className="game-log-scroll" ref={scrollRef}>
+        <div
+          className="game-log-scroll"
+          ref={scrollRef}
+          onScroll={onLogScroll}
+        >
           {lines.length === 0 ? (
             <p className="settings-hint">No entries yet.</p>
           ) : tab === 'combat' ? (

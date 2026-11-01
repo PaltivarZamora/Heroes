@@ -15,6 +15,7 @@ import type { CombatBattle, CombatStack, CombatTile } from './battle'
 import { isHeroStack, stackMaxHealth } from './battle'
 import { occupancyKey } from './occupancy'
 import { stackOccupyingHex } from './movement'
+import { type ShapeGeometryOpts } from './actionOrigin'
 import { boardKeys, geometricHexes, type ShapeHit } from './shapes'
 
 function stackName(catalog: ReferenceCatalog, unitId: number): string {
@@ -50,19 +51,22 @@ function attackAreaHexes(
     return hits.map((hit) => hit.hex)
   }
   const from = { q: attacker.q, r: attacker.r }
-  const origin =
-    spec.shape === 'charge_line'
-      ? (chargePathOrigin ?? from)
-      : from
+  const geometry: ShapeGeometryOpts = {
+    standAnchor: from,
+    attacker,
+    chargeStandAnchor:
+      spec.shape === 'charge_line' ? (chargePathOrigin ?? from) : null,
+  }
   return geometricHexes(
     spec,
-    origin,
+    from,
     aim,
     battle,
     boardKeys(tiles),
     attacker.side,
     tiles,
     catalog,
+    geometry,
   )
 }
 

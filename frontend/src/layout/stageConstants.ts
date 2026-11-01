@@ -18,7 +18,9 @@ export const GAME_WINDOW_HEIGHT = 840
 export const GAME_WINDOW_X = 637
 export const GAME_WINDOW_Y = 230
 
-export const PANEL_SQUARE = 125
 export const PANEL_GAP = 8
 export const PANEL_COLS = 4
 export const PANEL_ROWS = 8
+/** One square size for the whole left panel: (height − gaps) ÷ row count. */
+export const PANEL_SQUARE =
+  (LEFT_PANEL_HEIGHT - (PANEL_ROWS - 1) * PANEL_GAP) / PANEL_ROWS

@@ -53,6 +53,8 @@ final class MapGenContext {
     List<MapObjectData> objects = new ArrayList<>();
     /** Layer 6 world mobs (position + stacks). Empty until that layer runs. */
     List<MapMobData> mobs = new ArrayList<>();
+    /** Full mob footprints (body + head) for L7 reachability. */
+    java.util.Set<String> mobShapeBlockKeys = java.util.Set.of();
     /** Layer-5 rules, loaded when features start. */
     FeatureRules featureRules;
     /** Treasure pockets carved with the walls (BR S9-23). */

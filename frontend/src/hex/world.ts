@@ -1,6 +1,7 @@
 import { defineHex, Grid, Orientation, rectangle } from 'honeycomb-grid'
 import type { Hex } from 'honeycomb-grid'
 import type { TileData, TestGridResponse } from './types'
+import { logConfigOnce } from '../session/configLog'
 
 const GRID_PADDING = 28
 
@@ -316,12 +317,18 @@ export async function fetchTestGrid(
       return { seed: 0, tiles: [], objects: [] }
     }
     if (!response.ok) {
-      console.log('Failed to fetch test grid:', response.status)
+      logConfigOnce(
+        `test_grid:http:${response.status}`,
+        `[map] Failed to fetch test grid: HTTP ${response.status}`,
+      )
       return { seed: 0, tiles: [], objects: [] }
     }
     const payload = (await response.json()) as TestGridResponse
     if (!Array.isArray(payload.tiles)) {
-      console.log('Failed to fetch test grid: unexpected payload')
+      logConfigOnce(
+        'test_grid:payload',
+        '[map] Failed to fetch test grid: unexpected payload',
+      )
       return { seed: 0, tiles: [], objects: [] }
     }
     payload.tiles = payload.tiles.map(asWorldTile)
@@ -334,23 +341,16 @@ export async function fetchTestGrid(
     if (!Array.isArray(payload.mobs)) {
       payload.mobs = []
     }
-    console.log(
-      'Fetched test grid:',
-      payload.tiles.length,
-      'tiles, seed',
-      payload.seed,
-      payload.objects.length,
-      'objects',
-      payload.roads.length,
-      'road paths',
-    )
     resetExplored()
     return payload
   } catch (error) {
     if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
       return { seed: 0, tiles: [], objects: [] }
     }
-    console.log('Failed to fetch test grid:', error)
+    logConfigOnce(
+      'test_grid:error',
+      `[map] Failed to fetch test grid: ${error instanceof Error ? error.message : String(error)}`,
+    )
     return { seed: 0, tiles: [], objects: [] }
   }
 }

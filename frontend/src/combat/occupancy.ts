@@ -1,8 +1,11 @@
 import type { Axial } from '../hex/hero'
+import { hexDistance } from '../hex/pathfinding'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById, unitFootprint } from '../town/catalog'
 import { isHeroStack, type CombatSide, type CombatStack } from './battle'
 import {
+  footprintBlockingCode,
+  footprintBlockingHexes,
   footprintHexes as shapeFootprintHexes,
   type FootprintCode,
 } from './footprint'
@@ -65,6 +68,25 @@ export function combatBodyFootprint(
   return unitFootprint(unitById(catalog, stack.unitId))
 }
 
+/** Footprint code for occupancy / landing (excludes non-blocking head row). */
+export function combatBlockingFootprint(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): FootprintCode {
+  return footprintBlockingCode(combatBodyFootprint(stack, catalog))
+}
+
+export function stackBlockingFootprint(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): Axial[] {
+  return footprintBlockingHexes(
+    { q: stack.q, r: stack.r },
+    combatBodyFootprint(stack, catalog),
+    footprintAlong(stack.side),
+  )
+}
+
 /** @deprecated Use combatBodyFootprint — returns hex count for legacy art sizing. */
 export function combatBodySize(
   stack: CombatStack,
@@ -88,11 +110,29 @@ export function stackFootprint(
   )
 }
 
+/** Shortest hex gap between two stacks' footprints at their anchor hexes. */
+export function minFootprintHexDistance(
+  anchorA: Axial,
+  bodyA: CombatStack,
+  bodyB: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
+  const hexesA = stackFootprint({ ...bodyA, q: anchorA.q, r: anchorA.r }, catalog)
+  const hexesB = stackFootprint(bodyB, catalog)
+  let min = Infinity
+  for (const a of hexesA) {
+    for (const b of hexesB) {
+      min = Math.min(min, hexDistance(a, b))
+    }
+  }
+  return min
+}
+
 export function bodyFromStack(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): OccupancyBody {
-  return { id: stack.id, hexes: stackFootprint(stack, catalog) }
+  return { id: stack.id, hexes: stackBlockingFootprint(stack, catalog) }
 }
 
 export function occupiedFromBodies(
@@ -158,7 +198,7 @@ export function stacksWithoutOverlap(
   const kept: CombatStack[] = []
   for (const stack of stacks) {
     const occupied = occupiedHexes(kept, catalog, undefined, extras)
-    const blocked = stackFootprint(stack, catalog).some((hex) =>
+    const blocked = stackBlockingFootprint(stack, catalog).some((hex) =>
       occupied.has(occupancyKey(hex.q, hex.r)),
     )
     if (!blocked) {
@@ -188,20 +228,175 @@ export function stackOccupyingHex(
   catalog: ReferenceCatalog,
   extras: OccupancyBody[] = [],
 ): CombatStack | null {
-  const bodies = [
-    ...stacks
-      .filter((stack) => occupiesHex(stack, catalog, false))
-      .map((stack) => bodyFromStack(stack, catalog)),
-    ...extras,
-  ]
-  const hit = occupyingBody(bodies, q, r)
-  if (!hit) {
-    return null
+  const key = occupancyKey(q, r)
+  let bodyPick: CombatStack | null = null
+  let headPick: CombatStack | null = null
+  for (const stack of stacks) {
+    if (stack.qty <= 0 || !occupiesHex(stack, catalog, false)) {
+      continue
+    }
+    if (
+      stackBlockingFootprint(stack, catalog).some(
+        (hex) => occupancyKey(hex.q, hex.r) === key,
+      )
+    ) {
+      if (!bodyPick || stack.id.localeCompare(bodyPick.id) < 0) {
+        bodyPick = stack
+      }
+      continue
+    }
+    if (
+      stackFootprint(stack, catalog).some(
+        (hex) => occupancyKey(hex.q, hex.r) === key,
+      )
+    ) {
+      if (!headPick || stack.id.localeCompare(headPick.id) < 0) {
+        headPick = stack
+      }
+    }
   }
-  return stacks.find((stack) => stack.id === hit.id) ?? null
+  if (bodyPick) {
+    return bodyPick
+  }
+  if (headPick) {
+    return headPick
+  }
+  for (const body of extras) {
+    if (!body.hexes.some((hex) => occupancyKey(hex.q, hex.r) === key)) {
+      continue
+    }
+    const match = stacks.find((row) => row.id === body.id)
+    if (match) {
+      return match
+    }
+  }
+  return null
 }
 
-/** True if every hex of the footprint can be stood on. */
+/** Every stack whose drawn footprint (body + head) covers the hex. */
+export function stacksOccupyingHex(
+  stacks: CombatStack[],
+  q: number,
+  r: number,
+  catalog: ReferenceCatalog,
+  extras: OccupancyBody[] = [],
+): CombatStack[] {
+  const key = occupancyKey(q, r)
+  const out: CombatStack[] = []
+  for (const stack of stacks) {
+    if (stack.qty <= 0 || !occupiesHex(stack, catalog, false)) {
+      continue
+    }
+    if (
+      stackFootprint(stack, catalog).some(
+        (hex) => occupancyKey(hex.q, hex.r) === key,
+      )
+    ) {
+      out.push(stack)
+    }
+  }
+  for (const body of extras) {
+    if (!body.hexes.some((hex) => occupancyKey(hex.q, hex.r) === key)) {
+      continue
+    }
+    const match = stacks.find((row) => row.id === body.id)
+    if (match && !out.some((row) => row.id === match.id)) {
+      out.push(match)
+    }
+  }
+  return out
+}
+
+/** Expand flash keys to every hex of any stack hit on a key (multi-hex footprints). */
+export function expandHitFlashHexKeys(
+  keys: readonly string[],
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+): string[] {
+  const out = new Set<string>()
+  for (const key of keys) {
+    out.add(key)
+    const [qs, rs] = key.split(',')
+    const q = Number(qs)
+    const r = Number(rs)
+    if (!Number.isFinite(q) || !Number.isFinite(r)) {
+      continue
+    }
+    const stack = stackOccupyingHex(stacks, q, r, catalog)
+    if (!stack) {
+      continue
+    }
+    for (const hex of stackFootprint(stack, catalog)) {
+      out.add(occupancyKey(hex.q, hex.r))
+    }
+  }
+  return [...out]
+}
+
+/** Footprint hex keys when the stack anchor sits on `anchor`. */
+export function anchorFootprintHexKeys(
+  anchor: Axial,
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): string[] {
+  const ghost = { ...stack, q: anchor.q, r: anchor.r }
+  return stackFootprint(ghost, catalog).map((hex) => occupancyKey(hex.q, hex.r))
+}
+
+export function expandAnchorKeysForFootprint(
+  anchorKeys: Iterable<string>,
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): string[] {
+  const out = new Set<string>()
+  for (const key of anchorKeys) {
+    const [qs, rs] = key.split(',')
+    const q = Number(qs)
+    const r = Number(rs)
+    if (!Number.isFinite(q) || !Number.isFinite(r)) {
+      continue
+    }
+    for (const hexKey of anchorFootprintHexKeys({ q, r }, stack, catalog)) {
+      out.add(hexKey)
+    }
+  }
+  return [...out]
+}
+
+/**
+ * Map a hovered hex to a reachable anchor + steps (anchor may differ when
+ * hover is on a non-anchor cell of a valid stand footprint).
+ */
+export function reachableAtHoverHex(
+  hover: Axial,
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  reachable: Map<string, Axial[]>,
+): { anchor: Axial; steps: Axial[] } | null {
+  const direct = reachable.get(occupancyKey(hover.q, hover.r))
+  if (direct != null) {
+    return { anchor: hover, steps: direct }
+  }
+  for (const [key, steps] of reachable) {
+    const [qs, rs] = key.split(',')
+    const q = Number(qs)
+    const r = Number(rs)
+    if (!Number.isFinite(q) || !Number.isFinite(r)) {
+      continue
+    }
+    const anchor = { q, r }
+    const covers = stackFootprint({ ...stack, q: anchor.q, r: anchor.r }, catalog)
+    if (covers.some((hex) => hex.q === hover.q && hex.r === hover.r)) {
+      return { anchor, steps }
+    }
+  }
+  return null
+}
+
+/**
+ * True if the stack can stand at `origin`: blocking hexes must be landable and
+ * unoccupied; head hexes do not block others and may extend into display-only rows.
+ */
 export function footprintFits(
   origin: Axial,
   codeOrSize: FootprintCode | number,
@@ -210,7 +405,21 @@ export function footprintFits(
   enterCost: (q: number, r: number) => number | null,
   ignore?: ReadonlySet<string>,
 ): boolean {
-  for (const hex of footprintHexes(origin, codeOrSize, alongOrStep)) {
+  const code: FootprintCode =
+    typeof codeOrSize === 'number'
+      ? codeOrSize <= 1
+        ? '1x1'
+        : codeOrSize === 2
+          ? '2x1'
+          : '1x1'
+      : codeOrSize
+  const along: 1 | -1 =
+    typeof alongOrStep === 'number'
+      ? alongOrStep
+      : alongOrStep.q < 0
+        ? -1
+        : 1
+  for (const hex of footprintBlockingHexes(origin, code, along)) {
     const key = occupancyKey(hex.q, hex.r)
     if (enterCost(hex.q, hex.r) == null) {
       return false

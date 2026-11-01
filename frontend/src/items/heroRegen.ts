@@ -13,14 +13,13 @@ import {
 } from '../combat/abilityStatMath'
 import { equippedItemBonuses } from './bonuses'
 
-const warnedMissingConfig = new Set<string>()
+import { logConfigOnce } from '../session/configLog'
 
 function warnMissingAppConfig(key: string): void {
-  if (warnedMissingConfig.has(key)) {
-    return
-  }
-  warnedMissingConfig.add(key)
-  console.warn(`[app_config] Missing ${key}; using default for daily regen.`)
+  logConfigOnce(
+    `app_config:${key}`,
+    `[app_config] Missing ${key}; using default for daily regen.`,
+  )
 }
 
 function appConfigRegenValue(

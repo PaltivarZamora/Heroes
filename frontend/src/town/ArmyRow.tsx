@@ -19,7 +19,11 @@ export function PortraitFace({
     return label
   }
   if (missing) {
-    return <span className="town-building-slot-filename">{filename}</span>
+    return (
+      <span className="town-building-slot-filename unit-art-placeholder">
+        {filename}
+      </span>
+    )
   }
   return (
     <img
@@ -73,6 +77,7 @@ export function ArmyRow({
   padSlotsTo,
   portraitOverlay,
   evenlyPickHighlight,
+  catalog,
 }: {
   row: ArmyRowId
   heroId?: string | null
@@ -92,6 +97,7 @@ export function ArmyRow({
   padSlotsTo?: number
   portraitOverlay?: ReactNode
   evenlyPickHighlight?: boolean
+  catalog?: import('./catalog').ReferenceCatalog | null
 }) {
   const portrait = <PortraitFace label={portraitLabel} filename={portraitFilename} />
   const portraitInner = (
@@ -161,7 +167,7 @@ export function ArmyRow({
         const slot = index + 1
         const tip = slotTip?.(slot, stack) ?? null
         const actions = slotActions?.(slot, stack)
-        const face = <UnitStackFace {...stack} />
+        const face = <UnitStackFace {...stack} catalog={catalog} />
         const box = (
           <button
             type="button"

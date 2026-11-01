@@ -41,6 +41,39 @@ export type Game = {
    * the normal siege flow.
    */
   pending_flight_sieges?: Array<{ heroId: string; townId: string }>
+  /** Active map event for the current calendar week (BR S13-17). */
+  active_world_event?: ActiveWorldEvent | null
+  /** Non-neutral event popup payload for the current roll (BR S13-19). */
+  world_event_popup?: WorldEventPopup | null
+  /** playerId → absoluteWeek when that player dismissed the event popup. */
+  world_event_popup_seen?: Record<string, number>
+}
+
+export type WorldEventPopup = {
+  absoluteWeek: number
+  title: string
+  /** Formatted event.description; empty → popup has no subtitle. */
+  description: string
+  polarity: 'positive' | 'negative'
+}
+
+export type WorldEventTarget =
+  | { kind: 'none' }
+  | { kind: 'all' }
+  | { kind: 'unit'; unitId: number }
+  | { kind: 'class'; classId: number }
+  | { kind: 'town'; townTypeId: number }
+  | { kind: 'tier'; tier: number }
+  | { kind: 'resource'; resourceId: number }
+
+/** Rolled world event for the current calendar week. */
+export type ActiveWorldEvent = {
+  eventId: number
+  absoluteWeek: number
+  target: WorldEventTarget
+  spawnStacks: unknown
+  existingMobPct: number | null
+  resDrops: unknown
 }
 
 export type GameLogEntry = {
@@ -240,6 +273,8 @@ export type Node = {
    * when this reaches ≥ 1; remainder carries. Reset on capture/steal.
    */
   accrued_fraction: number
+  /** Horizontal mirror when loose_resource feature is flippable (map gen parity). */
+  flipped?: boolean
 }
 
 /** Neutral world feature (BR S9-2 fountain / S9-3 chest / S9-4 sign). */
@@ -423,6 +458,8 @@ export type Mob = {
   slots_1_to_6: Array<string | null>
   /** Guard mobs (chest/pocket/island/item) do not roll item drops (BR S9-43). */
   guards_loot?: boolean
+  /** Skip normal weekly growth on the week this event stack spawned (BR S13-18). */
+  event_spawn_week?: number
 }
 
 export type GameSession = {

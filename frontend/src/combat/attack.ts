@@ -15,9 +15,15 @@ import {
   unitEffectiveTier,
   unitHasTag,
   unitRetaliation,
+  retaliationCharges,
   wallDamageMult,
 } from '../town/catalog'
 import { moveKindForUnit } from './movement'
+import {
+  closestHexOnTargetFootprint,
+  shapeActionOrigin,
+  type ShapeGeometryOpts,
+} from './actionOrigin'
 import {
   combatSpeedChangedSides,
   isHeroStack,
@@ -37,6 +43,7 @@ import {
   type CombatSide,
   type CombatStack,
   type CombatTile,
+  type CombatTombstone,
 } from './battle'
 import { chanceRollLog, formatChancePct, rollChancePct } from './combatLog'
 import { syncTombstonesFromWipes } from './tombstone'
@@ -67,7 +74,11 @@ import {
   liveResistance,
   tryInflictCondition,
 } from './condition'
-import { occupancyKey } from './occupancy'
+import {
+  minFootprintHexDistance,
+  occupancyKey,
+  stackFootprint,
+} from './occupancy'
 import { relocateNearestTo } from './relocate'
 import { poolMax } from './heroCast'
 import { zoneEvasionPctForStack } from './groundEvasion'
@@ -278,10 +289,16 @@ export function attackIconFor(unit: UnitRow | null | undefined): AttackIconKind 
   return 'ranged'
 }
 
-export function attackDistance(from: CombatStack, to: CombatStack): number {
-  return hexDistance(
+export function attackDistance(
+  from: CombatStack,
+  to: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
+  return minFootprintHexDistance(
     { q: from.q, r: from.r },
-    { q: to.q, r: to.r },
+    from,
+    to,
+    catalog,
   )
 }
 
@@ -346,7 +363,12 @@ function minRangePenaltyApplies(
     (row) =>
       row.side !== striker.side &&
       row.qty > 0 &&
-      hexDistance(striker, row) < minRange,
+      minFootprintHexDistance(
+        { q: striker.q, r: striker.r },
+        striker,
+        row,
+        catalog,
+      ) < minRange,
   )
 }
 
@@ -359,12 +381,105 @@ export function attackRangeFrom(
   if (target.qty <= 0) {
     return false
   }
-  // charge_line is a full melee charge — never "in range" until adjacent,
-  // even if the unit row still has a long max_range from an older shape.
   const shape = unitAttackShape(unitById(catalog, attacker.unitId)).shape
   const maxRange = shape === 'charge_line' ? 1 : stackMaxRange(attacker, catalog)
-  const dist = hexDistance(from, { q: target.q, r: target.r })
+  const dist = minFootprintHexDistance(from, attacker, target, catalog)
   return dist >= 1 && dist <= maxRange
+}
+
+/** Closest footprint hex on `target` to any hex of `attacker` at `standAnchor`. */
+export function closestTargetFootprintHex(
+  standAnchor: Axial,
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+): Axial {
+  const fromHexes = stackFootprint(
+    { ...attacker, q: standAnchor.q, r: standAnchor.r },
+    catalog,
+  )
+  let best: Axial = { q: target.q, r: target.r }
+  let bestDist = Infinity
+  for (const tHex of stackFootprint(target, catalog)) {
+    for (const fHex of fromHexes) {
+      const dist = hexDistance(fHex, tHex)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = tHex
+      }
+    }
+  }
+  return best
+}
+
+export function attackTargetLineOfSight(
+  standAnchor: Axial,
+  attacker: CombatStack,
+  target: CombatStack,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+): boolean {
+  const fromHexes = stackFootprint(
+    { ...attacker, q: standAnchor.q, r: standAnchor.r },
+    catalog,
+  )
+  return stackFootprint(target, catalog).some((tHex) =>
+    fromHexes.some((fHex) =>
+      hasLineOfSight(fHex, tHex, tiles, stacks, catalog),
+    ),
+  )
+}
+
+function allyFrontDeficit(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
+  const max = stackMaxHealth(stack, catalog)
+  return Math.max(0, max - stack.topHealth)
+}
+
+/** Ally valid for most_injured_ally auto-heal (injured front or revivable stack). */
+export function allyNeedsMostInjuredHeal(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  revive: boolean,
+): boolean {
+  if (
+    stack.qty <= 0 ||
+    isHeroStack(stack) ||
+    stack.indestructible ||
+    !isCreatureArmyUnit(unitById(catalog, stack.unitId))
+  ) {
+    return false
+  }
+  if (allyFrontDeficit(stack, catalog) > 0) {
+    return true
+  }
+  if (!revive) {
+    return false
+  }
+  const cap = stack.startingQty
+  return cap != null && cap > 0 && stack.qty < cap
+}
+
+/** Combat log when an auto-acting unit has nothing to do this turn. */
+export function autoActSkipLogLine(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): string {
+  const name = unitById(catalog, stack.unitId)?.name ?? 'Unit'
+  const mode = unitAutoTarget(unitById(catalog, stack.unitId))
+  if (mode === 'most_injured_ally') {
+    return `${name}: no one to heal, skips`
+  }
+  if (mode === 'random_wall_segment') {
+    return `${name}: no wall to hit, skips`
+  }
+  if (mode === 'random_enemy' || mode === 'random_enemy_los') {
+    return `${name}: no target in range, skips`
+  }
+  return `${name} skips`
 }
 
 export function isValidAttackTarget(
@@ -378,6 +493,32 @@ export function isValidAttackTarget(
   if (attacker.id === target.id) {
     return false
   }
+  const atkUnit = unitById(catalog, attacker.unitId)
+  const mode = unitAutoTarget(atkUnit)
+  if (mode === 'most_injured_ally') {
+    if (
+      target.side !== attacker.side ||
+      isUntargetableStack(target, catalog) ||
+      isVanished(target, catalog)
+    ) {
+      return false
+    }
+    const spec = unitAttackShape(atkUnit)
+    if (!allyNeedsMostInjuredHeal(target, catalog, spec.healRevive === true)) {
+      return false
+    }
+    return (
+      attackRangeFrom(attacker, target, catalog, attacker) &&
+      attackTargetLineOfSight(
+        attacker,
+        attacker,
+        target,
+        tiles,
+        stacks,
+        catalog,
+      )
+    )
+  }
   if (attacker.side === target.side) {
     if (!allowFriendly && !isHealAllyTarget(attacker, target, catalog)) {
       return false
@@ -389,7 +530,6 @@ export function isValidAttackTarget(
   if (isVanished(target, catalog)) {
     return false
   }
-  const mode = unitAutoTarget(unitById(catalog, attacker.unitId))
   if (mode === 'random_wall_segment' && !isSiegeEngineWallTarget(target, catalog)) {
     return false
   }
@@ -401,9 +541,10 @@ export function isValidAttackTarget(
   }
   return (
     attackRangeFrom(attacker, target, catalog, attacker) &&
-    hasLineOfSight(
+    attackTargetLineOfSight(
       attacker,
-      { q: target.q, r: target.r },
+      attacker,
+      target,
       tiles,
       stacks,
       catalog,
@@ -411,7 +552,30 @@ export function isValidAttackTarget(
   )
 }
 
-/** Random auto-fire target. Null if none in range. */
+function pickMostInjuredAllyTarget(
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+): CombatStack | null {
+  const pool = battle.stacks.filter((row) =>
+    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
+  )
+  if (pool.length === 0) {
+    return null
+  }
+  pool.sort((a, b) => {
+    const da = allyFrontDeficit(a, catalog)
+    const db = allyFrontDeficit(b, catalog)
+    if (db !== da) {
+      return db - da
+    }
+    return a.id.localeCompare(b.id)
+  })
+  return pool[0] ?? null
+}
+
+/** Auto-acting unit target. Null if none in range. */
 export function pickAutoAttackTarget(
   attacker: CombatStack,
   battle: CombatBattle,
@@ -419,6 +583,10 @@ export function pickAutoAttackTarget(
   tiles: CombatTile[],
   random: () => number = Math.random,
 ): CombatStack | null {
+  const mode = unitAutoTarget(unitById(catalog, attacker.unitId))
+  if (mode === 'most_injured_ally') {
+    return pickMostInjuredAllyTarget(attacker, battle, catalog, tiles)
+  }
   const pool = battle.stacks.filter((row) =>
     isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
   )
@@ -1526,6 +1694,7 @@ function applyKillChainDeathPulse(
       radius: Math.max(1, abilities.radius || 1),
     },
     false,
+    { standAnchor: from },
   )
   const hitKeys: string[] = geometricHexes(
     pulseSpec,
@@ -1536,6 +1705,7 @@ function applyKillChainDeathPulse(
     dying.side,
     tiles,
     catalog,
+    { standAnchor: from, attacker: { ...dying, qty: Math.max(1, dying.qty) } },
   ).map((hex) => occupancyKey(hex.q, hex.r))
   let nextStacks = stacks
   let unitDeaths: Record<number, number> = {}
@@ -1807,6 +1977,17 @@ export type AttackAim = {
   hex: { q: number; r: number }
   /** Where the attacker stands for this attack. Omit = current hex. */
   stand?: { q: number; r: number }
+  /** Directional wedge 0–5 (matches combat pointer). */
+  wedgeZone?: number | null
+}
+
+/** One attack/retaliation beat for battle anim (display-only — never setBattle). */
+export type AttackAnimPhase = {
+  attackerId: string
+  targetStackIds: string[]
+  hitKeys: string[]
+  strikeStacks: CombatStack[]
+  strikeTombstones: CombatTombstone[]
 }
 
 export function resolveAttack(
@@ -1829,6 +2010,7 @@ export function resolveAttack(
   heroes?: CombatHeroes
   /** Inquisitor Grand: extra turn after a kill (when triggered). */
   grantExtraTurn?: boolean
+  animPhases?: AttackAnimPhase[]
 } | null {
   const before = battle.stacks.find((row) => row.id === attackerId)
   if (!before || before.qty <= 0) {
@@ -1884,7 +2066,17 @@ export function resolveAttack(
     qualifiesForExtraShots(attacker, aimed, catalog)
 
   const maxRange = stackMaxRange(attacker, catalog)
-  const aimDist = hexDistance(attacker, aim.hex)
+  const standAnchor = aim.stand ?? { q: attacker.q, r: attacker.r }
+  const shapeGeometry: ShapeGeometryOpts = {
+    standAnchor,
+    attacker,
+    wedgeZone: aim.wedgeZone,
+    chargeStandAnchor:
+      strikeMods?.chargePathOrigin ??
+      (spec.shape === 'charge_line' ? { q: before.q, r: before.r } : null),
+  }
+  const actionOrigin = shapeActionOrigin(shapeGeometry, catalog, aim.hex)
+  const aimDist = hexDistance(actionOrigin, aim.hex)
   if (placingTrap) {
     const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
     if (
@@ -1904,7 +2096,7 @@ export function resolveAttack(
       if (aimDist < 1 || aimDist > maxRange) {
         return null
       }
-      if (!hasLineOfSight(attacker, aim.hex, tiles, battle.stacks, catalog)) {
+      if (!hasLineOfSight(actionOrigin, aim.hex, tiles, battle.stacks, catalog)) {
         return null
       }
       // Beam / Line require a living unit on the aim hex — no ground-only clicks.
@@ -1966,12 +2158,29 @@ export function resolveAttack(
   }
 
   // Goblin Hammersmith Repair Strike: heal tagged ally instead of damaging.
-  if (aimed && isHealAllyTarget(attacker, aimed, catalog)) {
-    const amount = healAmtForAllyRepair(
+  const autoHealAlly =
+    aimed &&
+    (isHealAllyTarget(attacker, aimed, catalog) ||
+      (unitAutoTarget(atkUnit) === 'most_injured_ally' &&
+        aimed.side === attacker.side &&
+        allyNeedsMostInjuredHeal(
+          aimed,
+          catalog,
+          unitAttackShape(atkUnit).healRevive === true,
+        )))
+  if (autoHealAlly && aimed) {
+    let amount = healAmtForAllyRepair(
       attacker,
       catalog,
       heroForSide(attacker.side, heroes),
     )
+    if (amount <= 0 && unitAutoTarget(atkUnit) === 'most_injured_ally') {
+      amount = rollAttackDamage(
+        attacker.qty,
+        stackMinDmg(attacker, catalog),
+        stackMaxDmg(attacker, catalog),
+      )
+    }
     const full = stackMaxHealth(aimed, catalog)
     const specHeal = unitAttackShape(atkUnit)
     const repaired = applyAllyStackRepair(
@@ -2124,11 +2333,9 @@ export function resolveAttack(
     null,
     allowFriendly,
     {
-      chargePathOrigin:
-        strikeMods?.chargePathOrigin ??
-        (spec.shape === 'charge_line'
-          ? { q: before.q, r: before.r }
-          : null),
+      chargePathOrigin: shapeGeometry.chargeStandAnchor,
+      wedgeZone: aim.wedgeZone,
+      standAnchor,
     },
   )
   // Attack-trail leave-behind (Fire, Shadow, Storm, …).
@@ -2141,13 +2348,14 @@ export function resolveAttack(
           ? []
           : geometricHexes(
               spec,
-              { q: attacker.q, r: attacker.r },
+              actionOrigin,
               aim.hex,
               battleAfterPull,
               boardKeys(tiles),
               attacker.side,
               tiles,
               catalog,
+              shapeGeometry,
             )
     if (trail.length === 0 && hits.length > 0) {
       trail = hits.map((hit) => hit.hex)
@@ -2177,13 +2385,14 @@ export function resolveAttack(
       spec.shape === 'line' || spec.shape === 'charge_line'
         ? geometricHexes(
             spec,
-            { q: attacker.q, r: attacker.r },
+            actionOrigin,
             aim.hex,
             battle,
             boardKeys(tiles),
             attacker.side,
             tiles,
             catalog,
+            shapeGeometry,
           ).map((hex) => occupancyKey(hex.q, hex.r))
         : hits.map((hit) => occupancyKey(hit.hex.q, hit.hex.r))
     const cleared = clearGroundEffectTemplateHexes(
@@ -2256,6 +2465,22 @@ export function resolveAttack(
   ]
 
   let didRetaliate = false
+  let primaryRetaliatorId: string | null = null
+  const animPhases: AttackAnimPhase[] = []
+  const snapshotStrikeDisplay = (): {
+    strikeStacks: CombatStack[]
+    strikeTombstones: CombatTombstone[]
+  } => {
+    const snap = syncTombstonesFromWipes(
+      battleForTombstones,
+      { ...battle, stacks, unitDeaths, roundUnitDeaths },
+      catalog,
+    )
+    return {
+      strikeStacks: snap.stacks,
+      strikeTombstones: snap.tombstones ?? [],
+    }
+  }
   const tryRetaliate = (preemptivePass: boolean) => {
     if (!atk || blockedByAttacker) {
       return
@@ -2324,10 +2549,16 @@ export function resolveAttack(
       if (isPreemptive !== preemptivePass) {
         continue
       }
-      if (attackDistance(atk, def) !== 1) {
+      if (attackDistance(atk, def, catalog) !== 1) {
         continue
       }
-      if (def.retaliationsLeft <= 0) {
+      if ((def.retaliationsLeft ?? 0) <= 0) {
+        const cap = retaliationCharges(unitById(catalog, def.unitId))
+        if (Number.isFinite(cap) && cap > 0) {
+          lines.push(
+            `${def.qty} ${stackName(catalog, def.unitId)} can't retaliate again this round.`,
+          )
+        }
         continue
       }
       if (isStunned(def, catalog)) {
@@ -2344,18 +2575,23 @@ export function resolveAttack(
         retaliator: CombatStack,
         monkReflect: boolean,
       ): CombatStack => {
+        const retaliationsLeftSpent = retaliator.retaliationsLeft
+        const withRetaliationBudget = (row: CombatStack): CombatStack => ({
+          ...row,
+          retaliationsLeft: retaliationsLeftSpent,
+        })
         if (!atk || atk.qty <= 0 || retaliator.qty <= 0) {
-          return retaliator
+          return withRetaliationBudget(retaliator)
         }
         const cry = retaliator.battleCryRetaliation
         const useCry = cry != null && cry.usesLeft > 0
         const basePct: number | 'max' = useCry ? cry.pct : spec.dmgPct
-        const aim = { q: atk.q, r: atk.r }
+        const aimHex = closestHexOnTargetFootprint(retaliator, atk, catalog)
         const shaped =
           spec.shape != null && spec.shape !== 'single'
             ? resolveShapeHits(
                 retaliator,
-                aim,
+                aimHex,
                 atk,
                 { ...battle, stacks },
                 catalog,
@@ -2367,10 +2603,14 @@ export function resolveAttack(
                   ...(spec.jumps != null ? { jumps: spec.jumps } : {}),
                   ...(spec.falloff != null ? { falloff: spec.falloff } : {}),
                 },
+                false,
+                {
+                  standAnchor: { q: retaliator.q, r: retaliator.r },
+                },
               )
             : [
                 {
-                  hex: aim,
+                  hex: aimHex,
                   stack: atk,
                   dmgPct: 100,
                 },
@@ -2463,9 +2703,13 @@ export function resolveAttack(
               applied.stack,
             )
             if (!applied.stack || applied.stack.qty <= 0) {
-              nextRetaliator = { ...nextRetaliator, qty: 0, topHealth: 0 }
+              nextRetaliator = withRetaliationBudget({
+                ...nextRetaliator,
+                qty: 0,
+                topHealth: 0,
+              })
             } else {
-              nextRetaliator = applied.stack
+              nextRetaliator = withRetaliationBudget(applied.stack)
             }
             continue
           }
@@ -2509,9 +2753,8 @@ export function resolveAttack(
             hitKeys.push(occupancyKey(hitVictim.q, hitVictim.r))
           }
           noteKill(pulseVictim.unitId, struck.killed)
-          nextRetaliator = applyVampiricFromDamage(
-            nextRetaliator,
-            struck.damage,
+          nextRetaliator = withRetaliationBudget(
+            applyVampiricFromDamage(nextRetaliator, struck.damage),
           )
           stacks = writeStack(
             stacks,
@@ -2550,7 +2793,7 @@ export function resolveAttack(
             }
             const refreshedRet = live(nextRetaliator.id)
             if (refreshedRet) {
-              nextRetaliator = refreshedRet
+              nextRetaliator = withRetaliationBudget(refreshedRet)
             }
           }
           if (struck.stack && struck.damage > 0) {
@@ -2571,7 +2814,9 @@ export function resolveAttack(
             if (damagedId === attackerId) {
               atk = post.defender
             }
-            nextRetaliator = post.attacker ?? nextRetaliator
+            nextRetaliator = post.attacker
+              ? withRetaliationBudget(post.attacker)
+              : nextRetaliator
             lines.push(...post.lines)
             if (post.reflectDamage > 0) {
               hitKeys.push(occupancyKey(nextRetaliator.q, nextRetaliator.r))
@@ -2606,10 +2851,14 @@ export function resolveAttack(
             'retaliate',
           )
           battle = geLeft.battle
-          stacks = geLeft.battle.stacks
+          stacks = geLeft.battle.stacks.map((row) =>
+            row.id === nextRetaliator.id
+              ? withRetaliationBudget(row)
+              : row,
+          )
           lines.push(...geLeft.lines)
         }
-        return nextRetaliator
+        return withRetaliationBudget(nextRetaliator)
       }
 
       // Unlimited retaliation + Vampiric Strike can revive every strike;
@@ -2712,6 +2961,9 @@ export function resolveAttack(
         retaliator,
         rollMonkReflectForInstance(),
       )
+      if (!primaryRetaliatorId) {
+        primaryRetaliatorId = id
+      }
       didRetaliate = true
       applyRetaliationSideEffects()
 
@@ -3349,7 +3601,31 @@ export function resolveAttack(
     }
   }
 
+  const offensiveHitKeys = [...hitKeys]
+  {
+    const display = snapshotStrikeDisplay()
+    animPhases.push({
+      attackerId,
+      targetStackIds: [...uniqueHitIds],
+      hitKeys: offensiveHitKeys,
+      strikeStacks: display.strikeStacks,
+      strikeTombstones: display.strikeTombstones,
+    })
+  }
+
   tryRetaliate(false)
+
+  if (didRetaliate && primaryRetaliatorId) {
+    const retalHitKeys = hitKeys.filter((key) => !offensiveHitKeys.includes(key))
+    const display = snapshotStrikeDisplay()
+    animPhases.push({
+      attackerId: primaryRetaliatorId,
+      targetStackIds: [attackerId],
+      hitKeys: retalHitKeys,
+      strikeStacks: display.strikeStacks,
+      strikeTombstones: display.strikeTombstones,
+    })
+  }
 
   if (extraShotsEligible && spec.extraShots) {
     stacks = fireExtraShotsFromAttack(
@@ -3591,5 +3867,6 @@ export function resolveAttack(
     hitColor: 'red',
     ...(heroesChanged ? { heroes: heroState } : {}),
     ...(grantExtraTurn ? { grantExtraTurn: true } : {}),
+    ...(animPhases.length > 0 ? { animPhases } : {}),
   }
 }

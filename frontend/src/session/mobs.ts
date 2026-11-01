@@ -1,3 +1,4 @@
+import { absoluteWeekNumber } from '../hex/calendar'
 import {
   buildingById,
   buildingGrowth,
@@ -5,14 +6,13 @@ import {
   unitById,
   type ReferenceCatalog,
 } from '../town/catalog'
+import { findMobAtHex } from '../hex/worldMobFootprint'
 import {
   ARMY_STACK_SLOTS,
   type GameSession,
   type Mob,
   type UnitStack,
 } from './types'
-
-/** One mob from the map response (layer 6). Session ids are assigned here. */
 export type GeneratedMob = {
   q: number
   r: number
@@ -121,7 +121,7 @@ export function hydrateGeneratedMobs(
   return next
 }
 
-function dwellingGrowthFor(
+export function dwellingGrowthFor(
   catalog: ReferenceCatalog,
   unitId: number,
 ): number {
@@ -177,6 +177,12 @@ function growOneMob(
   catalog: ReferenceCatalog,
   mob: Mob,
 ): GameSession {
+  if (
+    mob.event_spawn_week != null &&
+    mob.event_spawn_week === absoluteWeekNumber(session.game.calendar)
+  ) {
+    return session
+  }
   const unitId = primaryUnitId(session, catalog, mob)
   if (unitId == null) {
     return session
@@ -227,8 +233,9 @@ export function findMobAt(
   session: GameSession,
   q: number,
   r: number,
+  catalog?: ReferenceCatalog | null,
 ): Mob | undefined {
-  return session.mobs.find((mob) => mob.position.q === q && mob.position.r === r)
+  return findMobAtHex(session, catalog ?? null, q, r)
 }
 
 export function mobLeadStack(
@@ -272,6 +279,30 @@ export function mobLabel(
   const name = unitById(catalog, top.unit_id)?.name ?? 'Mob'
   // Weekly growth can leave multiple same-type stacks; show consolidated qty.
   return `${mobUnitQty(session, mob, top.unit_id)} ${name}`
+}
+
+/** Single-stack world mob; skips normal weekly growth on the spawn week. */
+export function spawnWorldMobAt(
+  session: GameSession,
+  q: number,
+  r: number,
+  unitId: number,
+  qty: number,
+  eventSpawnWeek: number,
+): GameSession {
+  if (qty <= 0) {
+    return session
+  }
+  const mobId = nextMobId(session)
+  const added = appendStack(session, mobId, unitId, qty)
+  const slots = padSlots([added.stackId])
+  const mob: Mob = {
+    id: mobId,
+    position: { q, r },
+    slots_1_to_6: slots,
+    event_spawn_week: eventSpawnWeek,
+  }
+  return { ...added.session, mobs: [...added.session.mobs, mob] }
 }
 
 export function removeWorldMob(session: GameSession, mob: Mob): GameSession {

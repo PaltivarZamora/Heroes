@@ -18,7 +18,10 @@ import {
   placeShadowOnEmptyHexes,
   SHADOW_GROUND_EFFECT_ID,
 } from './shadow'
-import { formatChancePct, rollChancePctDetailed } from './combatLog'
+import {
+  rollChancePctDetailed,
+  summarizeGroundEffectLine,
+} from './combatLog'
 
 function effectLabel(templateId: number): string {
   if (templateId === STORM_GROUND_EFFECT_ID) {
@@ -46,36 +49,6 @@ function terrainNameForKey(
     return null
   }
   return hexTerrainByName(catalog, tile.terrain)?.name ?? tile.terrain
-}
-
-function summarizeGroundEffectLine(
-  unitName: string,
-  effect: string,
-  chance: number,
-  attempted: number,
-  placed: number,
-  rolls: number[],
-  reason?: string,
-): string {
-  if (reason) {
-    return `${unitName}: ${effect} — ${reason}.`
-  }
-  if (chance >= 100) {
-    if (placed > 0) {
-      return `${unitName}: ${effect} placed on ${placed}/${attempted} hex${attempted === 1 ? '' : 'es'}.`
-    }
-    return `${unitName}: ${effect} — none placed (${attempted} hex${attempted === 1 ? '' : 'es'} blocked).`
-  }
-  const rollText =
-    rolls.length === 1
-      ? String(rolls[0])
-      : rolls.length > 1
-        ? rolls.join(', ')
-        : '?'
-  if (placed > 0) {
-    return `${unitName}: ${effect} ${formatChancePct(chance)}% — rolled ${rollText}, ${placed}/${attempted} placed.`
-  }
-  return `${unitName}: ${effect} ${formatChancePct(chance)}% — rolled ${rollText}, none placed.`
 }
 
 /**

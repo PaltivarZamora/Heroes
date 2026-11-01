@@ -10,14 +10,7 @@ import {
 import { rolledItemSlotTypeId } from '../items/display'
 import type { RolledItem } from '../items/types'
 
-let warnedStatWeights = false
-
-function warnStatWeightsOnce(): void {
-  if (!warnedStatWeights) {
-    warnedStatWeights = true
-    console.warn('[ai-items] ai_config.ai_item_stat_weight missing')
-  }
-}
+import { logConfigOnce } from '../session/configLog'
 
 function aiItemStatWeight(
   catalog: ReferenceCatalog,
@@ -25,7 +18,10 @@ function aiItemStatWeight(
 ): number {
   const raw = aiCfgRaw(catalog, 'ai_item_stat_weight')
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
-    warnStatWeightsOnce()
+    logConfigOnce(
+      'ai_item_stat_weight',
+      '[ai_config] ai_item_stat_weight missing',
+    )
     return 1
   }
   const rec = raw as Record<string, unknown>

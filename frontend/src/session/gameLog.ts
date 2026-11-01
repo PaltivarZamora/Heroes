@@ -77,7 +77,7 @@ export function playerGameLog(
   return player?.game_log ?? emptyPlayerGameLog()
 }
 
-function humanPlayers(session: GameSession): Player[] {
+export function humanPlayers(session: GameSession): Player[] {
   return session.players.filter(
     (player) => !player.is_ai && !player.ai_spectator,
   )
@@ -259,11 +259,32 @@ export function logArmyUpgradeAll(
   townId: string,
   count: number,
   costText: string,
+  armyLabel: string,
+  detail: string,
 ): GameSession {
   return appendLogEntry(session, playerId, 'town', 'army_upgrade_all', {
     townId,
     count,
     costText,
+    armyLabel,
+    detail,
+  })
+}
+
+/** Town-screen army drag/split/transfer feedback (not shown under panel columns). */
+export function logTownArmyMessage(
+  session: GameSession,
+  playerId: string,
+  townId: string,
+  message: string,
+): GameSession {
+  const text = message.trim()
+  if (!text) {
+    return session
+  }
+  return appendLogEntry(session, playerId, 'town', 'army_notice', {
+    townId,
+    message: text,
   })
 }
 
@@ -724,9 +745,19 @@ export function formatLogEntry(
       return {
         text: `${prefix}Upgraded ${data.qty} ${data.fromName} → ${data.toName} in ${townName(session, String(data.townId))} (${data.costText})`,
       }
-    case 'army_upgrade_all':
+    case 'army_upgrade_all': {
+      const army = String(data.armyLabel ?? 'army')
+      const detail =
+        typeof data.detail === 'string' && data.detail.trim()
+          ? data.detail.trim()
+          : `${data.count} stack(s)`
       return {
-        text: `${prefix}Upgrade All: ${data.count} stack(s) in ${townName(session, String(data.townId))} (${data.costText})`,
+        text: `${prefix}Upgrade All (${army}): ${detail} in ${townName(session, String(data.townId))} (${data.costText})`,
+      }
+    }
+    case 'army_notice':
+      return {
+        text: `${prefix}${String(data.message ?? 'Army notice')}`,
       }
     case 'army_buy_all':
       return {
@@ -774,9 +805,21 @@ export function formatLogEntry(
       return {
         text: `${prefix}${String(data.message ?? 'Mount animation notice')}`,
       }
+    case 'config_notice':
+      return {
+        text: `${prefix}${String(data.message ?? 'Configuration notice')}`,
+      }
+    case 'world_event':
+      return {
+        text: `${prefix}${String(data.message ?? 'World event')}`,
+      }
     case 'sound':
       return {
         text: `${prefix}${String(data.message ?? 'Sound notice')}`,
+      }
+    case 'battle_anim':
+      return {
+        text: `${prefix}${String(data.message ?? entry.type)}`,
       }
     case 'ambushed':
       return {

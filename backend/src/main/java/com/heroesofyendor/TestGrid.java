@@ -296,7 +296,7 @@ final class TestGrid {
         // 5h. Chest item rewards (BR S9-41). After all chests exist; before mobs.
         MapGenPipeline.runLayer(ctx, "L5h-chest-items", ChestItemsLayer::run);
 
-        // 6. World mobs (random, gap, road, guards). Not reachability blockers.
+        // 6. World mobs (random, gap, road, guards). Full footprints block L7 reachability.
         MapGenPipeline.runLayer(ctx, "L6", MobsLayer::run);
 
         // 7. Final reachability

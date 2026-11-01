@@ -5,8 +5,18 @@ import { HERO_MARKER_LABEL } from '../hex/hero'
 import { hexDistance, neighborHexes } from '../hex/pathfinding'
 import { forEachPassableHex, forEachTile, getTile, isPassable } from '../hex/world'
 import { mobAggroRange } from '../hex/mobAggro'
-import { getBaselineCatalog, getCachedCatalog, heroMovementPoints, heroResourcePools, isHeroTypeOffered, sizeDim, startingStockpileFor, visionRange } from '../town/catalog'
-import type { ReferenceCatalog } from '../town/catalog'
+import { hexDistanceToMobShape } from '../hex/worldMobFootprint'
+import {
+  getBaselineCatalog,
+  getCachedCatalog,
+  heroMovementPoints,
+  heroResourcePools,
+  isHeroTypeOffered,
+  sizeDim,
+  startingStockpileFor,
+  visionRange,
+  type ReferenceCatalog,
+} from '../town/catalog'
 import {
   defaultGameConfig,
   type GameConfig,
@@ -472,6 +482,7 @@ export function hydrateMapObjects(
             ? Math.max(0, Math.floor(Number(obj.qty) || 0))
             : 0,
         accrued_fraction: 0,
+        flipped: obj.kind === 'pickup' && obj.flipped === true ? true : undefined,
       })
     }
   }
@@ -729,12 +740,13 @@ function outsideMobRings(
   session: GameSession,
   hex: { q: number; r: number },
 ): boolean {
-  const range = mobAggroRange(getCachedCatalog())
+  const catalog = getCachedCatalog()
+  const range = mobAggroRange(catalog)
   if (range <= 0) {
     return true
   }
   return session.mobs.every(
-    (mob) => hexDistance(hex, mob.position) > range,
+    (mob) => hexDistanceToMobShape(hex, session, catalog, mob) > range,
   )
 }
 

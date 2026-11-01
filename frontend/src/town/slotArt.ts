@@ -102,9 +102,65 @@ export function terrainArtUrl(filename: string): string {
   return `/assets/terrain/${trimmed}`
 }
 
-export function unitPortraitUrl(filename: string): string {
-  if (filename.startsWith('/')) {
-    return filename
+/** Strip to a bare filename under `assets/units/`. */
+export function normalizeUnitAssetFileName(filename: string): string {
+  const trimmed = filename.trim().replace(/^\/+/, '')
+  if (!trimmed) {
+    return ''
+  }
+  const noUnitsPrefix = trimmed.replace(/^assets\/units\//, '')
+  return noUnitsPrefix.replace(/^.*[/\\]/, '')
+}
+
+/** Town folder for unit stills and battle sheets: `/assets/units/{town}/`. */
+export function unitAssetsTownBase(townName: string): string {
+  const town = townName.trim()
+  return `/assets/units/${town}`
+}
+
+/**
+ * Static unit picture URLs: town folder first, then legacy flat `assets/units/`.
+ * No log when the flat fallback is used.
+ */
+export function unitStaticPictureUrls(
+  filename: string,
+  townName?: string | null,
+): string[] {
+  const bare = normalizeUnitAssetFileName(filename)
+  if (!bare) {
+    return []
+  }
+  const paths: string[] = []
+  const town = townName?.trim()
+  if (town) {
+    paths.push(`${unitAssetsTownBase(town)}/${bare}`)
+  }
+  paths.push(`/assets/units/${bare}`)
+  return paths
+}
+
+/** Primary static unit art URL (first lookup candidate). */
+export function unitPortraitUrl(
+  filename: string,
+  townName?: string | null,
+): string {
+  const paths = unitStaticPictureUrls(filename, townName)
+  if (paths.length > 0) {
+    return paths[0]!
   }
   return `/assets/units/${filename}`
+}
+
+/** Battle anim sheet JSON under the unit's town folder. */
+export function unitBattleAnimSheetJsonUrl(
+  townName: string,
+  stem: string,
+  anim: string,
+): string {
+  return `${unitAssetsTownBase(townName)}/${stem}_${anim}.json`
+}
+
+/** Optional projectile still under the unit's town folder. */
+export function unitBattleProjectileUrl(townName: string, stem: string): string {
+  return `${unitAssetsTownBase(townName)}/${stem}_Projectile.png`
 }

@@ -1,5 +1,4 @@
 import type { Hero } from '../session/types'
-import { hexDistance } from '../hex/pathfinding'
 import {
   commandingHeroStats,
   dummyHeroStat,
@@ -12,6 +11,7 @@ import {
 import { heroStatValueByStatId } from '../town/statCatalog'
 import type { CombatStack } from './battle'
 import { stackMaxHealth } from './battle'
+import { footprintsTouch } from './actionOrigin'
 import {
   applyLayerIncrease,
   applyLayerIncreaseWithMinGain,
@@ -261,13 +261,14 @@ function buffPctFromConfig(
 function adjacentFriendlyStacks(
   attacker: CombatStack,
   stacks: CombatStack[],
+  catalog: ReferenceCatalog,
 ): CombatStack[] {
   return stacks.filter(
     (row) =>
       row.id !== attacker.id &&
       row.side === attacker.side &&
       row.qty > 0 &&
-      hexDistance(attacker, row) === 1,
+      footprintsTouch(attacker, row, catalog),
   )
 }
 
@@ -319,7 +320,7 @@ function tryApplyAdjacentAlliesBuff(
   if (buffPct <= 0) {
     return { stacks, lines: [] }
   }
-  const allies = adjacentFriendlyStacks(attacker, stacks)
+  const allies = adjacentFriendlyStacks(attacker, stacks, catalog)
   if (allies.length === 0) {
     return { stacks, lines: [] }
   }

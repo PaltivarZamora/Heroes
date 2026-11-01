@@ -22,7 +22,10 @@ import {
   parseFootprint,
 } from './footprint'
 import { moveKindForUnit } from './movement'
-import { occupancyKey } from './occupancy'
+import {
+  occupancyKey,
+  stackBlockingFootprint,
+} from './occupancy'
 
 /** Default world-sample radius when app_config is unset (see catalog helper). */
 export const DEFAULT_BATTLE_PROP_SAMPLE_RADIUS = 2
@@ -185,23 +188,41 @@ export function groundStacksKeepAdjacentEscape(
     if (stack.qty <= 0) {
       continue
     }
-    occupied.add(occupancyKey(stack.q, stack.r))
+    for (const hex of stackBlockingFootprint(stack, catalog)) {
+      occupied.add(occupancyKey(hex.q, hex.r))
+    }
   }
   for (const stack of battle.stacks) {
     if (!isGroundMobileStack(stack, catalog)) {
       continue
     }
+    const ownBody = new Set(
+      stackBlockingFootprint(stack, catalog).map((hex) =>
+        occupancyKey(hex.q, hex.r),
+      ),
+    )
     let open = 0
-    for (const n of neighborHexes({ q: stack.q, r: stack.r })) {
-      const key = occupancyKey(n.q, n.r)
-      if (extraBlocked?.has(key) || occupied.has(key)) {
+    for (const bodyKey of ownBody) {
+      const [qs, rs] = bodyKey.split(',')
+      const bq = Number(qs)
+      const br = Number(rs)
+      if (!Number.isFinite(bq) || !Number.isFinite(br)) {
         continue
       }
-      const tile = byKey.get(key)
-      if (!tile || tile.blocked || tile.movementCostMultiplier == null) {
-        continue
+      for (const n of neighborHexes({ q: bq, r: br })) {
+        const key = occupancyKey(n.q, n.r)
+        if (ownBody.has(key)) {
+          continue
+        }
+        if (extraBlocked?.has(key) || occupied.has(key)) {
+          continue
+        }
+        const tile = byKey.get(key)
+        if (!tile || tile.blocked || tile.movementCostMultiplier == null) {
+          continue
+        }
+        open += 1
       }
-      open += 1
     }
     if (open < 1) {
       return false
@@ -270,6 +291,26 @@ function reservedBattleCols(): Set<number> {
   ])
 }
 
+export function battleStackFootprintKeys(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const stack of battle.stacks) {
+    if (stack.qty <= 0) {
+      continue
+    }
+    if (isHeroStack(stack)) {
+      keys.add(occupancyKey(stack.q, stack.r))
+      continue
+    }
+    for (const hex of stackBlockingFootprint(stack, catalog)) {
+      keys.add(occupancyKey(hex.q, hex.r))
+    }
+  }
+  return keys
+}
+
 /**
  * Dress the battlefield from world props near attacker/defender.
  * Bag composition follows nearby world density/types; placement is jittered
@@ -284,6 +325,8 @@ export function seedBattlePropsFromWorld(
     seed?: number
     random?: () => number
     siege?: boolean
+    /** When set, props never cover unit footprints and blockers respect escape routes. */
+    battle?: CombatBattle | null
   },
 ): CombatTile[] {
   const radius = battlePropSampleRadius(catalog)
@@ -291,6 +334,11 @@ export function seedBattlePropsFromWorld(
   if (samples.length === 0 || catalog.prop.length === 0) {
     return tiles
   }
+
+  const stackFootprintKeys =
+    opts?.battle != null
+      ? battleStackFootprintKeys(opts.battle, catalog)
+      : new Set<string>()
 
   // Density from world sample: props / hexes examined in the two disks.
   let sampleHexes = 0
@@ -315,6 +363,9 @@ export function seedBattlePropsFromWorld(
   const reservedCols = reservedBattleCols()
   const candidates = tiles.filter((tile) => {
     if (tile.blocked || tile.movementCostMultiplier == null) {
+      return false
+    }
+    if (stackFootprintKeys.has(occupancyKey(tile.q, tile.r))) {
       return false
     }
     if (tile.col != null && reservedCols.has(tile.col)) {
@@ -383,6 +434,9 @@ export function seedBattlePropsFromWorld(
     if (reserved.has(key)) {
       continue
     }
+    if (stackFootprintKeys.has(key)) {
+      continue
+    }
     if (!propEligibleOnTerrain(prop, tile.terrain, catalog)) {
       open.push(key)
       continue
@@ -394,7 +448,7 @@ export function seedBattlePropsFromWorld(
       const ck = occupancyKey(hex.q, hex.r)
       coverKeys.push(ck)
       const cell = byKey.get(ck)
-      if (!cell || reserved.has(ck)) {
+      if (!cell || reserved.has(ck) || stackFootprintKeys.has(ck)) {
         coverOk = false
         break
       }
@@ -428,7 +482,9 @@ export function seedBattlePropsFromWorld(
     const losBlocker = prop.is_los_blocker === true
     if (blocker) {
       const extra = new Set(coverKeys)
-      if (!blockerPlacementKeepsEscapeRoutes(null, catalog, next, extra)) {
+      if (
+        !blockerPlacementKeepsEscapeRoutes(opts?.battle ?? null, catalog, next, extra)
+      ) {
         open.push(key)
         continue
       }

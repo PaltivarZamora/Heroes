@@ -360,6 +360,8 @@ export function GameLeftPanel({
         top: LEFT_PANEL_Y,
         width: LEFT_PANEL_WIDTH,
         height: LEFT_PANEL_HEIGHT,
+        ['--panel-square' as string]: `${PANEL_SQUARE}px`,
+        ['--panel-gap' as string]: `${PANEL_GAP}px`,
       }}
     >
       <div

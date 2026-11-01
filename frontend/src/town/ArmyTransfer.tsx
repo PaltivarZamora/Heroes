@@ -18,6 +18,7 @@ import {
   logArmyBuyAll,
   logArmyStackUpgraded,
   logArmyUpgradeAll,
+  logTownArmyMessage,
 } from '../session/gameLog'
 import type { GameSession } from '../session/types'
 import { formatCost, unitById, type ReferenceCatalog } from './catalog'
@@ -38,6 +39,8 @@ import {
   setArmyUpgradeAllHandler,
 } from './armyKeybindBridge'
 import { loadPlayerSettings } from '../settings/playerSettings'
+import { useGameStage } from '../layout/GameStage'
+import { PANEL_SQUARE } from '../layout/stageConstants'
 import { stackView, UnitStackFace } from './unitStack'
 import {
   formatToolkitRows,
@@ -111,6 +114,36 @@ function unitName(catalog: ReferenceCatalog | null, unitId: number): string {
   return unitById(catalog, unitId)?.name ?? 'Unit'
 }
 
+function armyRowLabel(
+  session: GameSession,
+  row: ArmyRowId,
+  heroId: string | null,
+): string {
+  if (row === 'garrison') {
+    return 'Garrison'
+  }
+  const hero = heroId
+    ? session.heroes.find((item) => item.id === heroId)
+    : null
+  const name = hero?.name?.trim()
+  return name && name.length > 0 ? name : 'Hero army'
+}
+
+function logArmyFeedback(
+  session: GameSession,
+  townId: string,
+  message: string | null | undefined,
+): GameSession {
+  if (!message?.trim()) {
+    return session
+  }
+  const player = humanPlayer(session)
+  if (!player) {
+    return session
+  }
+  return logTownArmyMessage(session, player.id, townId, message)
+}
+
 export function ArmyTransfer({
   session,
   townId,
@@ -128,14 +161,20 @@ export function ArmyTransfer({
   readOnly?: boolean
   leading?: ReactNode
 }) {
+  const { scale: stageScale } = useGameStage()
+  const carriedStackPx = PANEL_SQUARE * stageScale
   const [splitSlot, setSplitSlot] = useState<ArmySlotRef | null>(null)
   const [splitQty, setSplitQty] = useState(1)
   const [evenlyFrom, setEvenlyFrom] = useState<ArmySlotRef | null>(null)
   const [held, setHeld] = useState<{ stackId: string; origin: ArmySlotRef } | null>(null)
-  const [heldView, setHeldView] = useState<{ filename: string | null; qty: number } | null>(null)
+  const [heldView, setHeldView] = useState<{
+    filename: string | null
+    qty: number
+    townName?: string | null
+    unitId?: number
+  } | null>(null)
   const [dragging, setDragging] = useState<ArmySlotRef | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null)
-  const [armyMessage, setArmyMessage] = useState<string | null>(null)
   const [confirmUpgradeAll, setConfirmUpgradeAll] = useState<{
     row: ArmyRowId
     heroId: string | null
@@ -182,7 +221,9 @@ export function ArmyTransfer({
     setHeld(null)
     setHeldView(null)
     setGhost(null)
-    setArmyMessage(notice)
+    if (notice) {
+      updateSession((current) => logArmyFeedback(current, townId, notice))
+    }
   }
 
   const runUpgradeAll = (row: ArmyRowId, heroId: string | null) => {
@@ -219,6 +260,16 @@ export function ArmyTransfer({
     if (!catalog) {
       return
     }
+    const armyLabel = armyRowLabel(session, row, heroId)
+    const preview = previewUpgradeAllConfirm(
+      getSession(),
+      catalog,
+      townId,
+      row,
+      heroId,
+      primaryHeroId,
+      formatCost,
+    )
     const player = humanPlayer(getSession())
     updateSession((current) => {
       const applied = applyUpgradeAll(
@@ -230,21 +281,36 @@ export function ArmyTransfer({
         primaryHeroId,
       )
       let next = applied.session
-      if (player && applied.upgraded > 0) {
+      if (!player) {
+        return next
+      }
+      if (applied.upgraded > 0) {
+        const detail =
+          preview.lines.length > 0
+            ? preview.lines.join('; ')
+            : `${applied.upgraded} stack(s)`
         next = logArmyUpgradeAll(
           next,
           player.id,
           townId,
           applied.upgraded,
           formatCost(applied.totalCost),
+          armyLabel,
+          detail,
+        )
+      } else {
+        next = logTownArmyMessage(
+          next,
+          player.id,
+          townId,
+          expected > 0
+            ? `Upgrade All (${armyLabel}): no upgrades applied.`
+            : `Upgrade All (${armyLabel}): nothing to upgrade.`,
         )
       }
       return next
     })
     setConfirmUpgradeAll(null)
-    setArmyMessage(
-      expected > 0 ? `Upgraded ${expected} stack(s).` : 'No upgrades applied.',
-    )
   }
 
   const commitSingleUpgrade = (ref: ArmySlotRef) => {
@@ -277,7 +343,9 @@ export function ArmyTransfer({
       )
     })
     setConfirmUpgradeOne(null)
-    setArmyMessage(error)
+    if (error) {
+      updateSession((current) => logArmyFeedback(current, townId, error))
+    }
   }
 
   useEffect(() => {
@@ -361,7 +429,9 @@ export function ArmyTransfer({
         setHeld(null)
         setHeldView(null)
         setGhost(null)
-        setArmyMessage(error)
+        if (error) {
+          updateSession((current) => logArmyFeedback(current, townId, error))
+        }
         return
       }
       if (!currentDrag) {
@@ -380,9 +450,13 @@ export function ArmyTransfer({
           error = result.error
           return result.error ? currentSession : result.session
         })
-        setArmyMessage(error)
+        if (error) {
+          updateSession((current) => logArmyFeedback(current, townId, error))
+        }
       } else if (target === 'portrait') {
-        setArmyMessage("Can't drop on the portrait.")
+        updateSession((current) =>
+          logArmyFeedback(current, townId, "Can't drop on the portrait."),
+        )
       }
       draggingRef.current = null
       setDragging(null)
@@ -465,7 +539,9 @@ export function ArmyTransfer({
       return result.error ? currentSession : result.session
     })
     if (error || !heldStackId) {
-      setArmyMessage(error)
+      if (error) {
+        updateSession((current) => logArmyFeedback(current, townId, error))
+      }
       return
     }
     const stack = getSession().units.find((row) => row.id === heldStackId)
@@ -473,9 +549,13 @@ export function ArmyTransfer({
     const nextHeld = { stackId: heldStackId, origin: splitSlot }
     heldRef.current = nextHeld
     setHeld(nextHeld)
-    setHeldView({ filename: view.filename, qty: stack?.qty ?? qty })
+    setHeldView({
+      filename: view.filename,
+      qty: stack?.qty ?? qty,
+      townName: view.townName,
+      unitId: view.unitId,
+    })
     setSplitSlot(null)
-    setArmyMessage(null)
   }
 
   useEffect(() => {
@@ -547,6 +627,7 @@ export function ArmyTransfer({
             armyStacks={rowSlotIds(session, townId, spec.row, spec.heroId).map(
               (id) => stackView(session, id, catalog),
             )}
+            catalog={catalog}
             slotTip={(slot, stack) => {
               if (!catalog || stack.empty) {
                 return null
@@ -617,7 +698,6 @@ export function ArmyTransfer({
               event.preventDefault()
               draggingRef.current = ref
               setDragging(ref)
-              setArmyMessage(null)
             }}
             onEmptySlotPointerDown={(slot, event) => {
               if (event.button !== 0 || held) {
@@ -643,7 +723,11 @@ export function ArmyTransfer({
                   return result.error ? currentSession : result.session
                 })
                 setEvenlyFrom(null)
-                setArmyMessage(error)
+                if (error) {
+                  updateSession((current) =>
+                    logArmyFeedback(current, townId, error),
+                  )
+                }
                 return
               }
             }}
@@ -678,6 +762,9 @@ export function ArmyTransfer({
                               townId,
                             )
                             if (result.error) {
+                              updateSession((current) =>
+                                logArmyFeedback(current, townId, result.error),
+                              )
                               return current
                             }
                             let next = result.session
@@ -710,9 +797,6 @@ export function ArmyTransfer({
             }
           />
         ))}
-        {armyMessage ? (
-          <p className="town-army-message">{armyMessage}</p>
-        ) : null}
       </div>
 
       <ArmySplitPopup
@@ -730,7 +814,13 @@ export function ArmyTransfer({
           if (splitSlot) {
             setEvenlyFrom(splitSlot)
             setSplitSlot(null)
-            setArmyMessage('Click an open slot in an army to split evenly.')
+            updateSession((current) =>
+              logArmyFeedback(
+                current,
+                townId,
+                'Click an open slot in the same army to split evenly.',
+              ),
+            )
           }
         }}
         onCancel={() => setSplitSlot(null)}
@@ -739,13 +829,21 @@ export function ArmyTransfer({
       {ghost && heldView
         ? createPortal(
             <div
-              className="town-army-ghost town-army-ghost-stack"
-              style={{ left: ghost.x + 12, top: ghost.y + 12 }}
+              className="town-army-ghost-stack town-army-box town-army-slot"
+              style={{
+                left: ghost.x,
+                top: ghost.y,
+                width: carriedStackPx,
+                height: carriedStackPx,
+              }}
             >
               <UnitStackFace
                 empty={false}
                 filename={heldView.filename}
                 qty={heldView.qty}
+                townName={heldView.townName}
+                unitId={heldView.unitId}
+                catalog={catalog}
               />
             </div>,
             document.body,

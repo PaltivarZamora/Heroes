@@ -1,4 +1,5 @@
 import type { HeroStatKey, HeroStats, ReferenceCatalog } from './catalog'
+import { logConfigOnce } from '../session/configLog'
 
 export type StatRow = {
   id: number
@@ -41,7 +42,7 @@ function warnMissingStatKey(key: string, context: string): void {
     return
   }
   warnedMissingStat.add(id)
-  console.warn(`[stat] no row for key "${key}" (${context})`)
+  logConfigOnce(`stat:${id}`, `[stat] no row for key "${key}" (${context})`)
 }
 
 export function parseStatTags(value: unknown): number[] {
@@ -123,7 +124,7 @@ function regenStatIdForKey(
     const id = `${key}:${context}`
     if (!warnedRegenStatKey.has(id)) {
       warnedRegenStatKey.add(id)
-      console.warn(`[stat] no row for key "${key}" (${context})`)
+      logConfigOnce(`stat:${id}`, `[stat] no row for key "${key}" (${context})`)
     }
     return null
   }

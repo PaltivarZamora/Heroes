@@ -12,6 +12,7 @@ import {
 } from './playerSettings'
 import {
   formatKeyLabel,
+  keybindCatalogRows,
   keybindDbRows,
   resolvedKeybinds,
 } from '../input/keybindEngine'
@@ -251,11 +252,15 @@ export function SettingsScreen({
         {tab === 'keybinds' ? (
           <div className="settings-panel settings-keybinds">
             {conflict ? <p className="settings-hint">{conflict}</p> : null}
+            {keybindCatalogRows().length > 0 &&
+            keybindDbRows().length === 0 ? (
+              <p className="settings-hint">
+                Using built-in defaults (catalog keybind table empty or not
+                loaded).
+              </p>
+            ) : null}
             <ul>
-              {keybindDbRows().length === 0 ? (
-                <li className="settings-hint">No keybind rows loaded from catalog.</li>
-              ) : null}
-              {keybindDbRows().map((row) => {
+              {keybindCatalogRows().map((row) => {
                 const live = resolvedKeybinds().find(
                   (r) => r.action === row.action,
                 )

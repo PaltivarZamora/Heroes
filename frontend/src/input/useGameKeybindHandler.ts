@@ -18,6 +18,7 @@ export type KeybindActions = {
   onBack: () => void
   onConfirm: () => void
   onEndTurn: () => void
+  onAdvanceWeek: () => void
   onHeroScreen: () => void
   onTownScreen: () => void
   onNextActionable: (reverse: boolean) => void
@@ -70,6 +71,16 @@ export function useGameKeybindHandler(
       if (event.repeat && action !== 'menu') {
         return
       }
+      if (
+        action === 'advance_week' &&
+        !context.popupOpen &&
+        !context.inBattle &&
+        !context.blockEndTurn
+      ) {
+        event.preventDefault()
+        actions.onAdvanceWeek()
+        return
+      }
       switch (action) {
         case 'menu':
           event.preventDefault()
@@ -106,6 +117,13 @@ export function useGameKeybindHandler(
           }
           event.preventDefault()
           actions.onEndTurn()
+          return
+        case 'advance_week':
+          if (context.popupOpen || context.inBattle || context.blockEndTurn) {
+            return
+          }
+          event.preventDefault()
+          actions.onAdvanceWeek()
           return
         case 'hero_screen':
           if (context.inBattle || context.popupOpen) {

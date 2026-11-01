@@ -7,6 +7,9 @@ import {
 } from '../session/gameLog'
 import { humanPlayer } from '../session/accessors'
 import {
+  positiveAnimConfig,
+} from '../config/animConfig'
+import {
   getCachedCatalog,
   heroTypeName,
   type ReferenceCatalog,
@@ -79,18 +82,6 @@ const warnedMissingStem = new Set<string>()
 const warnedConfigKey = new Set<string>()
 const devWarnings: string[] = []
 
-function positiveAppConfig(
-  catalog: ReferenceCatalog | null | undefined,
-  key: string,
-): number | null {
-  const raw = catalog?.app_config.find((row) => row.key === key)?.value
-  const n = raw == null || raw === '' ? NaN : Number(raw)
-  if (!Number.isFinite(n) || n <= 0) {
-    return null
-  }
-  return n
-}
-
 function warnConfigOnce(
   session: GameSession,
   key: string,
@@ -115,8 +106,8 @@ export function mountMoveSettings(
   catalog: ReferenceCatalog | null | undefined,
 ): MountMoveSettings {
   return {
-    secPerHex: positiveAppConfig(catalog, 'mount_move_sec_per_hex'),
-    animFps: positiveAppConfig(catalog, 'mount_anim_fps'),
+    secPerHex: positiveAnimConfig(catalog, 'mount_move_sec_per_hex'),
+    animFps: positiveAnimConfig(catalog, 'mount_anim_fps'),
   }
 }
 
@@ -130,14 +121,14 @@ export function ensureMountMoveConfigWarnings(
     next = warnConfigOnce(
       next,
       'mount_move_sec_per_hex',
-      '[app_config] mount_move_sec_per_hex missing or invalid — hero map moves use step timing (no slide).',
+      '[anim_config] mount_move_sec_per_hex missing or invalid — hero map moves use step timing (no slide).',
     )
   }
   if (settings.animFps == null && !warnedConfigKey.has('mount_anim_fps')) {
     next = warnConfigOnce(
       next,
       'mount_anim_fps',
-      '[app_config] mount_anim_fps missing or invalid — mount move sheets stay static.',
+      '[anim_config] mount_anim_fps missing or invalid — mount move sheets stay static.',
     )
   }
   return next

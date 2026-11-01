@@ -25,6 +25,20 @@ export function advanceDay(calendar: Calendar): Calendar {
   return { day, week, month }
 }
 
+/** Jump to day 1 of the next calendar week (handles month wrap). */
+export function nextWeekStartCalendar(calendar: Calendar): Calendar {
+  let { week, month } = calendar
+  week += 1
+  if (week > 4) {
+    week = 1
+    month += 1
+  }
+  if (month > 13) {
+    month = 1
+  }
+  return { day: 1, week, month }
+}
+
 export function isWeekRollover(previous: Calendar, next: Calendar): boolean {
   return previous.day === 7 && next.day === 1
 }

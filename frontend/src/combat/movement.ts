@@ -1,5 +1,5 @@
 import { spendMovement, type Axial } from '../hex/hero'
-import { findPathOnBoard, reachableWithin } from '../hex/pathfinding'
+import { findPathOnBoard } from '../hex/pathfinding'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
   DUMP_REMAINING_MOVE_COST,
@@ -22,14 +22,20 @@ import {
   stackFootprint,
   type OccupancyBody,
 } from './occupancy'
+import { neighborHexes } from '../hex/pathfinding'
 import type { FootprintCode } from './footprint'
 
 export {
   combatBodySize as combatStackCells,
   combatBodyFootprint as combatStackFootprint,
+  combatBlockingFootprint,
   occupiedHexes,
+  expandAnchorKeysForFootprint,
+  reachableAtHoverHex,
   stackFootprint,
+  stackBlockingFootprint,
   stackOccupyingHex,
+  stacksOccupyingHex,
 } from './occupancy'
 
 export type MoveKind = 'ground' | 'flying' | 'hover'
@@ -343,7 +349,18 @@ export function combatPathSteps(
       }
     }
   }
-  const path = findPathOnBoard(from, to, enterCost, blocked)
+  const path = findPathOnBoard(from, to, enterCost, blocked, (q, r) => {
+    if (q === from.q && r === from.r) {
+      return true
+    }
+    if (blocked?.has(hexKey(q, r))) {
+      return false
+    }
+    if (enterCost(q, r) == null) {
+      return false
+    }
+    return standFits({ q, r }, enterCost, occupied, spec)
+  })
   if (!path || path.length <= 1) {
     return []
   }
@@ -497,7 +514,14 @@ export function combatReachable(
     stackEnterCost(tilesByKey, kind, passableMoatKeys, movementBlockKeys),
     costAdjust,
   )
-  const paths = reachableWithin(from, budget, enterCost, occupied, stopOnlyKeys)
+  const paths = footprintReachableWithin(
+    from,
+    budget,
+    enterCost,
+    occupied,
+    spec,
+    stopOnlyKeys,
+  )
   const landingOccupied = landOccupied ?? occupied
   const out = new Map<string, Axial[]>()
   out.set(hexKey(from.q, from.r), [])
@@ -585,6 +609,107 @@ export function combatBlinkReachable(
     out.set(key, [dest])
   }
   return out
+}
+
+/**
+ * Like {@link reachableWithin}, but only expands to anchor hexes where the
+ * mover's full footprint fits (transit + stand).
+ */
+function footprintReachableWithin(
+  from: Axial,
+  budget: number,
+  enterCost: (q: number, r: number) => number | null,
+  occupied: ReadonlySet<string>,
+  spec: FootprintSpec | undefined,
+  stopOnly?: ReadonlySet<string>,
+): Map<string, Axial[]> {
+  const startKey = hexKey(from.q, from.r)
+  const cameFrom = new Map<string, Axial>()
+  const gScore = new Map<string, number>([[startKey, 0]])
+  const posByKey = new Map<string, Axial>([[startKey, from]])
+  const open = new Map<string, Axial>([[startKey, from]])
+
+  while (open.size > 0) {
+    let bestKey = ''
+    let bestG = Infinity
+    let current: Axial | undefined
+    for (const [openKey, node] of open) {
+      const g = gScore.get(openKey) ?? Infinity
+      if (g < bestG) {
+        bestG = g
+        bestKey = openKey
+        current = node
+      }
+    }
+    if (!current) {
+      break
+    }
+    open.delete(bestKey)
+    if (stopOnly?.has(bestKey) && bestKey !== startKey) {
+      continue
+    }
+
+    for (const next of neighborHexes(current)) {
+      const nextKey = hexKey(next.q, next.r)
+      if (occupied.has(nextKey) && nextKey !== startKey) {
+        continue
+      }
+      if (!standFits(next, enterCost, occupied, spec)) {
+        continue
+      }
+      const cost = enterCost(next.q, next.r)
+      if (cost == null) {
+        continue
+      }
+      const remaining = budget - bestG
+      const stepCost =
+        cost === DUMP_REMAINING_MOVE_COST
+          ? remaining > 1e-9
+            ? remaining
+            : null
+          : cost
+      if (stepCost == null) {
+        continue
+      }
+      const tentative = bestG + stepCost
+      if (tentative - 1e-9 > budget) {
+        continue
+      }
+      if (tentative + 1e-9 >= (gScore.get(nextKey) ?? Infinity)) {
+        continue
+      }
+      cameFrom.set(nextKey, current)
+      gScore.set(nextKey, tentative)
+      posByKey.set(nextKey, next)
+      open.set(nextKey, next)
+    }
+  }
+
+  const paths = new Map<string, Axial[]>()
+  for (const [hexKeyStr, pos] of posByKey) {
+    if (hexKeyStr === startKey) {
+      continue
+    }
+    const steps = reconstructFootprintPath(cameFrom, pos)
+    paths.set(hexKeyStr, steps)
+  }
+  return paths
+}
+
+function reconstructFootprintPath(
+  cameFrom: Map<string, Axial>,
+  end: Axial,
+): Axial[] {
+  const path: Axial[] = [end]
+  let cursor = end
+  let cursorKey = hexKey(cursor.q, cursor.r)
+  while (cameFrom.has(cursorKey)) {
+    cursor = cameFrom.get(cursorKey)!
+    path.push(cursor)
+    cursorKey = hexKey(cursor.q, cursor.r)
+  }
+  path.reverse()
+  return path
 }
 
 /** Walk budget reach, or blink LOS destinations when the unit has blink_movement. */

@@ -43,17 +43,6 @@ export function transportMoveStemForDeparture(
   return transportMoveStemForTownType(catalog, originTown.town_type_id)
 }
 
-/** Legacy `Transport_*.png` or move-sheet static names on in-flight heroes. */
-export function flightTransportSpriteFile(
-  flight: { transport_sprite?: string } | null | undefined,
-): string {
-  const file = flight?.transport_sprite?.trim()
-  if (!file) {
-    return moveSheetStaticFile(WORLD_MOVE_STEM)
-  }
-  return file
-}
-
 export function flightMoveSheetStem(
   flight: { transport_sprite?: string } | null | undefined,
   _catalog: ReferenceCatalog | null | undefined,
@@ -93,14 +82,6 @@ export function heroMoveSheetStem(
   }
   const name = catalog ? heroTypeName(catalog, hero.class_id) : ''
   return name ? classMountMoveSheetStem(name) : null
-}
-
-/** @deprecated Use {@link transportMoveStemForDeparture} + {@link moveSheetStaticFile}. */
-export function transportSpriteForTownType(
-  catalog: ReferenceCatalog,
-  townTypeId: number,
-): string {
-  return moveSheetStaticFile(transportMoveStemForTownType(catalog, townTypeId))
 }
 
 /** @deprecated Use {@link transportMoveStemForDeparture} + {@link moveSheetStaticFile}. */

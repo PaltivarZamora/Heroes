@@ -14,6 +14,10 @@ import {
   type CombatTile,
 } from './battle'
 import { hexKey } from './movement'
+import {
+  actionOriginFootprintHex,
+} from './actionOrigin'
+import { minFootprintHexDistance, stackFootprint } from './occupancy'
 import { landableHexes, relocateToHex } from './relocate'
 import { hexLine, hasLineOfSight } from './shapes'
 import {
@@ -35,7 +39,7 @@ export function pullRangeOk(
   const unit = unitById(catalog, attacker.unitId)
   const minR = Math.max(0, unit?.min_range ?? 0)
   const maxR = stackMaxRange(attacker, catalog)
-  const dist = hexDistance(from, { q: target.q, r: target.r })
+  const dist = minFootprintHexDistance(from, attacker, target, catalog)
   const needMin = minR > 0 ? minR : 1
   return dist >= needMin && dist <= maxR
 }
@@ -69,20 +73,51 @@ export function targetInNormalAttackReach(
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   if (spec.shape === 'pulse') {
     const radius = Math.max(1, spec.radius ?? 1)
-    return hexDistance(attacker, target) <= radius
+    const dist = minFootprintHexDistance(
+      { q: attacker.q, r: attacker.r },
+      attacker,
+      target,
+      catalog,
+    )
+    return dist <= radius
   }
   const shape = spec.shape
   const maxRange =
     shape === 'charge_line' ? 1 : stackMaxRange(attacker, catalog)
-  const dist = hexDistance(attacker, target)
+  const dist = minFootprintHexDistance(
+    { q: attacker.q, r: attacker.r },
+    attacker,
+    target,
+    catalog,
+  )
   return dist >= 1 && dist <= maxRange
 }
 
-function preferredPullAdjacent(attacker: Axial, target: Axial): Axial | null {
-  const line = hexLine(target, attacker)
+function hexAdjacentToAttackerFootprint(
+  hex: Axial,
+  attacker: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  return stackFootprint(attacker, catalog).some(
+    (a) => hexDistance(hex, a) === 1,
+  )
+}
+
+function preferredPullAdjacent(
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+): Axial | null {
+  const origin = actionOriginFootprintHex(
+    { q: attacker.q, r: attacker.r },
+    attacker,
+    catalog,
+    { q: target.q, r: target.r },
+  )
+  const line = hexLine({ q: target.q, r: target.r }, origin)
   for (let i = line.length - 2; i >= 0; i -= 1) {
     const hex = line[i]!
-    if (hexDistance(hex, attacker) === 1) {
+    if (hexDistance(hex, origin) === 1) {
       return hex
     }
   }
@@ -100,9 +135,8 @@ export function computePullLandingHex(
   if (!canBePullTarget(target, catalog)) {
     return null
   }
-  const fromAttacker = { q: attacker.q, r: attacker.r }
   const fromTarget = { q: target.q, r: target.r }
-  const prefer = preferredPullAdjacent(fromAttacker, fromTarget)
+  const prefer = preferredPullAdjacent(attacker, target, catalog)
   const unit = unitById(catalog, target.unitId)
   if (!unit) {
     return null
@@ -110,7 +144,7 @@ export function computePullLandingHex(
   const open = landableHexes(battle, catalog, tiles, target, unit)
   const candidates = open.filter(
     (hex) =>
-      hexDistance(hex, fromAttacker) === 1 &&
+      hexAdjacentToAttackerFootprint(hex, attacker, catalog) &&
       (hex.q !== target.q || hex.r !== target.r),
   )
   if (candidates.length === 0) {

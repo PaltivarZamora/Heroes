@@ -1,14 +1,26 @@
-import type { ReferenceCatalog } from '../town/catalog'
-import { unitById, unitHasTag } from '../town/catalog'
+import type { Axial } from '../hex/hero'
+import { hexDistance } from '../hex/pathfinding'
+import type { FootprintCode } from './footprint'
+import { unitById, unitHasTag, type ReferenceCatalog } from '../town/catalog'
 import type {
   CombatBattle,
   CombatSide,
   CombatStack,
+  CombatTile,
   CombatTombstone,
 } from './battle'
 import { isHeroStack } from './battle'
 import type { OccupancyBody } from './occupancy'
-import { occupancyKey } from './occupancy'
+import {
+  combatBodyFootprint,
+  combatBlockingFootprint,
+  footprintAlong,
+  footprintFits,
+  footprintHexes,
+  occupancyKey,
+  occupiedHexes,
+} from './occupancy'
+import { combatCanLandOn, combatEnterCost, moveKindForUnit } from './movement'
 import { isCreatureArmyUnit } from './siege'
 
 export type { CombatTombstone }
@@ -25,13 +37,17 @@ export function canLeaveTombstone(
   return isCreatureArmyUnit(unitById(catalog, stack.unitId))
 }
 
-export function makeTombstone(stack: CombatStack): CombatTombstone {
+export function makeTombstone(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): CombatTombstone {
   return {
     id: stack.id,
     side: stack.side,
     unitId: stack.unitId,
     q: stack.q,
     r: stack.r,
+    footprint: combatBlockingFootprint(stack, catalog),
     startingQty: Math.max(1, stack.startingQty),
     deadQty: Math.max(1, stack.startingQty),
     sessionStackId: stack.sessionStackId,
@@ -40,13 +56,26 @@ export function makeTombstone(stack: CombatStack): CombatTombstone {
   }
 }
 
+export function tombstoneFootprintHexes(tomb: CombatTombstone): Axial[] {
+  const code: FootprintCode = tomb.footprint ?? '1x1'
+  return footprintHexes({ q: tomb.q, r: tomb.r }, code, footprintAlong(tomb.side))
+}
+
+export function tombstoneOccupiesHex(
+  tomb: CombatTombstone,
+  q: number,
+  r: number,
+): boolean {
+  return tombstoneFootprintHexes(tomb).some((hex) => hex.q === q && hex.r === r)
+}
+
 /** Landing blockers only — units may path through tombstones but cannot stop on them. */
 export function tombstoneOccupancyBodies(
   tombstones: CombatTombstone[] | undefined,
 ): OccupancyBody[] {
   return (tombstones ?? []).map((tomb) => ({
     id: tomb.id,
-    hexes: [{ q: tomb.q, r: tomb.r }],
+    hexes: tombstoneFootprintHexes(tomb),
   }))
 }
 
@@ -56,8 +85,8 @@ export function tombstoneAt(
   r: number,
 ): CombatTombstone | null {
   return (
-    (battle.tombstones ?? []).find(
-      (tomb) => tomb.q === q && tomb.r === r,
+    (battle.tombstones ?? []).find((tomb) =>
+      tombstoneOccupiesHex(tomb, q, r),
     ) ?? null
   )
 }
@@ -102,7 +131,7 @@ export function syncTombstonesFromWipes(
     if (!canLeaveTombstone(stack, catalog)) {
       return
     }
-    added.push(makeTombstone(stack))
+    added.push(makeTombstone(stack, catalog))
     existing.add(stack.id)
   }
   for (const stack of before.stacks) {
@@ -188,5 +217,103 @@ export function tombstoneHexKeys(
     .filter((tomb) =>
       tombstoneMatchesReviveTarget(tomb, casterSide, catalog, requiredTag),
     )
-    .map((tomb) => occupancyKey(tomb.q, tomb.r))
+    .flatMap((tomb) =>
+      tombstoneFootprintHexes(tomb).map((hex) => occupancyKey(hex.q, hex.r)),
+    )
+}
+
+function reviveAnchorCandidates(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[] | undefined,
+): Axial[] {
+  if (tiles && tiles.length > 0) {
+    return tiles.map((tile) => ({ q: tile.q, r: tile.r }))
+  }
+  const seen = new Set<string>()
+  const out: Axial[] = []
+  const add = (hex: Axial) => {
+    const key = occupancyKey(hex.q, hex.r)
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    out.push(hex)
+  }
+  for (const stack of battle.stacks) {
+    add({ q: stack.q, r: stack.r })
+    for (const hex of footprintHexes(
+      { q: stack.q, r: stack.r },
+      combatBodyFootprint(stack, catalog),
+      footprintAlong(stack.side),
+    )) {
+      add(hex)
+    }
+  }
+  for (const tomb of battle.tombstones ?? []) {
+    add({ q: tomb.q, r: tomb.r })
+    for (const hex of tombstoneFootprintHexes(tomb)) {
+      add(hex)
+    }
+  }
+  return out
+}
+
+/**
+ * Prefer the tomb anchor; else nearest anchor where the wiped footprint fits
+ * (same footprintFits rules as movement landing). Excludes `tomb` from blockers.
+ */
+export function nearestReviveAnchorForTombstone(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tomb: CombatTombstone,
+  tiles?: CombatTile[],
+): Axial | null {
+  const unit = unitById(catalog, tomb.unitId)
+  if (!unit) {
+    return null
+  }
+  const code: FootprintCode = tomb.footprint ?? '1x1'
+  const along = footprintAlong(tomb.side)
+  const tombsExcept = tombstoneOccupancyBodies(battle.tombstones).filter(
+    (body) => body.id !== tomb.id,
+  )
+  const occupied = occupiedHexes(
+    battle.stacks,
+    catalog,
+    undefined,
+    tombsExcept,
+    false,
+  )
+  const kind = moveKindForUnit(unit, catalog)
+  const tileMap = new Map(
+    (tiles ?? []).map((row) => [occupancyKey(row.q, row.r), row]),
+  )
+  const enterCost = (q: number, r: number) => {
+    const tile = tileMap.get(occupancyKey(q, r))
+    if (tiles && tiles.length > 0) {
+      if (!tile || !combatCanLandOn(tile, kind)) {
+        return null
+      }
+      return combatEnterCost(tile, kind)
+    }
+    return 1
+  }
+  const prefer = { q: tomb.q, r: tomb.r }
+  const fits = (anchor: Axial) =>
+    footprintFits(anchor, code, along, occupied, enterCost)
+  if (fits(prefer)) {
+    return prefer
+  }
+  const candidates = reviveAnchorCandidates(battle, catalog, tiles)
+    .filter(fits)
+    .sort((a, b) => {
+      const da = hexDistance(a, prefer)
+      const db = hexDistance(b, prefer)
+      if (da !== db) {
+        return da - db
+      }
+      return a.q - b.q || a.r - b.r
+    })
+  return candidates[0] ?? null
 }

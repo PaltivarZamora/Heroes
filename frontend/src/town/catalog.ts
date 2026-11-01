@@ -8,6 +8,7 @@ import {
 } from '../hex/resources'
 import type { DataStatus } from '../hex/debug'
 import { slotFromPlayerId } from '../session/types'
+import { logConfigOnce } from '../session/configLog'
 import { parseFootprint as parseFootprintCode } from '../combat/footprint'
 import {
   BUILDING_SLOT_HANGER,
@@ -85,7 +86,7 @@ export type UnitRow = {
   /** Alternate-state portrait (e.g. silenced Rift). Null = no swap. */
   image_path_alt: string | null
   /**
-   * Battlefield footprint shape code (`1x1` | `2x1` | `2x2` | `3x2` | `3x3`).
+   * Battlefield footprint shape code (`1x1` | `1x2` | `2x1` | `2x2` | `3x2` | `3x3`).
    * Null / missing → `1x1`.
    */
   footprint: string | null
@@ -160,6 +161,7 @@ export type AutoTargetKind =
   | 'random_wall_segment'
   | 'random_enemy'
   | 'random_enemy_los'
+  | 'most_injured_ally'
 
 export type UnitCombatAbilities = {
   no_enemy_retaliation: boolean
@@ -901,6 +903,7 @@ export type ReferenceCatalog = {
   item: ItemTemplateRow[]
   item_adj: ItemAdjRow[]
   app_config: AppConfigRow[]
+  anim_config: AppConfigRow[]
   keybind: KeybindRow[]
   map_config: JsonConfigRow[]
   combat_config: JsonConfigRow[]
@@ -910,6 +913,50 @@ export type ReferenceCatalog = {
   levels: LevelRow[]
   hero_levels: HeroLevelRow[]
   ground_effect: GroundEffectRow[]
+  event: EventRow[]
+  battle_hit_reaction: BattleHitReactionRow[]
+}
+
+export type BattleHitDirection = 'level' | 'above' | 'below'
+
+export type BattleHitTiltPivot = 'feet' | 'centre'
+
+export type BattleHitReactionRow = {
+  direction: BattleHitDirection
+  knockback_min: number
+  knockback_max: number
+  squash_min: number
+  squash_max: number
+  lift_min: number
+  lift_max: number
+  tilt_min: number
+  tilt_max: number
+  tilt_pivot: BattleHitTiltPivot
+  description: string
+}
+
+export type EventRow = {
+  id: number
+  name: string
+  timeframe: 'week' | 'month'
+  polarity: 'neutral' | 'positive' | 'negative'
+  weight: number
+  target_type:
+    | 'none'
+    | 'unit'
+    | 'class'
+    | 'tier'
+    | 'town'
+    | 'resource'
+    | 'all'
+  recruit_pct: number | null
+  waiting_recruit_pct: number | null
+  spawn_stacks: unknown
+  existing_mob_pct: number | null
+  res_drops: unknown
+  block_town_income: boolean
+  /** Player-facing copy; may include `{target}`. Empty string if omitted in DB. */
+  description: string
 }
 
 export type GroundEffectLayer = 'above_units' | 'below_units'
@@ -1351,6 +1398,271 @@ function asKeybind(rows: unknown): KeybindRow[] {
       return { action, label, key, alt_key, scope, rebindable, sort_order }
     })
     .filter((row) => row.action.length > 0 && row.key.length > 0)
+}
+
+const EVENT_TARGET_TYPES = new Set([
+  'none',
+  'unit',
+  'class',
+  'tier',
+  'town',
+  'resource',
+  'all',
+])
+
+const BATTLE_HIT_DIRECTIONS = new Set(['level', 'above', 'below'])
+const BATTLE_HIT_PIVOTS = new Set(['feet', 'centre'])
+
+function battleHitNumField(
+  rec: Record<string, unknown>,
+  key: string,
+): number | null {
+  const raw = rec[key]
+  if (raw == null || raw === '') {
+    return null
+  }
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim())
+  return Number.isFinite(n) ? n : null
+}
+
+function normalizeLeverRange(
+  min: number | null,
+  max: number | null,
+  label: string,
+): { min: number; max: number } | { error: string } {
+  if (min == null || max == null) {
+    return { error: `${label} missing or not numeric` }
+  }
+  return min <= max ? { min, max } : { min: max, max: min }
+}
+
+export type BattleHitReactionLoadStatus = {
+  ok: boolean
+  message: string
+}
+
+let battleHitReactionLoadStatus: BattleHitReactionLoadStatus = {
+  ok: false,
+  message: 'catalog not loaded yet',
+}
+
+export function getBattleHitReactionLoadStatus(): BattleHitReactionLoadStatus {
+  return battleHitReactionLoadStatus
+}
+
+function parseBattleHitReactions(rows: unknown): {
+  rows: BattleHitReactionRow[]
+  status: BattleHitReactionLoadStatus
+} {
+  if (rows === undefined) {
+    return {
+      rows: [],
+      status: {
+        ok: false,
+        message:
+          '[battle_hit_reaction] catalog API omitted battle_hit_reaction — restart Spring after deploy so /api/reference/catalog includes the table',
+      },
+    }
+  }
+  if (!Array.isArray(rows)) {
+    return {
+      rows: [],
+      status: {
+        ok: false,
+        message: `[battle_hit_reaction] catalog API sent ${typeof rows} instead of a row array`,
+      },
+    }
+  }
+  if (rows.length === 0) {
+    return {
+      rows: [],
+      status: {
+        ok: false,
+        message:
+          '[battle_hit_reaction] API returned 0 rows — table empty or backend failed to load (check /api/system/data-status for battle_hit_reaction)',
+      },
+    }
+  }
+  const out: BattleHitReactionRow[] = []
+  const dropReasons: string[] = []
+  for (const row of rows) {
+    const rec = row as Record<string, unknown>
+    const directionRaw =
+      typeof rec.direction === 'string'
+        ? rec.direction.trim().toLowerCase()
+        : rec.direction != null
+          ? String(rec.direction).trim().toLowerCase()
+          : ''
+    if (!BATTLE_HIT_DIRECTIONS.has(directionRaw)) {
+      dropReasons.push(
+        `direction ${JSON.stringify(rec.direction)}: must be level, above, or below`,
+      )
+      continue
+    }
+    const knockback = normalizeLeverRange(
+      battleHitNumField(rec, 'knockback_min'),
+      battleHitNumField(rec, 'knockback_max'),
+      'knockback',
+    )
+    const squash = normalizeLeverRange(
+      battleHitNumField(rec, 'squash_min'),
+      battleHitNumField(rec, 'squash_max'),
+      'squash',
+    )
+    const lift = normalizeLeverRange(
+      battleHitNumField(rec, 'lift_min'),
+      battleHitNumField(rec, 'lift_max'),
+      'lift',
+    )
+    const tilt = normalizeLeverRange(
+      battleHitNumField(rec, 'tilt_min'),
+      battleHitNumField(rec, 'tilt_max'),
+      'tilt',
+    )
+    const pivotRaw =
+      typeof rec.tilt_pivot === 'string'
+        ? rec.tilt_pivot.trim().toLowerCase()
+        : rec.tilt_pivot != null
+          ? String(rec.tilt_pivot).trim().toLowerCase()
+          : ''
+    if ('error' in knockback) {
+      dropReasons.push(`row ${directionRaw}: ${knockback.error}`)
+      continue
+    }
+    if ('error' in squash) {
+      dropReasons.push(`row ${directionRaw}: ${squash.error}`)
+      continue
+    }
+    if ('error' in lift) {
+      dropReasons.push(`row ${directionRaw}: ${lift.error}`)
+      continue
+    }
+    if ('error' in tilt) {
+      dropReasons.push(`row ${directionRaw}: ${tilt.error}`)
+      continue
+    }
+    if (!BATTLE_HIT_PIVOTS.has(pivotRaw)) {
+      dropReasons.push(
+        `row ${directionRaw}: tilt_pivot must be feet or centre (got ${JSON.stringify(rec.tilt_pivot)})`,
+      )
+      continue
+    }
+    out.push({
+      direction: directionRaw as BattleHitDirection,
+      knockback_min: knockback.min,
+      knockback_max: knockback.max,
+      squash_min: squash.min,
+      squash_max: squash.max,
+      lift_min: lift.min,
+      lift_max: lift.max,
+      tilt_min: tilt.min,
+      tilt_max: tilt.max,
+      tilt_pivot: pivotRaw as BattleHitTiltPivot,
+      description:
+        typeof rec.description === 'string' ? rec.description.trim() : '',
+    })
+  }
+  if (out.length === 0) {
+    return {
+      rows: [],
+      status: {
+        ok: false,
+        message: `[battle_hit_reaction] all ${rows.length} row(s) rejected: ${dropReasons.join('; ')}`,
+      },
+    }
+  }
+  if (!out.some((entry) => entry.direction === 'level')) {
+    return {
+      rows: out,
+      status: {
+        ok: false,
+        message: `[battle_hit_reaction] no level row after parse (have ${out.map((entry) => entry.direction).join(', ')})`,
+      },
+    }
+  }
+  if (dropReasons.length > 0) {
+    logConfigOnce(
+      'battle_hit_reaction:partial',
+      `[battle_hit_reaction] kept ${out.length}/${rows.length} row(s); dropped: ${dropReasons.join('; ')}`,
+    )
+  }
+  return {
+    rows: out,
+    status: {
+      ok: true,
+      message: `[battle_hit_reaction] loaded ${out.length} row(s)`,
+    },
+  }
+}
+
+function asEvents(rows: unknown): EventRow[] {
+  if (!Array.isArray(rows)) {
+    return []
+  }
+  const parsed: EventRow[] = []
+  for (const row of rows) {
+    const rec = row as Record<string, unknown>
+    const id = Math.floor(Number(rec.id))
+    if (!Number.isFinite(id) || id <= 0) {
+      continue
+    }
+    const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+    const descriptionRaw =
+      typeof rec.description === 'string' ? rec.description.trim() : ''
+    const timeframeRaw =
+      typeof rec.timeframe === 'string' ? rec.timeframe.trim().toLowerCase() : ''
+    const polarityRaw =
+      typeof rec.polarity === 'string' ? rec.polarity.trim().toLowerCase() : ''
+    const targetRaw =
+      typeof rec.target_type === 'string' ? rec.target_type.trim().toLowerCase() : ''
+    const weight = Number(rec.weight)
+    if (
+      !name ||
+      (timeframeRaw !== 'week' && timeframeRaw !== 'month') ||
+      (polarityRaw !== 'neutral' &&
+        polarityRaw !== 'positive' &&
+        polarityRaw !== 'negative') ||
+      !EVENT_TARGET_TYPES.has(targetRaw) ||
+      !Number.isFinite(weight) ||
+      weight <= 0
+    ) {
+      continue
+    }
+    const recruitRaw = rec.recruit_pct
+    const waitingRaw = rec.waiting_recruit_pct
+    const mobRaw = rec.existing_mob_pct
+    parsed.push({
+      id,
+      name,
+      description: descriptionRaw,
+      timeframe: timeframeRaw as EventRow['timeframe'],
+      polarity: polarityRaw as EventRow['polarity'],
+      weight,
+      target_type: targetRaw as EventRow['target_type'],
+      recruit_pct:
+        recruitRaw == null || recruitRaw === ''
+          ? null
+          : Number.isFinite(Number(recruitRaw))
+            ? Math.floor(Number(recruitRaw))
+            : null,
+      waiting_recruit_pct:
+        waitingRaw == null || waitingRaw === ''
+          ? null
+          : Number.isFinite(Number(waitingRaw))
+            ? Math.floor(Number(waitingRaw))
+            : null,
+      spawn_stacks: rec.spawn_stacks ?? null,
+      existing_mob_pct:
+        mobRaw == null || mobRaw === ''
+          ? null
+          : Number.isFinite(Number(mobRaw))
+            ? Number(mobRaw)
+            : null,
+      res_drops: rec.res_drops ?? null,
+      block_town_income: Number(rec.block_town_income) !== 0,
+    })
+  }
+  return parsed
 }
 
 function asAppConfig(rows: unknown): AppConfigRow[] {
@@ -3999,7 +4311,8 @@ function asAutoTarget(value: unknown): AutoTargetKind | null {
   if (
     text === 'random_wall_segment' ||
     text === 'random_enemy' ||
-    text === 'random_enemy_los'
+    text === 'random_enemy_los' ||
+    text === 'most_injured_ally'
   ) {
     return text
   }
@@ -4023,7 +4336,8 @@ function parseStatShredTarget(raw: unknown): StatShredTarget | null {
       const key = String(raw ?? '')
       if (!warnedStatShredTarget.has(key)) {
         warnedStatShredTarget.add(key)
-        console.warn(
+        logConfigOnce(
+          `stat_shred:dmg`,
           `[stat_shred] target_stat "dmg" is removed; use "phys_dmg" or "magic_dmg"`,
         )
       }
@@ -4052,7 +4366,8 @@ function parseStatShredTarget(raw: unknown): StatShredTarget | null {
   const key = String(raw ?? '')
   if (!warnedStatShredTarget.has(key)) {
     warnedStatShredTarget.add(key)
-    console.warn(
+    logConfigOnce(
+      `stat_shred:${key}`,
       `[stat_shred] unknown target_stat ${JSON.stringify(raw)} (use 1 Speed, 4 Defense, 5 Resistance, phys_dmg, magic_dmg, max_hp, or crit); ignored`,
     )
   }
@@ -4693,6 +5008,9 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     app_config: asAppConfig(
       (payload as { app_config?: unknown }).app_config,
     ),
+    anim_config: asAppConfig(
+      (payload as { anim_config?: unknown }).anim_config,
+    ),
     keybind: asKeybind((payload as { keybind?: unknown }).keybind),
     map_config: asJsonConfig(
       (payload as { map_config?: unknown }).map_config,
@@ -4712,12 +5030,38 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     ground_effect: asGroundEffects(
       (payload as { ground_effect?: unknown }).ground_effect,
     ),
+    event: asEvents((payload as { event?: unknown }).event),
+    battle_hit_reaction: (() => {
+      const parsed = parseBattleHitReactions(
+        (payload as { battle_hit_reaction?: unknown }).battle_hit_reaction,
+      )
+      battleHitReactionLoadStatus = parsed.status
+      if (!parsed.status.ok) {
+        logConfigOnce('battle_hit_reaction:load', parsed.status.message)
+      }
+      return parsed.rows
+    })(),
   }
   enrichCatalogUnits(catalog)
+  if (catalog.event.length === 0) {
+    logConfigOnce(
+      'catalog:event_missing',
+      '[event] Reference data has no valid event rows — weekly events disabled.',
+    )
+  }
   auditItemSlotTypes(catalog)
   const upgradePairingIssues = auditUpgradePairing(catalog)
   if (upgradePairingIssues.length > 0) {
-    console.warn('[catalog] upgrade pairing issues', upgradePairingIssues)
+    logConfigOnce(
+      'catalog:upgrade_pairing',
+      `[catalog] upgrade pairing issues (${upgradePairingIssues.length}): see Dev copy debug for details`,
+    )
+    for (const issue of upgradePairingIssues) {
+      logConfigOnce(
+        `catalog:upgrade_pairing:${issue.unitId}:${issue.kind}`,
+        `[catalog] unit ${issue.unitId} ${issue.unitName}: ${issue.kind}${issue.matchIds.length > 0 ? ` (matches: ${issue.matchIds.join(', ')})` : ''}`,
+      )
+    }
   }
   catalog.ability = fillDesignedAbilities(
     catalog.ability,
@@ -4969,6 +5313,7 @@ export function unitFootprint(
 export function unitHexFootprint(unit: UnitRow | null | undefined): number {
   const code = unitFootprint(unit)
   if (code === '1x1') return 1
+  if (code === '1x2') return 2
   if (code === '2x1') return 2
   if (code === '2x2') return 3
   if (code === '3x2') return 5
@@ -5990,6 +6335,18 @@ export function unitById(
     return null
   }
   return catalog.unit.find((row) => row.id === id) ?? null
+}
+
+/** Faction town name for unit stills/sheets (`unit.town_id`). */
+export function townNameForUnit(
+  catalog: ReferenceCatalog | null | undefined,
+  unit: UnitRow | null | undefined,
+): string | null {
+  const townId = unit?.town_id
+  if (!catalog || townId == null || townId <= 0) {
+    return null
+  }
+  return catalog.town.find((entry) => entry.id === townId)?.name?.trim() ?? null
 }
 
 /** Case-insensitive exact name match; optional town filter when names collide. */

@@ -1,5 +1,6 @@
 import { getCachedCatalog } from '../town/catalog'
 import { appConfigNumber } from '../town/catalog'
+import { logConfigOnce } from '../session/configLog'
 
 const STORAGE_KEY = 'heroes.playerSettings.v1'
 const KEYBIND_OVERRIDES_KEY = 'heroes.keybindOverrides.v1'
@@ -90,7 +91,8 @@ export function devToolsEnabled(): boolean {
   if (fromDb < 0) {
     if (!warnedMissingDevTools) {
       warnedMissingDevTools = true
-      console.warn(
+      logConfigOnce(
+        'app_config:dev_tools',
         '[app_config] Missing dev_tools; treating as off (dev keybind disabled).',
       )
     }

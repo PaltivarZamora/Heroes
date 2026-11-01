@@ -2,6 +2,7 @@ import type { KeybindRow } from '../town/catalog'
 import { FALLBACK_KEYBIND_ROWS } from './keybindDefaults'
 import { getCachedCatalog } from '../town/catalog'
 import { loadKeybindOverrides } from '../settings/playerSettings'
+import { logConfigOnce } from '../session/configLog'
 
 export type KeybindScope =
   | 'global'
@@ -19,7 +20,8 @@ function warnMissingKeybind(action: string): void {
     return
   }
   warnedMissingActions.add(action)
-  console.warn(
+  logConfigOnce(
+    `keybind:${action}`,
     `[keybind] Catalog has no row for action "${action}"; using fallback binding.`,
   )
 }
@@ -216,5 +218,6 @@ export function matchKeybindAction(
   const overlay = matches.find(
     (row) => row.action === 'quest_log' || row.action === 'log',
   )
-  return overlay?.action ?? matches[0].action
+  const action = overlay?.action ?? matches[0]?.action
+  return action?.trim() ? action.trim() : null
 }

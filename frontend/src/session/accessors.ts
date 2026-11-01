@@ -1,4 +1,4 @@
-import { calendarDayNumber, advanceDay, isWeekRollover } from '../hex/calendar'
+import { calendarDayNumber, advanceDay, isWeekRollover, nextWeekStartCalendar, sameCalendar } from '../hex/calendar'
 import { advanceAlongHexLine, flightLegHexSteps, nextTownCircleHex, townCircleLapSteps } from '../hex/flight'
 import { transportSpriteForDeparture } from '../hex/flightTransport'
 import { facingFromMove } from '../hex/heroTravelSprite'
@@ -83,6 +83,15 @@ export {
   type ArchiveLearnNotice,
 } from '../town/townUniques'
 import { applyWeeklyMobGrowth } from './mobs'
+import {
+  activeWorldEventForSession,
+  applyRecruitPctModifier,
+  applyWaitingRecruitPct,
+  dwellingAffectedByEvent,
+  eventBlocksTownBuildingIncomeWithCatalog,
+  eventRowById,
+  rollWeekWorldEvent,
+} from './worldEvents'
 import { applyWeeklyNeutralTownGrowth } from './neutralTowns'
 import { rollAllWorldRecruits } from './recruits'
 import {
@@ -327,6 +336,68 @@ export function nextActivePlayerIndex(session: GameSession): {
   return { index: start, dayAdvance: true }
 }
 
+/**
+ * Jump to the next week's day 1: one daily mine/world accrual pass, full weekly
+ * growth/income, hero day reset — no multi-day mine stacking, no player rotation.
+ */
+export function advanceWeekStart(session: GameSession): GameSession {
+  let current = withEliminations(session)
+  const catalog = getCachedCatalog()
+  const previous = current.game.calendar
+  const next = nextWeekStartCalendar(previous)
+  if (sameCalendar(previous, next)) {
+    return current
+  }
+  const incomeEvents: DayIncomeEvent[] = []
+  current = {
+    ...current,
+    game: { ...current.game, calendar: next },
+  }
+  if (catalog) {
+    current = applyDailyHeroPoolRegen(current, catalog)
+  }
+  current = resetFlightLegsForNewCalendarDay(current)
+  const mineResult = applyMineIncomeWithReport(current)
+  current = mineResult.session
+  incomeEvents.push(...mineResult.events)
+  current = {
+    ...current,
+    heroes: current.heroes.map((hero) => ({
+      ...hero,
+      used_abilities_today: [],
+    })),
+  }
+  current = restoreHeroPoolsEndingDayInTown(current)
+  current = {
+    ...current,
+    game: {
+      ...current.game,
+      town_pool_restore_ids: heroIdsInOwnedTown(current),
+    },
+  }
+  if (catalog) {
+    current = rollWeekWorldEvent(current, catalog)
+    const weekResult = applyWeeklyGrowthWithReport(current, catalog)
+    current = weekResult.session
+    incomeEvents.push(...weekResult.events)
+    current = applyWeeklyMobGrowth(current, catalog)
+    current = applyWeeklyNeutralTownGrowth(current, catalog, next)
+  }
+  current = pruneGameLogs(current, catalog, calendarDayNumber(current.game.calendar))
+  for (const event of incomeEvents) {
+    current = logDayIncomeEvent(current, event)
+  }
+  const incoming = activePlayer(current)
+  if (incoming) {
+    current = restorePlayerHeroMovement(current, incoming.id)
+  }
+  lastDayIncomeNoticeLines = formatDayIncomeNoticeLines(
+    incomeEvents,
+    localHumanPlayerId(current),
+  )
+  return current
+}
+
 export function endTurn(session: GameSession): GameSession {
   let current = withEliminations(session)
   const { index, dayAdvance } = nextActivePlayerIndex(current)
@@ -364,6 +435,7 @@ export function endTurn(session: GameSession): GameSession {
     }
     if (isWeekRollover(previous, next)) {
       if (catalog) {
+        current = rollWeekWorldEvent(current, catalog)
         const weekResult = applyWeeklyGrowthWithReport(current, catalog)
         current = weekResult.session
         incomeEvents.push(...weekResult.events)
@@ -789,7 +861,7 @@ export function hireHeroFromPool(
   townId: string,
   pick: HeroPoolRow,
   spawnAt?: AxialPos | null,
-): { session: GameSession; error: string | null } {
+): { session: GameSession; error: string | null; heroId?: string } {
   const town = findTownById(session, townId)
   if (!town) {
     return { session, error: 'This town is not in the game session.' }
@@ -877,6 +949,7 @@ export function hireHeroFromPool(
       hero.id,
     ),
     error: null,
+    heroId: hero.id,
   }
 }
 
@@ -1687,6 +1760,8 @@ function applyWeeklyGrowthWithReport(
   session: GameSession,
   catalog: ReferenceCatalog,
 ): { session: GameSession; events: DayIncomeEvent[] } {
+  const active = activeWorldEventForSession(session)
+  const eventRow = active ? eventRowById(catalog, active.eventId) : null
   // Beacon must roll against pre-growth Curr Recruits, then growth stacks on top.
   const beacon = applyRecruitmentBeaconsBeforeGrowth(session, catalog)
   const grown: GameSession = {
@@ -1695,13 +1770,43 @@ function applyWeeklyGrowthWithReport(
       if (row.level < 1 || row.building_id == null || !isArmySlot(row.slot_num)) {
         return row
       }
-      const growth =
+      const town = beacon.session.towns.find((t) => t.id === row.town_id)
+      const townTypeId = town?.town_type_id ?? 0
+      let recruitQty = row.recruit_qty
+      if (
+        eventRow &&
+        dwellingAffectedByEvent(
+          beacon.session,
+          catalog,
+          townTypeId,
+          row.slot_num,
+          row.building_id,
+        )
+      ) {
+        recruitQty = applyWaitingRecruitPct(
+          recruitQty,
+          eventRow.waiting_recruit_pct,
+        )
+      }
+      let growth =
         buildingGrowth(buildingById(catalog, row.building_id)) +
         (row.growth_bonus ?? 0)
-      if (growth <= 0) {
-        return row
+      if (
+        eventRow &&
+        dwellingAffectedByEvent(
+          beacon.session,
+          catalog,
+          townTypeId,
+          row.slot_num,
+          row.building_id,
+        )
+      ) {
+        growth = applyRecruitPctModifier(growth, eventRow.recruit_pct)
       }
-      return { ...row, recruit_qty: row.recruit_qty + growth }
+      if (growth <= 0) {
+        return { ...row, recruit_qty: recruitQty }
+      }
+      return { ...row, recruit_qty: recruitQty + growth }
     }),
   }
   const income = applyWeeklyBuildingIncomeWithReport(grown, catalog)
@@ -1812,8 +1917,12 @@ function applyWeeklyBuildingIncomeWithReport(
   session: GameSession,
   catalog: ReferenceCatalog,
 ): { session: GameSession; events: DayIncomeEvent[] } {
+  const blockIncome = eventBlocksTownBuildingIncomeWithCatalog(session, catalog)
   const grants = new Map<string, Record<number, number>>()
   const events: DayIncomeEvent[] = []
+  if (blockIncome) {
+    return { session, events }
+  }
   for (const town of session.towns) {
     if (!town.player_id) {
       continue

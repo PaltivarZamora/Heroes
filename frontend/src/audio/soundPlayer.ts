@@ -102,6 +102,7 @@ export type SoundHandle = {
   setPlaybackRate(rate: number): void
   setVolume(volume: number): void
   stop(fadeMs?: number): void
+  waitUntilDone(): Promise<void>
 }
 
 type ActiveSound = {
@@ -171,6 +172,21 @@ function wrapHandle(entry: ActiveSound): SoundHandle {
     },
     stop(fadeMs = 200) {
       stopEntry(entry, fadeMs)
+    },
+    waitUntilDone(): Promise<void> {
+      const audio = entry.audio
+      if (audio.ended || audio.paused) {
+        return Promise.resolve()
+      }
+      return new Promise((resolve) => {
+        const done = () => {
+          audio.removeEventListener('ended', done)
+          audio.removeEventListener('error', done)
+          resolve()
+        }
+        audio.addEventListener('ended', done)
+        audio.addEventListener('error', done)
+      })
     },
   }
 }

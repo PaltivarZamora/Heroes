@@ -1,28 +1,7 @@
 import { slotsArmyValue } from '../ai/armyAlloc'
 import type { GameSession, Hero, Mob } from '../session/types'
 import { mapCfgNumber, type ReferenceCatalog } from '../town/catalog'
-
-const NEIGHBORS = [
-  { q: 1, r: 0 },
-  { q: 1, r: -1 },
-  { q: 0, r: -1 },
-  { q: -1, r: 0 },
-  { q: -1, r: 1 },
-  { q: 0, r: 1 },
-] as const
-
-function hexDistance(
-  a: { q: number; r: number },
-  b: { q: number; r: number },
-): number {
-  const dq = a.q - b.q
-  const dr = a.r - b.r
-  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2
-}
-
-function key(q: number, r: number): string {
-  return `${q},${r}`
-}
+import { hexDistanceToMobShape, mobShapeBlocksHeroPath } from './worldMobFootprint'
 
 /** 0 turns ambushes off. Reads the difficulty-merged map config. */
 export function mobAggroRange(
@@ -70,7 +49,7 @@ export function ambushMobOnHex(
   let best: Mob | null = null
   let bestDist = Infinity
   for (const mob of session.mobs) {
-    const dist = hexDistance(hex, mob.position)
+    const dist = hexDistanceToMobShape(hex, session, catalog, mob)
     if (dist > range || !mobIsAggressive(session, catalog, hero, mob)) {
       continue
     }
@@ -105,7 +84,7 @@ export function pathStepShowsAmbushDanger(
     if (!mobIsAggressive(session, catalog, hero, mob)) {
       continue
     }
-    if (hexDistance(hex, mob.position) > range) {
+    if (hexDistanceToMobShape(hex, session, catalog, mob) > range) {
       continue
     }
     if (opts?.isPathEnd && opts.attackMob?.id === mob.id) {
@@ -116,14 +95,10 @@ export function pathStepShowsAmbushDanger(
   return false
 }
 
-/** Pathing ring is 1 hex, including the mob's own hex. Not the aggro range. */
-export function mobPathRingKeys(session: GameSession): Set<string> {
-  const keys = new Set<string>()
-  for (const mob of session.mobs) {
-    keys.add(key(mob.position.q, mob.position.r))
-    for (const step of NEIGHBORS) {
-      keys.add(key(mob.position.q + step.q, mob.position.r + step.r))
-    }
-  }
-  return keys
+/** All hexes occupied by mob footprints (whole shape). Not the aggro range. */
+export function mobPathRingKeys(
+  session: GameSession,
+  catalog: ReferenceCatalog | null | undefined,
+): Set<string> {
+  return mobShapeBlocksHeroPath(session, catalog)
 }

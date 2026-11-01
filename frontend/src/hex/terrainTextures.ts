@@ -1,3 +1,4 @@
+import { logConfigOnce } from '../session/configLog'
 import { Assets, Graphics, Rectangle, Sprite, Texture, type Container } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
 
@@ -245,7 +246,8 @@ export function buildTerrainChunkDecors(
     if (boundsW > sampled.sourceW * 1.05 || boundsH > sampled.sourceH * 1.05) {
       if (!chunkUpscaleWarned.has(terrain)) {
         chunkUpscaleWarned.add(terrain)
-        console.warn(
+        logConfigOnce(
+          `hex:chunk_upscale:${terrain}`,
           `[hex] chunk texture "${terrain}" footprint ${Math.round(boundsW)}×${Math.round(boundsH)} exceeds source ${sampled.sourceW}×${sampled.sourceH} — upscaling`,
         )
       }

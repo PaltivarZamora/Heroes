@@ -2,7 +2,6 @@ import type { GameSession, Hero, Town } from '../session/types'
 import { ARMY_STACK_SLOTS, slotFromPlayerId } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import { retaliationCharges, unitById } from '../town/catalog'
-import { stacksWithoutOverlap } from './occupancy'
 import { siegeStructureStacks } from './siege'
 import {
   tickRoundConditions,
@@ -17,6 +16,7 @@ import {
 import { tryVanishOnMoveNoAttack } from './vanishOnMove'
 import { applyStackHeal } from './attack'
 import type { CombatHeroes } from './attack'
+import type { FootprintCode } from './footprint'
 import { layerFieldValue } from './combatStatLayer'
 import { tickShadowGrowth } from './shadow'
 import { freezeArmyTagCounts, HUMANOID_TAG } from './armyTags'
@@ -572,6 +572,8 @@ export type CombatTombstone = {
   startingQty: number
   /** Creatures lost when the stack was wiped (usually === startingQty). */
   deadQty: number
+  /** Footprint at wipe (anchor `q`,`r`). Legacy saves omit → 1×1. */
+  footprint?: FootprintCode
   sessionStackId?: string
   armySlot?: number
   slot: number
@@ -1705,10 +1707,7 @@ export function createBattle(
         siege.catapult,
       )
     : []
-  const stacksRaw = stacksWithoutOverlap(
-    [...portraits, ...atk, ...def, ...extra],
-    catalog,
-  ).map((stack) => ({
+  const stacksRaw = [...portraits, ...atk, ...def, ...extra].map((stack) => ({
     ...stack,
     startingQty: stack.qty,
     startHex: stack.startHex ?? { q: stack.q, r: stack.r },

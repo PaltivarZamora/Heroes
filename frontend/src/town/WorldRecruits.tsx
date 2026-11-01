@@ -14,6 +14,7 @@ import {
   scaleCost,
   subscribeCatalog,
   unitById,
+  townNameForUnit,
   unitCost,
 } from './catalog'
 import { AbilityTip } from './AbilityTip'
@@ -145,6 +146,9 @@ export function WorldRecruits({
                   empty={false}
                   filename={unit.image_path?.trim() || null}
                   qty={stock}
+                  townName={townNameForUnit(catalog, unit)}
+                  unitId={unit.id}
+                  catalog={catalog}
                 />
                 <p className="world-recruits-name">{unit.name.trim()}</p>
               </div>

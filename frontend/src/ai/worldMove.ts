@@ -19,6 +19,7 @@ import {
   hexHeroMovementEnterCost,
   shouldBlockMapNodeForPath,
 } from '../hex/worldHeroPath'
+import { mobShapeBlocksHeroPath } from '../hex/worldMobFootprint'
 import type { Axial } from '../hex/hero'
 import {
   getCachedCatalog,
@@ -229,8 +230,13 @@ function blockedHexes(
   for (const feature of session.features ?? []) {
     add(feature.position.q, feature.position.r)
   }
-  for (const mob of session.mobs) {
-    add(mob.position.q, mob.position.r)
+  for (const key of mobShapeBlocksHeroPath(session, getCachedCatalog())) {
+    const parts = key.split(',')
+    const q = Number(parts[0])
+    const r = Number(parts[1])
+    if (Number.isFinite(q) && Number.isFinite(r)) {
+      add(q, r)
+    }
   }
   for (const boat of session.boats ?? []) {
     add(boat.position.q, boat.position.r)

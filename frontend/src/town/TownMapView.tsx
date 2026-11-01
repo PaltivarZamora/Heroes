@@ -12,6 +12,7 @@ import {
 import { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
 import type { Texture } from 'pixi.js'
 import type { Hex } from 'honeycomb-grid'
+import { logConfigOnce, errorMessage } from '../session/configLog'
 import { GAME_WINDOW_HEIGHT, GAME_WINDOW_WIDTH } from '../layout/stageConstants'
 import { getTile, terrainFillColor } from '../hex/world'
 import {
@@ -558,7 +559,10 @@ export function TownMapView({
         }
         paintTownMapDebug(rt, shown, showHexNumbersRef.current)
       } catch (error) {
-        console.error('[town map] Pixi draw failed', error)
+        logConfigOnce(
+          'town_map:pixi_draw',
+          `[town map] Pixi draw failed: ${errorMessage(error, 'unknown error')}`,
+        )
       }
     })()
   }
@@ -724,7 +728,7 @@ export function TownMapView({
       {catalog && townId && !plan ? (
         <p className="town-building-layout-error town-map-fallback">
           {town
-            ? 'Town map could not be built — check the browser console.'
+            ? 'Town map could not be built — see Game log (World) or Dev copy debug.'
             : 'Town data is missing from this session.'}
         </p>
       ) : null}

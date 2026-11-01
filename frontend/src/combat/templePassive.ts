@@ -34,6 +34,7 @@ import { hexDistance } from '../hex/pathfinding'
 import { occupancyKey } from './occupancy'
 import { isCreatureArmyUnit } from './siege'
 import {
+  nearestReviveAnchorForTombstone,
   removeTombstone,
   stackFromTombstone,
   syncTombstonesFromWipes,
@@ -316,9 +317,18 @@ function fullResurrectTempleStack(
         row.unitId === opening.unitId,
     )
   if (tomb) {
+    const anchor = nearestReviveAnchorForTombstone(battle, catalog, tomb)
+    if (!anchor) {
+      return {
+        battle,
+        lines: [`Cleric: no room to resurrect ${name}.`],
+      }
+    }
     const raised = stackFromTombstone(tomb, catalog, opening.qty)
     const restored: CombatStack = {
       ...raised,
+      q: anchor.q,
+      r: anchor.r,
       qty: opening.qty,
       topHealth: fullHp,
       startingQty: Math.max(tomb.startingQty, opening.qty),

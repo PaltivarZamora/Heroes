@@ -1,18 +1,22 @@
 import type { Axial } from '../hex/hero'
 
 /** Diamond-stacked battlefield footprint codes (odd-r aware via axial math). */
-export const FOOTPRINT_CODES = ['1x1', '2x1', '3x1', '2x2', '3x2', '3x3'] as const
+export const FOOTPRINT_CODES = [
+  '1x1',
+  '1x2',
+  '2x1',
+  '3x1',
+  '2x2',
+  '3x2',
+  '3x3',
+] as const
 export type FootprintCode = (typeof FOOTPRINT_CODES)[number]
 
-/** Bottom→top row widths for each shape. */
-const FOOTPRINT_ROW_WIDTHS: Record<FootprintCode, readonly number[]> = {
-  '1x1': [1],
-  '2x1': [2],
-  '3x1': [3],
-  '2x2': [2, 1],
-  '3x2': [3, 2],
-  '3x3': [3, 2, 3],
-}
+/** Bottom→top row widths for each shape (shared/footprint-shapes.json). */
+import footprintShapesJson from '../../../shared/footprint-shapes.json'
+
+const FOOTPRINT_ROW_WIDTHS: Record<FootprintCode, readonly number[]> =
+  footprintShapesJson as Record<FootprintCode, readonly number[]>
 
 /** Pointy-top northern neighbor deltas (toward smaller `r` / screen top). */
 const NORTH_DELTAS: readonly Axial[] = [
@@ -130,6 +134,54 @@ export function footprintHexesCentered(
     out.push(...row)
   }
   return out
+}
+
+function rowWidthsKey(widths: readonly number[]): string {
+  return widths.join(',')
+}
+
+function codeForRowWidths(widths: readonly number[]): FootprintCode {
+  for (const code of FOOTPRINT_CODES) {
+    if (rowWidthsKey(FOOTPRINT_ROW_WIDTHS[code]) === rowWidthsKey(widths)) {
+      return code
+    }
+  }
+  return '1x1'
+}
+
+/** Rows that block movement, landing, and placement (all but the top row when 2+ rows). */
+export function footprintBlockingCode(code: FootprintCode): FootprintCode {
+  const widths = FOOTPRINT_ROW_WIDTHS[code] ?? FOOTPRINT_ROW_WIDTHS['1x1']
+  if (widths.length <= 1) {
+    return code
+  }
+  return codeForRowWidths(widths.slice(0, -1))
+}
+
+/** Non-blocking top row when the shape has 2+ rows; empty for 1x1 and 2x1. */
+export function footprintHeadHexes(
+  origin: Axial,
+  code: FootprintCode,
+  along: 1 | -1 = 1,
+): Axial[] {
+  const widths = FOOTPRINT_ROW_WIDTHS[code] ?? FOOTPRINT_ROW_WIDTHS['1x1']
+  if (widths.length <= 1) {
+    return []
+  }
+  const all = footprintHexes(origin, code, along)
+  const body = footprintBlockingHexes(origin, code, along)
+  const bodyKeys = new Set(body.map((hex) => `${hex.q},${hex.r}`))
+  return all.filter((hex) => !bodyKeys.has(`${hex.q},${hex.r}`))
+}
+
+/** Blocking hexes only (same anchor as the full footprint). */
+export function footprintBlockingHexes(
+  origin: Axial,
+  code: FootprintCode,
+  along: 1 | -1 = 1,
+): Axial[] {
+  const blockCode = footprintBlockingCode(code)
+  return footprintHexes(origin, blockCode, along)
 }
 
 /** Bottom-row hexes only (for render anchor: bottom-center). */

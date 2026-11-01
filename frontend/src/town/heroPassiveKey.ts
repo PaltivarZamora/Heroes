@@ -1,6 +1,7 @@
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog } from './catalog'
 import { heroPassiveStats } from './heroPassiveStats'
+import { logConfigOnce } from '../session/configLog'
 
 /** Stable mechanic ids in `hero_type.passive_stats.passive_key` (set via SQL). */
 export const PASSIVE_KEY = {
@@ -57,7 +58,8 @@ export function hasPassiveKey(
   if (!got) {
     if (!warnedMissingKey.has(hero.class_id)) {
       warnedMissingKey.add(hero.class_id)
-      console.warn(
+      logConfigOnce(
+        `passive_key:${hero.class_id}`,
         `[passive_key] hero_type.id=${hero.class_id} has no passive_stats.passive_key; passive "${key}" disabled`,
       )
     }

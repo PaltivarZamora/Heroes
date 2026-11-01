@@ -24,7 +24,7 @@ export function heroPassiveStats(
   return stats
 }
 
-const warnedMissing = new Set<string>()
+import { logConfigOnce } from '../session/configLog'
 
 /**
  * Require passive_stats for an active hero passive. Logs once per
@@ -43,13 +43,10 @@ export function requirePassiveStats(
     return null
   }
   const key = `${hero.class_id}:${context}`
-  if (!warnedMissing.has(key)) {
-    warnedMissing.add(key)
-    const name = heroTypeName(catalog, hero.class_id) || `id ${hero.class_id}`
-    console.error(
-      `[passive_stats] missing for ${name} (hero_type.id=${hero.class_id}) while applying ${context}`,
-    )
-  }
+  logConfigOnce(
+    key,
+    `[passive_stats] missing for ${heroTypeName(catalog, hero.class_id) || `id ${hero.class_id}`} (hero_type.id=${hero.class_id}) while applying ${context}`,
+  )
   return null
 }
 
@@ -145,12 +142,8 @@ export function missingPassiveStatKey(
     return
   }
   const warnKey = `${hero.class_id}:${context}:${key}`
-  if (warnedMissing.has(warnKey)) {
-    return
-  }
-  warnedMissing.add(warnKey)
-  const name = heroTypeName(catalog, hero.class_id) || `id ${hero.class_id}`
-  console.error(
-    `[passive_stats] ${name} (hero_type.id=${hero.class_id}) missing key "${key}" for ${context}`,
+  logConfigOnce(
+    warnKey,
+    `[passive_stats] ${heroTypeName(catalog, hero.class_id) || `id ${hero.class_id}`} (hero_type.id=${hero.class_id}) missing key "${key}" for ${context}`,
   )
 }

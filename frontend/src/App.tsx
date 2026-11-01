@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { HexMap, abortActiveMapMovement, clearCachedGrid, getMapCameraHex, getSelectedMapHeroId, centerMapOnHex, resyncWorldMapAfterMapView, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView, syncSelectedHeroFromSession, requestPlayHeroFlight } from './hex/HexMap'
+import { HexMap, abortActiveMapMovement, clearCachedGrid, getMapCameraHex, getSelectedMapHeroId, centerMapOnHex, resyncWorldMapAfterMapView, selectHeroOnMap, setMapCameraFollowMoves, setMapInputLocked, syncActivePlayerView, syncSelectedHeroFromSession, requestPlayHeroFlight, requestGracefulMapMoveStop } from './hex/HexMap'
 import { isArmyPopupOpen, runArmyConfirmPopup } from './town/armyKeybindBridge'
 import { MapView } from './hex/MapView'
 import {
@@ -49,6 +49,7 @@ import { QuestLog } from './town/QuestLog'
 import { GameWindowModal } from './layout/GameWindowModal'
 import { GameWindowOverlay } from './layout/GameWindowOverlay'
 import { CombatScreen } from './combat/CombatScreen'
+import { cutMountMoveSound } from './audio/heroMountMoveSound'
 import {
   getNavalMaskDebugState,
   subscribeNavalMaskDebug,
@@ -88,6 +89,7 @@ import { prepareFixedFight, type FixedFightKind } from './session/fixedFight'
 import {
   assignHeroesFromPool,
   activePlayer,
+  advanceWeekStart,
   endTurn,
   findTownAt,
   findTownById,
@@ -107,6 +109,10 @@ import {
   walletFromSession,
   type ArchiveLearnNotice,
 } from './session/accessors'
+import {
+  markWorldEventPopupSeen,
+  worldEventPopupForPlayer,
+} from './session/worldEvents'
 import { appendAiTrace, clearAiTraces, getAiTraceBlocks, subscribeAiTraces } from './ai/trace'
 import { decideAndApplyHeroTrade } from './ai/armyAlloc'
 import { runAiTurn } from './ai/turn'
@@ -131,6 +137,11 @@ import {
   type CombatLogExitPayload,
   type GameLogTab,
 } from './session/gameLog'
+import {
+  configDevWarnings,
+  errorMessage,
+  logConfigWorldNotice,
+} from './session/configLog'
 import { GameStage } from './layout/GameStage'
 import {
   GAME_WINDOW_HEIGHT,
@@ -266,6 +277,11 @@ function App() {
     date: string
     lines?: string[]
   } | null>(null)
+  const [eventNotice, setEventNotice] = useState<{
+    title: string
+    description: string
+    polarity: 'positive' | 'negative'
+  } | null>(null)
   const [levelUpNotice, setLevelUpNotice] = useState<LevelUpNotice | null>(null)
   const [archiveLearn, setArchiveLearn] = useState<ArchiveLearnNotice | null>(
     null,
@@ -313,6 +329,11 @@ function App() {
   const [roadPlanDebug, setRoadPlanDebug] = useState(false)
   const [townHexNumbers, setTownHexNumbers] = useState(false)
   const [worldPerf, setWorldPerf] = useState<WorldRenderStats | null>(null)
+  const aiRanKeyRef = useRef('')
+  const flightLegRunningRef = useRef(false)
+  const blockHeroMovementAnimationRef = useRef(false)
+  const aiTraces = useSyncExternalStore(subscribeAiTraces, getAiTraceBlocks)
+  const calendar = session.game.calendar
 
   useEffect(() => {
     installAudioUnlock()
@@ -324,10 +345,7 @@ function App() {
     }, 400)
     return () => window.clearInterval(id)
   }, [])
-  const aiRanKeyRef = useRef('')
-  const flightLegRunningRef = useRef(false)
-  const aiTraces = useSyncExternalStore(subscribeAiTraces, getAiTraceBlocks)
-  const calendar = session.game.calendar
+
   const onTownWelcome = useCallback((townName: string, townId: string) => {
     setTrade(null)
     setCombat(null)
@@ -597,15 +615,49 @@ function App() {
     },
     [],
   )
-  const dismissDateNotice = useCallback(() => {
-    setMapInputLocked(false)
-    setDateNotice(null)
+  const eventNoticePlayerRef = useRef<string | null>(null)
+  const tryOpenEventNotice = useCallback((playerId: string): boolean => {
+    const popup = worldEventPopupForPlayer(getSession(), playerId)
+    if (!popup) {
+      return false
+    }
+    eventNoticePlayerRef.current = playerId
+    setEventNotice({
+      title: popup.title,
+      description: popup.description,
+      polarity: popup.polarity,
+    })
+    return true
+  }, [])
+
+  const dismissEventNotice = useCallback(() => {
+    const playerId =
+      eventNoticePlayerRef.current ?? humanPlayer(getSession())?.id ?? null
+    eventNoticePlayerRef.current = null
+    if (playerId) {
+      updateSession((current) => markWorldEventPopupSeen(current, playerId))
+    }
+    setEventNotice(null)
     const pending = pendingLevelUpRef.current
     pendingLevelUpRef.current = null
     if (pending) {
       setLevelUpNotice(pending)
     }
-  }, [])
+  }, [updateSession])
+
+  const dismissDateNotice = useCallback(() => {
+    setMapInputLocked(false)
+    setDateNotice(null)
+    const local = humanPlayer(getSession())
+    if (local && tryOpenEventNotice(local.id)) {
+      return
+    }
+    const pending = pendingLevelUpRef.current
+    pendingLevelUpRef.current = null
+    if (pending) {
+      setLevelUpNotice(pending)
+    }
+  }, [tryOpenEventNotice])
   const onHeroMeet = useCallback((targetHeroId: string) => {
     const current = getSession()
     const selfId = getSelectedMapHeroId()
@@ -984,6 +1036,7 @@ function App() {
   useEffect(() => {
     if (combat) {
       combatFightIdRef.current += 1
+      cutMountMoveSound()
       return
     }
     const pending = pendingCombatLogRef.current
@@ -1005,6 +1058,13 @@ function App() {
       }),
     )
   }, [combat])
+
+  useEffect(() => {
+    if (welcomeTown) {
+      cutMountMoveSound()
+    }
+  }, [welcomeTown])
+
   const flushPendingFlightSieges = useCallback(() => {
     const current = getSession()
     const actor = activePlayer(current)
@@ -1053,6 +1113,35 @@ function App() {
     const title = calendarRolloverTitle(previous, next)
     const incomeLines = takeDayIncomeNoticeLines()
     if (title && !matchVictoryResult(getSession())) {
+      setDateNotice({
+        title,
+        date: formatCalendar(next),
+        lines: incomeLines.length > 0 ? incomeLines : undefined,
+      })
+    } else {
+      maybeShowMatchEnd()
+      flushPendingFlightSieges()
+    }
+  }, [closeCombat, maybeShowMatchEnd, flushPendingFlightSieges])
+
+  const runAdvanceWeek = useCallback(() => {
+    setWelcomeTown(null)
+    setHeroScreen(false)
+    setTrade(null)
+    closeCombat()
+    requestGracefulMapMoveStop()
+    const previous = getSession().game.calendar
+    updateSession((current) =>
+      advanceWeekStart(persistActiveExplored(current, getExploredHexes())),
+    )
+    syncActivePlayerView()
+    const next = getSession().game.calendar
+    const title =
+      next.month !== previous.month
+        ? ('New Month' as const)
+        : ('New Week' as const)
+    const incomeLines = takeDayIncomeNoticeLines()
+    if (!matchVictoryResult(getSession())) {
       setDateNotice({
         title,
         date: formatCalendar(next),
@@ -1113,6 +1202,9 @@ function App() {
   const runFlightLegForHero = useCallback(
     async (heroId: string) => {
       if (flightLegRunningRef.current) {
+        return
+      }
+      if (blockHeroMovementAnimationRef.current) {
         return
       }
       const row = getSession().heroes.find((hero) => hero.id === heroId)
@@ -1349,6 +1441,7 @@ function App() {
     gameLogOpen ||
     gameFlowPanel != null ||
     Boolean(dateNotice) ||
+    Boolean(eventNotice) ||
     Boolean(levelUpNotice) ||
     Boolean(archiveLearn) ||
     Boolean(surrenderPrompt) ||
@@ -1361,6 +1454,9 @@ function App() {
     Boolean(worldNoticeBoard) ||
     questLogOpen ||
     isArmyPopupOpen()
+
+  blockHeroMovementAnimationRef.current =
+    keybindPopupOpen || Boolean(combat)
 
   const onKeybindBack = useCallback(() => {
     if (devOpen) {
@@ -1393,6 +1489,10 @@ function App() {
     }
     if (levelUpNotice) {
       setLevelUpNotice(null)
+      return
+    }
+    if (eventNotice) {
+      dismissEventNotice()
       return
     }
     if (dateNotice) {
@@ -1461,6 +1561,7 @@ function App() {
       setWelcomeTown(null)
       return
     }
+    requestGracefulMapMoveStop()
     setMainMenuOpen(true)
   }, [
     mainMenuOpen,
@@ -1473,6 +1574,8 @@ function App() {
     closeMapView,
     levelUpNotice,
     dateNotice,
+    eventNotice,
+    dismissEventNotice,
     dismissDateNotice,
     archiveLearn,
     surrenderPrompt,
@@ -1523,6 +1626,10 @@ function App() {
       onFleeFightAnyway()
       return
     }
+    if (eventNotice) {
+      dismissEventNotice()
+      return
+    }
     if (dateNotice) {
       dismissDateNotice()
     }
@@ -1533,6 +1640,8 @@ function App() {
     archiveLearn,
     surrenderPrompt,
     fleePrompt,
+    eventNotice,
+    dismissEventNotice,
     dateNotice,
     dismissDateNotice,
     onSurrenderYes,
@@ -1544,6 +1653,7 @@ function App() {
       onBack: onKeybindBack,
       onConfirm: onKeybindConfirm,
       onEndTurn,
+      onAdvanceWeek: runAdvanceWeek,
       onHeroScreen: () => {
         if (heroScreen) {
           cycleHero()
@@ -1589,6 +1699,7 @@ function App() {
       onKeybindBack,
       onKeybindConfirm,
       onEndTurn,
+      runAdvanceWeek,
       heroScreen,
       cycleHero,
       openHeroScreen,
@@ -1617,6 +1728,8 @@ function App() {
     true,
   )
 
+  const calendarDay = calendarDayNumber(session.game.calendar)
+
   useEffect(() => {
     if (!dateNotice) {
       return
@@ -1629,13 +1742,51 @@ function App() {
   }, [dateNotice, dismissDateNotice])
 
   useEffect(() => {
-    if (dateNotice || combat) {
+    if (!eventNotice) {
+      return
+    }
+    const ms = eventNotice.description.trim() ? 4500 : 1500
+    const timer = window.setTimeout(() => {
+      dismissEventNotice()
+    }, ms)
+    return () => window.clearTimeout(timer)
+  }, [eventNotice, dismissEventNotice])
+
+  useEffect(() => {
+    if (dateNotice || eventNotice || combat) {
       return
     }
     flushPendingFlightSieges()
-  }, [dateNotice, combat, flushPendingFlightSieges, session.game.pending_flight_sieges])
+  }, [
+    dateNotice,
+    eventNotice,
+    combat,
+    flushPendingFlightSieges,
+    session.game.pending_flight_sieges,
+  ])
 
-  const calendarDay = calendarDayNumber(session.game.calendar)
+  useEffect(() => {
+    if (aiPhase !== 'idle') {
+      return
+    }
+    if (dateNotice || eventNotice || levelUpNotice) {
+      return
+    }
+    const current = getSession()
+    const actor = activePlayer(current)
+    if (!actor || actor.is_ai) {
+      return
+    }
+    tryOpenEventNotice(actor.id)
+  }, [
+    session.activePlayerIndex,
+    calendarDay,
+    aiPhase,
+    dateNotice,
+    eventNotice,
+    levelUpNotice,
+    tryOpenEventNotice,
+  ])
 
   useEffect(() => {
     syncActivePlayerView()
@@ -1643,6 +1794,9 @@ function App() {
 
   useEffect(() => {
     if (aiPhase !== 'idle') {
+      return
+    }
+    if (blockHeroMovementAnimationRef.current) {
       return
     }
     const current = getSession()
@@ -1659,7 +1813,14 @@ function App() {
       return
     }
     void runFlightLegForHero(heroId)
-  }, [session.activePlayerIndex, calendarDay, aiPhase, runFlightLegForHero])
+  }, [
+    session.activePlayerIndex,
+    calendarDay,
+    aiPhase,
+    runFlightLegForHero,
+    keybindPopupOpen,
+    combat,
+  ])
 
   useEffect(() => {
     const player = activePlayer(getSession())
@@ -1715,7 +1876,16 @@ function App() {
           },
         })
       } catch (error) {
-        console.log('AI turn failed:', error)
+        updateSession((session) =>
+          logConfigWorldNotice(
+            session,
+            'ai_turn_failed',
+            `AI turn failed: ${errorMessage(error, 'unknown error')}`,
+          ),
+        )
+        setOptionsHudNotice(
+          `AI turn failed: ${errorMessage(error, 'unknown error')}`,
+        )
       }
       if (cancelled) {
         return
@@ -1856,6 +2026,9 @@ function App() {
       }),
     ],
     traceLines: [
+      ...(configDevWarnings().length > 0
+        ? ['--- Config notices ---', ...configDevWarnings()]
+        : []),
       ...(mountAnimDevWarnings().length > 0 ? mountAnimDevWarnings() : []),
       ...(soundDevWarnings().length > 0 ? soundDevWarnings() : []),
       ...(worldSpriteScaleDevWarnings().length > 0
@@ -1873,8 +2046,8 @@ function App() {
   const debugSections = formatDebugSections(debugSnapshot)
 
   const copyDebug = useCallback(() => {
-    void navigator.clipboard.writeText(debugText).catch((error) => {
-      console.log('Failed to copy debug text:', error)
+    void navigator.clipboard.writeText(debugText).catch(() => {
+      setOptionsHudNotice('Could not copy debug text to clipboard.')
     })
   }, [debugText])
 
@@ -2367,6 +2540,7 @@ function App() {
           onArchiveLearn={setArchiveLearn}
           readOnly={Boolean(actor?.is_ai)}
           onHeroFlew={playHeroFlight}
+          onHeroHired={(heroId) => adoptHero(heroId, { skipFlightLeg: true })}
           embedded
           showHexNumbers={townHexNumbers}
         />
@@ -2502,6 +2676,30 @@ function App() {
           {dateNotice.lines?.map((line, index) => (
             <p key={`notice-${index}`}>{line}</p>
           ))}
+        </GameWindowModal>
+        </GameWindowOverlay>
+      ) : null}
+      {eventNotice ? (
+        <GameWindowOverlay>
+        <GameWindowModal
+          role="status"
+          aria-live="polite"
+          aria-labelledby="world-event-notice-title"
+          onBackdropClick={dismissEventNotice}
+        >
+          <h1
+            id="world-event-notice-title"
+            className={
+              eventNotice.polarity === 'positive'
+                ? 'world-event-positive'
+                : 'world-event-negative'
+            }
+          >
+            {eventNotice.title}
+          </h1>
+          {eventNotice.description.trim() ? (
+            <p>{eventNotice.description}</p>
+          ) : null}
         </GameWindowModal>
         </GameWindowOverlay>
       ) : null}
