@@ -1,6 +1,6 @@
 {
   "frames": {
-    "Effect_Die_Skull_000": {
+    "Die_Skull_000": {
       "frame": {
         "x": 0,
         "y": 0,
@@ -25,7 +25,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_001": {
+    "Die_Skull_001": {
       "frame": {
         "x": 259,
         "y": 0,
@@ -50,7 +50,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_002": {
+    "Die_Skull_002": {
       "frame": {
         "x": 518,
         "y": 0,
@@ -75,7 +75,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_003": {
+    "Die_Skull_003": {
       "frame": {
         "x": 777,
         "y": 0,
@@ -100,7 +100,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_004": {
+    "Die_Skull_004": {
       "frame": {
         "x": 1036,
         "y": 0,
@@ -125,7 +125,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_005": {
+    "Die_Skull_005": {
       "frame": {
         "x": 1295,
         "y": 0,
@@ -150,7 +150,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_006": {
+    "Die_Skull_006": {
       "frame": {
         "x": 1554,
         "y": 0,
@@ -175,7 +175,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_007": {
+    "Die_Skull_007": {
       "frame": {
         "x": 0,
         "y": 209,
@@ -200,7 +200,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_008": {
+    "Die_Skull_008": {
       "frame": {
         "x": 259,
         "y": 209,
@@ -225,7 +225,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_009": {
+    "Die_Skull_009": {
       "frame": {
         "x": 518,
         "y": 209,
@@ -250,7 +250,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_010": {
+    "Die_Skull_010": {
       "frame": {
         "x": 777,
         "y": 209,
@@ -275,7 +275,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_011": {
+    "Die_Skull_011": {
       "frame": {
         "x": 1036,
         "y": 209,
@@ -300,7 +300,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_012": {
+    "Die_Skull_012": {
       "frame": {
         "x": 1295,
         "y": 209,
@@ -325,7 +325,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_013": {
+    "Die_Skull_013": {
       "frame": {
         "x": 1554,
         "y": 209,
@@ -350,7 +350,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_014": {
+    "Die_Skull_014": {
       "frame": {
         "x": 0,
         "y": 418,
@@ -375,7 +375,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_015": {
+    "Die_Skull_015": {
       "frame": {
         "x": 259,
         "y": 418,
@@ -400,7 +400,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_016": {
+    "Die_Skull_016": {
       "frame": {
         "x": 518,
         "y": 418,
@@ -425,7 +425,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_017": {
+    "Die_Skull_017": {
       "frame": {
         "x": 777,
         "y": 418,
@@ -450,7 +450,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_018": {
+    "Die_Skull_018": {
       "frame": {
         "x": 1036,
         "y": 418,
@@ -475,7 +475,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_019": {
+    "Die_Skull_019": {
       "frame": {
         "x": 1295,
         "y": 418,
@@ -500,7 +500,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_020": {
+    "Die_Skull_020": {
       "frame": {
         "x": 1554,
         "y": 418,
@@ -525,7 +525,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_021": {
+    "Die_Skull_021": {
       "frame": {
         "x": 0,
         "y": 627,
@@ -550,7 +550,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_022": {
+    "Die_Skull_022": {
       "frame": {
         "x": 259,
         "y": 627,
@@ -575,7 +575,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_023": {
+    "Die_Skull_023": {
       "frame": {
         "x": 518,
         "y": 627,
@@ -600,7 +600,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_024": {
+    "Die_Skull_024": {
       "frame": {
         "x": 777,
         "y": 627,
@@ -625,7 +625,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_025": {
+    "Die_Skull_025": {
       "frame": {
         "x": 1036,
         "y": 627,
@@ -650,7 +650,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_026": {
+    "Die_Skull_026": {
       "frame": {
         "x": 1295,
         "y": 627,
@@ -675,7 +675,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_027": {
+    "Die_Skull_027": {
       "frame": {
         "x": 1554,
         "y": 627,
@@ -700,7 +700,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_028": {
+    "Die_Skull_028": {
       "frame": {
         "x": 0,
         "y": 836,
@@ -725,7 +725,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_029": {
+    "Die_Skull_029": {
       "frame": {
         "x": 259,
         "y": 836,
@@ -750,7 +750,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_030": {
+    "Die_Skull_030": {
       "frame": {
         "x": 518,
         "y": 836,
@@ -775,7 +775,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_031": {
+    "Die_Skull_031": {
       "frame": {
         "x": 777,
         "y": 836,
@@ -800,7 +800,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_032": {
+    "Die_Skull_032": {
       "frame": {
         "x": 1036,
         "y": 836,
@@ -825,7 +825,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_033": {
+    "Die_Skull_033": {
       "frame": {
         "x": 1295,
         "y": 836,
@@ -850,7 +850,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_034": {
+    "Die_Skull_034": {
       "frame": {
         "x": 1554,
         "y": 836,
@@ -875,7 +875,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_035": {
+    "Die_Skull_035": {
       "frame": {
         "x": 0,
         "y": 1045,
@@ -900,7 +900,7 @@
       },
       "duration": 75
     },
-    "Effect_Die_Skull_Stand": {
+    "Die_Skull_Stand": {
       "frame": {
         "x": 259,
         "y": 1045,
@@ -928,7 +928,7 @@
   },
   "meta": {
     "app": "https://ludo.ai",
-    "image": "Effect_Die_Skull.png",
+    "image": "Die_Skull.png",
     "format": "RGBA8888",
     "size": {
       "w": 1813,

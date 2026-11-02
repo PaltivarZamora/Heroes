@@ -1,7 +1,6 @@
 import type { Axial } from '../hex/hero'
 import { hexDistance } from '../hex/pathfinding'
 import {
-  unitAttackShape,
   unitById,
   unitIsStationary,
   type ReferenceCatalog,
@@ -62,35 +61,6 @@ export function canBePullTarget(
     return false
   }
   return true
-}
-
-/** After a failed pull: pulse radius or normal attack range. */
-export function targetInNormalAttackReach(
-  attacker: CombatStack,
-  target: CombatStack,
-  catalog: ReferenceCatalog,
-): boolean {
-  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
-  if (spec.shape === 'pulse') {
-    const radius = Math.max(1, spec.radius ?? 1)
-    const dist = minFootprintHexDistance(
-      { q: attacker.q, r: attacker.r },
-      attacker,
-      target,
-      catalog,
-    )
-    return dist <= radius
-  }
-  const shape = spec.shape
-  const maxRange =
-    shape === 'charge_line' ? 1 : stackMaxRange(attacker, catalog)
-  const dist = minFootprintHexDistance(
-    { q: attacker.q, r: attacker.r },
-    attacker,
-    target,
-    catalog,
-  )
-  return dist >= 1 && dist <= maxRange
 }
 
 function hexAdjacentToAttackerFootprint(

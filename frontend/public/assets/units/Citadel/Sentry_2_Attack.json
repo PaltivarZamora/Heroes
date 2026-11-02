@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Sentry_2_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_001": {
+      "frame": {
+        "x": 220,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_002": {
+      "frame": {
+        "x": 440,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_003": {
+      "frame": {
+        "x": 660,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_004": {
+      "frame": {
+        "x": 880,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_005": {
+      "frame": {
+        "x": 1100,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_006": {
+      "frame": {
+        "x": 1320,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_008": {
+      "frame": {
+        "x": 220,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_009": {
+      "frame": {
+        "x": 440,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_010": {
+      "frame": {
+        "x": 660,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_011": {
+      "frame": {
+        "x": 880,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_012": {
+      "frame": {
+        "x": 1100,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_013": {
+      "frame": {
+        "x": 1320,
+        "y": 223,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_015": {
+      "frame": {
+        "x": 220,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_016": {
+      "frame": {
+        "x": 440,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_017": {
+      "frame": {
+        "x": 660,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_018": {
+      "frame": {
+        "x": 880,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_019": {
+      "frame": {
+        "x": 1100,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_020": {
+      "frame": {
+        "x": 1320,
+        "y": 446,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_022": {
+      "frame": {
+        "x": 220,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_023": {
+      "frame": {
+        "x": 440,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_024": {
+      "frame": {
+        "x": 660,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_025": {
+      "frame": {
+        "x": 880,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_026": {
+      "frame": {
+        "x": 1100,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_027": {
+      "frame": {
+        "x": 1320,
+        "y": 669,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_029": {
+      "frame": {
+        "x": 220,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_030": {
+      "frame": {
+        "x": 440,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_031": {
+      "frame": {
+        "x": 660,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_032": {
+      "frame": {
+        "x": 880,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_033": {
+      "frame": {
+        "x": 1100,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_034": {
+      "frame": {
+        "x": 1320,
+        "y": 892,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1115,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 71
+    },
+    "Sentry_2_Attack_Stand": {
+      "frame": {
+        "x": 220,
+        "y": 1115,
+        "w": 220,
+        "h": 223
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 220,
+        "h": 223
+      },
+      "sourceSize": {
+        "w": 220,
+        "h": 223
+      },
+      "anchor": {
+        "x": 0.3136,
+        "y": 0.9898
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Sentry_2_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1540,
+      "h": 1338
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.3136,
+      "y": 0.9898
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0.249
+  }
+}

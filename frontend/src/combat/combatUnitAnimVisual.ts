@@ -61,9 +61,40 @@ export type CombatProjectileVisual = {
   toY: number
   startedMs: number
   durationMs: number
-  imageUrl: string | null
-  /** Render height in px (battle sprite scale). */
+  /** Render height in px from scale_pct × hex height. */
   displayHeightPx: number
+  flipY: boolean
+  /** null = drawn streak fallback */
+  staticUrl: string | null
+  sheetFrames: import('./battleUnitSheet').BattleUnitFrame[] | null
+  sheetLoop: boolean
+  animFps: number
+}
+
+export type CombatShapeVisual = {
+  id: string
+  x: number
+  y: number
+  startedMs: number
+  durationMs: number
+  displayWidthPx: number
+  displayHeightPx: number
+  angleDeg: number
+  flipY: boolean
+  rotate: boolean
+  frames: import('./battleUnitSheet').BattleUnitFrame[]
+  animFps: number
+}
+
+export type CombatImpactVisual = {
+  id: string
+  x: number
+  y: number
+  startedMs: number
+  durationMs: number
+  displayHeightPx: number
+  frames: import('./battleUnitSheet').BattleUnitFrame[]
+  animFps: number
 }
 
 export function randomIdleFrameOffset(frameCount: number): number {

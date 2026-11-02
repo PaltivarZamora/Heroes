@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Falconer_1_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_001": {
+      "frame": {
+        "x": 169,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_002": {
+      "frame": {
+        "x": 338,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_003": {
+      "frame": {
+        "x": 507,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_004": {
+      "frame": {
+        "x": 676,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_005": {
+      "frame": {
+        "x": 845,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_006": {
+      "frame": {
+        "x": 1014,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_008": {
+      "frame": {
+        "x": 169,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_009": {
+      "frame": {
+        "x": 338,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_010": {
+      "frame": {
+        "x": 507,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_011": {
+      "frame": {
+        "x": 676,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_012": {
+      "frame": {
+        "x": 845,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_013": {
+      "frame": {
+        "x": 1014,
+        "y": 217,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_015": {
+      "frame": {
+        "x": 169,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_016": {
+      "frame": {
+        "x": 338,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_017": {
+      "frame": {
+        "x": 507,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_018": {
+      "frame": {
+        "x": 676,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_019": {
+      "frame": {
+        "x": 845,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_020": {
+      "frame": {
+        "x": 1014,
+        "y": 434,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_022": {
+      "frame": {
+        "x": 169,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_023": {
+      "frame": {
+        "x": 338,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_024": {
+      "frame": {
+        "x": 507,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_025": {
+      "frame": {
+        "x": 676,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_026": {
+      "frame": {
+        "x": 845,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_027": {
+      "frame": {
+        "x": 1014,
+        "y": 651,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_029": {
+      "frame": {
+        "x": 169,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_030": {
+      "frame": {
+        "x": 338,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_031": {
+      "frame": {
+        "x": 507,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_032": {
+      "frame": {
+        "x": 676,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_033": {
+      "frame": {
+        "x": 845,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_034": {
+      "frame": {
+        "x": 1014,
+        "y": 868,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1085,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 78
+    },
+    "Falconer_1_Attack_Stand": {
+      "frame": {
+        "x": 169,
+        "y": 1085,
+        "w": 169,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 169,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 169,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.1035,
+        "y": 0.9903
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Falconer_1_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1183,
+      "h": 1302
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.1035,
+      "y": 0.9903
+    },
+    "rest_height": 200
+  }
+}

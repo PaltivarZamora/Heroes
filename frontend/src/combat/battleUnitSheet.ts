@@ -2,7 +2,6 @@ import { Assets, Spritesheet, type Texture } from 'pixi.js'
 import type { GameSession } from '../session/types'
 import {
   unitAssetsTownBase,
-  unitBattleProjectileUrl,
 } from '../town/slotArt'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import {
@@ -46,7 +45,6 @@ export type BattleUnitSheetSet = {
   /** True when at least one anim sheet loaded (not just static portrait). */
   animated: boolean
   hasDie: boolean
-  projectileUrl: string | null
   /** Basic partner stem for per-anim sound fallback. */
   partnerSoundStem?: string | null
 }
@@ -389,7 +387,6 @@ export async function loadBattleUnitSheetSet(
       }
     }
     const animated = BATTLE_UNIT_ANIMS.some((kind) => sheets[kind] != null)
-    const projectileUrl = await resolveBattleProjectileUrl(townFolder, stem)
     if (!animated) {
       sheetCache.set(key, null)
       flushAdvancedBorrowDevLog(catalog, unit)
@@ -401,7 +398,6 @@ export async function loadBattleUnitSheetSet(
       sheets,
       animated: true,
       hasDie: sheets.Die != null,
-      projectileUrl,
       partnerSoundStem: partnerStem,
     }
     sheetCache.set(key, set)
@@ -536,22 +532,6 @@ export function idleFrame(
   return frameAtProgress(idle, 0, fps, startedMs, randomFrameOffset)
 }
 
-async function resolveBattleProjectileUrl(
-  townFolder: string,
-  stem: string,
-): Promise<string | null> {
-  const url = unitBattleProjectileUrl(townFolder, stem)
-  try {
-    const response = await fetch(url, { method: 'HEAD' })
-    if (!response.ok) {
-      return null
-    }
-    return url
-  } catch {
-    return null
-  }
-}
-
 export function flushBattleSheetLoadFailuresToLog(
   session: GameSession,
 ): GameSession {
@@ -568,30 +548,6 @@ export function flushBattleSheetLoadFailuresToLog(
     next = reportBattleUnitSheetMissing(next, sheetStem, fail)
   }
   return next
-}
-
-export async function loadBattleProjectileTexture(
-  catalog: ReferenceCatalog,
-  unit: UnitRow,
-): Promise<Texture | null> {
-  const stem = unitBattleSpriteStem(unit)
-  if (!stem) {
-    return null
-  }
-  const townFolder = unitBattleTownFolder(catalog, unit)
-  const url = await resolveBattleProjectileUrl(townFolder, stem)
-  if (!url) {
-    return null
-  }
-  try {
-    const tex = await Assets.load<Texture>(url)
-    if (tex.width >= 1) {
-      return tex
-    }
-    return null
-  } catch {
-    return null
-  }
 }
 
 /** Combat art faces right; defender mirrors toward the attacker. */

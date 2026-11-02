@@ -553,6 +553,20 @@ export function stackMaxRange(
   return Math.max(1, base + (stack.statFlat?.maxRange ?? 0))
 }
 
+/** min_range ≥ 1 → ranged delivery; min_range 0 is melee (no projectile streak). */
+export function unitUsesRangedProjectileVisuals(
+  unit: import('../town/catalog').UnitRow | null | undefined,
+): boolean {
+  return (unit?.min_range ?? 0) >= 1
+}
+
+export function stackUsesRangedProjectileVisuals(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  return unitUsesRangedProjectileVisuals(unitById(catalog, stack.unitId))
+}
+
 export type SiegeGate = {
   q: number
   r: number

@@ -15,10 +15,17 @@ import {
   pickVisualFrame,
   progressForTimedAnim,
   travelFlipXForSlide,
+  type CombatImpactVisual,
   type CombatProjectileVisual,
+  type CombatShapeVisual,
   type StackBattleVisual,
 } from './combatUnitAnimVisual'
-import { CombatBattleProjectile, CombatBattleUnitArt } from './CombatBattleUnitArt'
+import {
+  CombatBattleImpactEffect,
+  CombatBattleProjectile,
+  CombatBattleShapeVisual,
+  CombatBattleUnitArt,
+} from './CombatBattleUnitArt'
 import type { CombatBattle } from './battle'
 import { isHeroStack } from './battle'
 import type { ReferenceCatalog } from '../town/catalog'
@@ -279,10 +286,14 @@ export function CombatBattleAnimLayer({
   unitSheets,
   stackVisuals,
   projectiles,
+  impacts,
+  shapes,
   settings: settingsProp,
   paintNowMs,
 }: LayerProps & {
   projectiles: CombatProjectileVisual[]
+  impacts?: CombatImpactVisual[]
+  shapes?: CombatShapeVisual[]
 }) {
   const settings = settingsProp ?? battleAnimSettings(catalog)
   const idleSettings = battleIdleSettings(catalog)
@@ -404,8 +415,22 @@ export function CombatBattleAnimLayer({
     const t = progressForTimedAnim(proj.startedMs, proj.durationMs, now)
     const x = proj.fromX + (proj.toX - proj.fromX) * t
     const y = proj.fromY + (proj.toY - proj.fromY) * t
-    const angleDeg =
-      (Math.atan2(proj.toY - proj.fromY, proj.toX - proj.fromX) * 180) / Math.PI
+    const dx = proj.toX - proj.fromX
+    const dy = proj.toY - proj.fromY
+    const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI
+    const flipY = dx < 0
+    let sheetFrame = null
+    if (proj.sheetFrames && proj.sheetFrames.length > 0) {
+      const elapsed = (now - proj.startedMs) / 1000
+      const idx =
+        Math.floor(elapsed * proj.animFps) %
+        (proj.sheetLoop
+          ? proj.sheetFrames.length
+          : Math.max(1, proj.sheetFrames.length))
+      sheetFrame = proj.sheetFrames[
+        Math.min(idx, proj.sheetFrames.length - 1)
+      ]!
+    }
     nodes.push(
       <CombatBattleProjectile
         key={proj.id}
@@ -413,7 +438,61 @@ export function CombatBattleAnimLayer({
         y={y}
         angleDeg={angleDeg}
         displayHeightPx={proj.displayHeightPx}
-        imageUrl={proj.imageUrl}
+        staticUrl={proj.staticUrl}
+        sheetFrame={sheetFrame}
+        flipY={flipY}
+      />,
+    )
+  }
+  for (const sh of shapes ?? []) {
+    const progress = progressForTimedAnim(sh.startedMs, sh.durationMs, now)
+    if (progress >= 1) {
+      continue
+    }
+    const elapsed = (now - sh.startedMs) / 1000
+    const frameIdx = Math.min(
+      sh.frames.length - 1,
+      Math.floor(elapsed * sh.animFps),
+    )
+    const frame = sh.frames[frameIdx]
+    if (!frame) {
+      continue
+    }
+    nodes.push(
+      <CombatBattleShapeVisual
+        key={sh.id}
+        x={sh.x}
+        y={sh.y}
+        frame={frame}
+        displayWidthPx={sh.displayWidthPx}
+        displayHeightPx={sh.displayHeightPx}
+        angleDeg={sh.angleDeg}
+        flipY={sh.flipY}
+        rotate={sh.rotate}
+      />,
+    )
+  }
+  for (const fx of impacts ?? []) {
+    const progress = progressForTimedAnim(fx.startedMs, fx.durationMs, now)
+    if (progress >= 1) {
+      continue
+    }
+    const elapsed = (now - fx.startedMs) / 1000
+    const frameIdx = Math.min(
+      fx.frames.length - 1,
+      Math.floor(elapsed * fx.animFps),
+    )
+    const frame = fx.frames[frameIdx]
+    if (!frame) {
+      continue
+    }
+    nodes.push(
+      <CombatBattleImpactEffect
+        key={fx.id}
+        x={fx.x}
+        y={fx.y}
+        frame={frame}
+        displayHeightPx={fx.displayHeightPx}
       />,
     )
   }

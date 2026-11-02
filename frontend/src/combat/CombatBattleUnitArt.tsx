@@ -105,19 +105,58 @@ export function CombatBattleProjectile({
   y,
   angleDeg,
   displayHeightPx,
-  imageUrl,
+  staticUrl,
+  sheetFrame,
+  flipY,
 }: {
   x: number
   y: number
   angleDeg: number
   displayHeightPx: number
-  imageUrl: string | null
+  staticUrl: string | null
+  sheetFrame: BattleUnitFrame | null
+  flipY: boolean
 }) {
-  if (imageUrl) {
+  const flipParts: string[] = ['translate(-50%, -50%)', `rotate(${angleDeg}deg)`]
+  if (flipY) {
+    flipParts.push('scaleY(-1)')
+  }
+  const transform = flipParts.join(' ')
+  if (sheetFrame) {
+    const frameW = sheetFrame.w * (displayHeightPx / sheetFrame.h)
+    const frameH = displayHeightPx
+    const left = x - sheetFrame.anchorX * frameW
+    const top = y - sheetFrame.anchorY * frameH
+    const bgW = sheetFrame.atlasW * (displayHeightPx / sheetFrame.h)
+    const bgH = sheetFrame.atlasH * (displayHeightPx / sheetFrame.h)
+    const bgX = -sheetFrame.rect.x * (displayHeightPx / sheetFrame.h)
+    const bgY = -sheetFrame.rect.y * (displayHeightPx / sheetFrame.h)
+    return (
+      <div
+        className="combat-battle-projectile-img"
+        style={{
+          position: 'absolute',
+          left,
+          top,
+          width: frameW,
+          height: frameH,
+          transform,
+          transformOrigin: `${sheetFrame.anchorX * 100}% ${sheetFrame.anchorY * 100}%`,
+          pointerEvents: 'none',
+          backgroundImage: `url(${sheetFrame.atlasUrl})`,
+          backgroundRepeat: 'no-repeat',
+          backgroundSize: `${bgW}px ${bgH}px`,
+          backgroundPosition: `${bgX}px ${bgY}px`,
+          imageRendering: 'pixelated',
+        }}
+      />
+    )
+  }
+  if (staticUrl) {
     return (
       <img
         className="combat-battle-projectile-img"
-        src={imageUrl}
+        src={staticUrl}
         alt=""
         style={{
           position: 'absolute',
@@ -125,9 +164,10 @@ export function CombatBattleProjectile({
           top: y,
           height: displayHeightPx,
           width: 'auto',
-          transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+          transform,
           transformOrigin: 'center center',
           pointerEvents: 'none',
+          imageRendering: 'pixelated',
         }}
       />
     )
@@ -142,11 +182,115 @@ export function CombatBattleProjectile({
         top: y,
         width: streakLen,
         height: 4,
-        transform: `translate(-50%, -50%) rotate(${angleDeg}deg)`,
+        transform,
         transformOrigin: 'center center',
         background:
           'linear-gradient(90deg, transparent, rgba(255, 220, 120, 0.95), transparent)',
         pointerEvents: 'none',
+      }}
+    />
+  )
+}
+
+export function CombatBattleShapeVisual({
+  x,
+  y,
+  frame,
+  displayWidthPx,
+  displayHeightPx,
+  angleDeg,
+  flipY,
+  rotate,
+}: {
+  x: number
+  y: number
+  frame: BattleUnitFrame
+  displayWidthPx: number
+  displayHeightPx: number
+  angleDeg: number
+  flipY: boolean
+  rotate: boolean
+}) {
+  const uniformScale = Math.min(
+    displayWidthPx / Math.max(1, frame.w),
+    displayHeightPx / Math.max(1, frame.h),
+  )
+  const frameW = frame.w * uniformScale
+  const frameH = frame.h * uniformScale
+  const left = x - frame.anchorX * frameW
+  const top = y - frame.anchorY * frameH
+  const bgW = frame.atlasW * uniformScale
+  const bgH = frame.atlasH * uniformScale
+  const bgX = -frame.rect.x * uniformScale
+  const bgY = -frame.rect.y * uniformScale
+  const flipParts: string[] = []
+  if (rotate) {
+    flipParts.push(`rotate(${angleDeg}deg)`)
+  }
+  if (flipY) {
+    flipParts.push('scaleY(-1)')
+  }
+  return (
+    <div
+      className="combat-battle-shape-fx"
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        width: frameW,
+        height: frameH,
+        ...(flipParts.length > 0
+          ? {
+              transform: flipParts.join(' '),
+              transformOrigin: `${frame.anchorX * 100}% ${frame.anchorY * 100}%`,
+            }
+          : {}),
+        pointerEvents: 'none',
+        backgroundImage: `url(${frame.atlasUrl})`,
+        backgroundRepeat: 'no-repeat',
+        backgroundSize: `${bgW}px ${bgH}px`,
+        backgroundPosition: `${bgX}px ${bgY}px`,
+        imageRendering: 'pixelated',
+      }}
+    />
+  )
+}
+
+export function CombatBattleImpactEffect({
+  x,
+  y,
+  frame,
+  displayHeightPx,
+}: {
+  x: number
+  y: number
+  frame: BattleUnitFrame
+  displayHeightPx: number
+}) {
+  const scale = displayHeightPx / frame.h
+  const frameW = frame.w * scale
+  const frameH = displayHeightPx
+  const left = x - frame.anchorX * frameW
+  const top = y - frame.anchorY * frameH
+  const bgW = frame.atlasW * scale
+  const bgH = frame.atlasH * scale
+  const bgX = -frame.rect.x * scale
+  const bgY = -frame.rect.y * scale
+  return (
+    <div
+      className="combat-battle-impact-fx"
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        width: frameW,
+        height: frameH,
+        pointerEvents: 'none',
+        backgroundImage: `url(${frame.atlasUrl})`,
+        backgroundRepeat: 'no-repeat',
+        backgroundSize: `${bgW}px ${bgH}px`,
+        backgroundPosition: `${bgX}px ${bgY}px`,
+        imageRendering: 'pixelated',
       }}
     />
   )

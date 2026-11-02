@@ -20,6 +20,7 @@ import {
 } from '../town/catalog'
 import { moveKindForUnit } from './movement'
 import {
+  actionOriginFootprintHex,
   closestHexOnTargetFootprint,
   shapeActionOrigin,
   type ShapeGeometryOpts,
@@ -116,7 +117,6 @@ import { siegePhysBonusPct } from './siegeBonus'
 import { tryApplyAllyBuffFromHit, tryApplySelfBuffFromHit } from './statBuff'
 import {
   isValidPullAttackTarget,
-  targetInNormalAttackReach,
   tryPullTargetBeforeAttack,
 } from './pullTarget'
 import {
@@ -372,19 +372,259 @@ function minRangePenaltyApplies(
   )
 }
 
-export function attackRangeFrom(
+export function attackMinRangeNeed(
+  unit: ReturnType<typeof unitById>,
+): number {
+  const minR = Math.max(0, unit?.min_range ?? 0)
+  return minR > 0 ? minR : 1
+}
+
+/** Hex-line range from a stand anchor to an aim hex (aoe / beam aim). */
+export function aimHexInAttackRange(
   from: { q: number; r: number },
-  target: CombatStack,
-  catalog: ReferenceCatalog,
+  aim: { q: number; r: number },
   attacker: CombatStack,
+  catalog: ReferenceCatalog,
 ): boolean {
-  if (target.qty <= 0) {
+  const unit = unitById(catalog, attacker.unitId)
+  const shape = unitAttackShape(unit).shape
+  const maxRange = shape === 'charge_line' ? 1 : stackMaxRange(attacker, catalog)
+  const needMin = attackMinRangeNeed(unit)
+  const dist = hexDistance(from, aim)
+  return dist >= needMin && dist <= maxRange
+}
+
+export type AttackCommitAim = {
+  stand: { q: number; r: number }
+  aimHex: { q: number; r: number }
+  targetId: string | null
+  wedgeZone?: number | null
+  origin: { q: number; r: number }
+}
+
+export function attackCommitFromAttackAim(
+  attacker: CombatStack,
+  aim: AttackAim,
+  catalog: ReferenceCatalog,
+): AttackCommitAim {
+  const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
+  const ghost = { ...attacker, q: stand.q, r: stand.r }
+  const origin = actionOriginFootprintHex(
+    stand,
+    ghost,
+    catalog,
+    aim.hex,
+    aim.wedgeZone,
+  )
+  return {
+    stand,
+    aimHex: aim.hex,
+    targetId: aim.targetId,
+    wedgeZone: aim.wedgeZone,
+    origin,
+  }
+}
+
+/** Range and LoS both origin → aimHex (1×1: origin = stand). */
+export function attackDeliveryAtCommit(
+  commit: AttackCommitAim,
+  attacker: CombatStack,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+): boolean {
+  const ghost = { ...attacker, q: commit.stand.q, r: commit.stand.r }
+  if (!aimHexInAttackRange(commit.origin, commit.aimHex, ghost, catalog)) {
     return false
   }
-  const shape = unitAttackShape(unitById(catalog, attacker.unitId)).shape
-  const maxRange = shape === 'charge_line' ? 1 : stackMaxRange(attacker, catalog)
-  const dist = minFootprintHexDistance(from, attacker, target, catalog)
-  return dist >= 1 && dist <= maxRange
+  return hasLineOfSight(
+    commit.origin,
+    commit.aimHex,
+    tiles,
+    stacks,
+    catalog,
+  )
+}
+
+/** Side / untargetable / auto-target rules without range or LoS. */
+export function attackTargetPolicyOk(
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  allowFriendly: boolean,
+): boolean {
+  if (attacker.id === target.id) {
+    return false
+  }
+  const atkUnit = unitById(catalog, attacker.unitId)
+  const mode = unitAutoTarget(atkUnit)
+  if (mode === 'most_injured_ally') {
+    if (
+      target.side !== attacker.side ||
+      isUntargetableStack(target, catalog) ||
+      isVanished(target, catalog)
+    ) {
+      return false
+    }
+    const spec = unitAttackShape(atkUnit)
+    return allyNeedsMostInjuredHeal(
+      target,
+      catalog,
+      spec.healRevive === true,
+    )
+  }
+  if (attacker.side === target.side) {
+    if (!allowFriendly && !isHealAllyTarget(attacker, target, catalog)) {
+      return false
+    }
+  }
+  if (isUntargetableStack(target, catalog) || isVanished(target, catalog)) {
+    return false
+  }
+  if (mode === 'random_wall_segment' && !isSiegeEngineWallTarget(target, catalog)) {
+    return false
+  }
+  if (
+    (mode === 'random_enemy' || mode === 'random_enemy_los') &&
+    !isCreatureArmyUnit(unitById(catalog, target.unitId))
+  ) {
+    return false
+  }
+  return true
+}
+
+/** Stand + closest target footprint hex + origin (shared preview / resolve / AI). */
+export function attackCommitForTarget(
+  stand: Axial,
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  wedgeZone?: number | null,
+): AttackCommitAim {
+  const ghost = { ...attacker, q: stand.q, r: stand.r }
+  const aimHex = closestTargetFootprintHex(stand, attacker, target, catalog)
+  return {
+    stand,
+    aimHex,
+    targetId: target.id,
+    wedgeZone,
+    origin: actionOriginFootprintHex(
+      stand,
+      ghost,
+      catalog,
+      aimHex,
+      wedgeZone,
+    ),
+  }
+}
+
+export function attackAimForTargetAtStand(
+  stand: Axial,
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  wedgeZone?: number | null,
+): AttackAim {
+  return attackAimFromCommit(
+    attackCommitForTarget(stand, attacker, target, catalog, wedgeZone),
+  )
+}
+
+export function attackDeliveryOkFromStand(
+  from: Axial,
+  aim: Axial,
+  attacker: CombatStack,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  wedgeZone?: number | null,
+): boolean {
+  const ghost = { ...attacker, q: from.q, r: from.r }
+  const origin = actionOriginFootprintHex(
+    from,
+    ghost,
+    catalog,
+    aim,
+    wedgeZone,
+  )
+  const commit: AttackCommitAim = {
+    stand: from,
+    aimHex: aim,
+    targetId: null,
+    wedgeZone,
+    origin,
+  }
+  return attackDeliveryAtCommit(commit, attacker, catalog, tiles, stacks)
+}
+
+/** Policy, origin→aim range, and LoS from a stand hex. */
+export function attackCanHitTargetAtStand(
+  stand: Axial,
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  allowFriendly = false,
+  wedgeZone?: number | null,
+): boolean {
+  const ghost = { ...attacker, q: stand.q, r: stand.r }
+  if (!attackTargetPolicyOk(ghost, target, catalog, allowFriendly)) {
+    return false
+  }
+  const commit = attackCommitForTarget(
+    stand,
+    attacker,
+    target,
+    catalog,
+    wedgeZone,
+  )
+  return attackDeliveryAtCommit(
+    commit,
+    attacker,
+    catalog,
+    tiles,
+    stacks,
+  )
+}
+
+/** After a failed pull: pulse radius or commit delivery (origin→aim, incl. reach). */
+export function targetInNormalAttackReach(
+  attacker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+): boolean {
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape === 'pulse') {
+    const radius = Math.max(1, spec.radius ?? 1)
+    const dist = minFootprintHexDistance(
+      { q: attacker.q, r: attacker.r },
+      attacker,
+      target,
+      catalog,
+    )
+    return dist <= radius
+  }
+  return attackCanHitTargetAtStand(
+    { q: attacker.q, r: attacker.r },
+    attacker,
+    target,
+    catalog,
+    tiles,
+    stacks,
+    true,
+  )
+}
+
+export function attackAimFromCommit(commit: AttackCommitAim): AttackAim {
+  return {
+    targetId: commit.targetId,
+    hex: commit.aimHex,
+    stand: commit.stand,
+    wedgeZone: commit.wedgeZone,
+  }
 }
 
 /** Closest footprint hex on `target` to any hex of `attacker` at `standAnchor`. */
@@ -410,25 +650,6 @@ export function closestTargetFootprintHex(
     }
   }
   return best
-}
-
-export function attackTargetLineOfSight(
-  standAnchor: Axial,
-  attacker: CombatStack,
-  target: CombatStack,
-  tiles: CombatTile[],
-  stacks: CombatStack[],
-  catalog: ReferenceCatalog,
-): boolean {
-  const fromHexes = stackFootprint(
-    { ...attacker, q: standAnchor.q, r: standAnchor.r },
-    catalog,
-  )
-  return stackFootprint(target, catalog).some((tHex) =>
-    fromHexes.some((fHex) =>
-      hasLineOfSight(fHex, tHex, tiles, stacks, catalog),
-    ),
-  )
 }
 
 function allyFrontDeficit(
@@ -490,65 +711,15 @@ export function isValidAttackTarget(
   stacks: CombatStack[],
   allowFriendly = false,
 ): boolean {
-  if (attacker.id === target.id) {
-    return false
-  }
-  const atkUnit = unitById(catalog, attacker.unitId)
-  const mode = unitAutoTarget(atkUnit)
-  if (mode === 'most_injured_ally') {
-    if (
-      target.side !== attacker.side ||
-      isUntargetableStack(target, catalog) ||
-      isVanished(target, catalog)
-    ) {
-      return false
-    }
-    const spec = unitAttackShape(atkUnit)
-    if (!allyNeedsMostInjuredHeal(target, catalog, spec.healRevive === true)) {
-      return false
-    }
-    return (
-      attackRangeFrom(attacker, target, catalog, attacker) &&
-      attackTargetLineOfSight(
-        attacker,
-        attacker,
-        target,
-        tiles,
-        stacks,
-        catalog,
-      )
-    )
-  }
-  if (attacker.side === target.side) {
-    if (!allowFriendly && !isHealAllyTarget(attacker, target, catalog)) {
-      return false
-    }
-  }
-  if (isUntargetableStack(target, catalog)) {
-    return false
-  }
-  if (isVanished(target, catalog)) {
-    return false
-  }
-  if (mode === 'random_wall_segment' && !isSiegeEngineWallTarget(target, catalog)) {
-    return false
-  }
-  if (
-    (mode === 'random_enemy' || mode === 'random_enemy_los') &&
-    !isCreatureArmyUnit(unitById(catalog, target.unitId))
-  ) {
-    return false
-  }
-  return (
-    attackRangeFrom(attacker, target, catalog, attacker) &&
-    attackTargetLineOfSight(
-      attacker,
-      attacker,
-      target,
-      tiles,
-      stacks,
-      catalog,
-    )
+  const stand = { q: attacker.q, r: attacker.r }
+  return attackCanHitTargetAtStand(
+    stand,
+    attacker,
+    target,
+    catalog,
+    tiles,
+    stacks,
+    allowFriendly,
   )
 }
 
@@ -1981,6 +2152,75 @@ export type AttackAim = {
   wedgeZone?: number | null
 }
 
+/** One-line combat log when resolveAttack returns null after a move. */
+export function describeAttackResolveFailure(
+  battle: CombatBattle,
+  attackerId: string,
+  catalog: ReferenceCatalog,
+  aim: AttackAim,
+  tiles: CombatTile[],
+  allowFriendly = false,
+): string {
+  const attacker = battle.stacks.find((row) => row.id === attackerId)
+  const unit = attacker ? unitById(catalog, attacker.unitId) : null
+  const name = unit?.name ?? 'Unit'
+  if (!attacker || attacker.qty <= 0) {
+    return `${name}: cannot attack (stack missing).`
+  }
+  if (isUnitAttackBlocked(attacker, catalog)) {
+    return `${name}: attack blocked.`
+  }
+  const spec = unitAttackShape(unit)
+  const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
+  const commit = attackCommitFromAttackAim(attacker, aim, catalog)
+  const ghost = { ...attacker, q: stand.q, r: stand.r }
+  if (
+    !aimHexInAttackRange(
+      commit.origin,
+      commit.aimHex,
+      ghost,
+      catalog,
+    )
+  ) {
+    const dist = hexDistance(commit.origin, commit.aimHex)
+    const needMin = attackMinRangeNeed(unit)
+    const maxR = stackMaxRange({ ...ghost, q: stand.q, r: stand.r }, catalog)
+    return `${name}: target out of range after move (distance ${dist}, min range ${needMin}, max ${maxR}).`
+  }
+  if (
+    !attackDeliveryAtCommit(
+      commit,
+      attacker,
+      catalog,
+      tiles,
+      battle.stacks,
+    )
+  ) {
+    return `${name}: cannot attack that hex after move.`
+  }
+  if (spec.shape !== 'aoe') {
+    const aimed =
+      aim.targetId != null
+        ? battle.stacks.find((row) => row.id === aim.targetId)
+        : null
+    if (!aimed || aimed.qty <= 0) {
+      return `${name}: no target to attack.`
+    }
+    if (
+      !attackTargetPolicyOk(ghost, aimed, catalog, allowFriendly)
+    ) {
+      if (spec.shape === 'beam' || spec.shape === 'line') {
+        return `${name}: cannot attack that target after move.`
+      }
+      const dist = minFootprintHexDistance(stand, attacker, aimed, catalog)
+      const needMin = attackMinRangeNeed(unit)
+      const maxR = stackMaxRange(attacker, catalog)
+      return `${name}: target out of range after move (distance ${dist}, need ${needMin}–${maxR}).`
+    }
+  }
+  return `${name}: cannot attack after move.`
+}
+
 /** One attack/retaliation beat for battle anim (display-only — never setBattle). */
 export type AttackAnimPhase = {
   attackerId: string
@@ -2065,7 +2305,6 @@ export function resolveAttack(
     aimed.side !== attacker.side &&
     qualifiesForExtraShots(attacker, aimed, catalog)
 
-  const maxRange = stackMaxRange(attacker, catalog)
   const standAnchor = aim.stand ?? { q: attacker.q, r: attacker.r }
   const shapeGeometry: ShapeGeometryOpts = {
     standAnchor,
@@ -2076,7 +2315,6 @@ export function resolveAttack(
       (spec.shape === 'charge_line' ? { q: before.q, r: before.r } : null),
   }
   const actionOrigin = shapeActionOrigin(shapeGeometry, catalog, aim.hex)
-  const aimDist = hexDistance(actionOrigin, aim.hex)
   if (placingTrap) {
     const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
     if (
@@ -2092,30 +2330,7 @@ export function resolveAttack(
       return null
     }
   } else if (!noAim) {
-    if (spec.shape === 'beam' || spec.shape === 'aoe' || spec.shape === 'line') {
-      if (aimDist < 1 || aimDist > maxRange) {
-        return null
-      }
-      if (!hasLineOfSight(actionOrigin, aim.hex, tiles, battle.stacks, catalog)) {
-        return null
-      }
-      // Beam / Line require a living unit on the aim hex — no ground-only clicks.
-      if (spec.shape === 'beam' || spec.shape === 'line') {
-        if (
-          !aimed ||
-          !isValidAttackTarget(
-            attacker,
-            aimed,
-            catalog,
-            tiles,
-            battle.stacks,
-            allowFriendly,
-          )
-        ) {
-          return null
-        }
-      }
-    } else if (spec.pullTarget) {
+    if (spec.pullTarget) {
       if (!aimed) {
         return null
       }
@@ -2128,7 +2343,13 @@ export function resolveAttack(
       )
       const reachOk =
         (allowFriendly || aimed.side !== attacker.side) &&
-        targetInNormalAttackReach(attacker, aimed, catalog)
+        targetInNormalAttackReach(
+          attacker,
+          aimed,
+          catalog,
+          tiles,
+          battle.stacks,
+        )
       if (!pullOk && !reachOk) {
         return null
       }
@@ -2142,18 +2363,32 @@ export function resolveAttack(
       if (isUntargetableStack(aimed, catalog) || isVanished(aimed, catalog)) {
         return null
       }
-    } else if (
-      !aimed ||
-      !isValidAttackTarget(
-        attacker,
-        aimed,
-        catalog,
-        tiles,
-        battle.stacks,
-        allowFriendly,
-      )
-    ) {
-      return null
+    } else {
+      const commit = attackCommitFromAttackAim(attacker, aim, catalog)
+      if (
+        !attackDeliveryAtCommit(
+          commit,
+          attacker,
+          catalog,
+          tiles,
+          battle.stacks,
+        )
+      ) {
+        return null
+      }
+      if (spec.shape !== 'aoe') {
+        if (
+          !aimed ||
+          !attackTargetPolicyOk(
+            attacker,
+            aimed,
+            catalog,
+            allowFriendly,
+          )
+        ) {
+          return null
+        }
+      }
     }
   }
 
@@ -2314,7 +2549,15 @@ export function resolveAttack(
         pullLog.push(pull.line)
       }
       aimedForHits = pull.target ?? aimed
-    } else if (!targetInNormalAttackReach(attacker, aimed, catalog)) {
+    } else if (
+      !targetInNormalAttackReach(
+        attacker,
+        aimed,
+        catalog,
+        tiles,
+        battle.stacks,
+      )
+    ) {
       return null
     }
   }
@@ -2549,7 +2792,14 @@ export function resolveAttack(
       if (isPreemptive !== preemptivePass) {
         continue
       }
-      if (attackDistance(atk, def, catalog) !== 1) {
+      if (
+        minFootprintHexDistance(
+          { q: def.q, r: def.r },
+          def,
+          atk,
+          catalog,
+        ) !== 1
+      ) {
         continue
       }
       if ((def.retaliationsLeft ?? 0) <= 0) {

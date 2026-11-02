@@ -116,6 +116,23 @@ export type UnitRow = {
   upgrade_cost: CostMap | null
   /** Dwelling tier in catalog: 1 = base, 2 = upgraded (same town/tier/class branch). */
   level: number
+  /** Reference `projectile.id`; null = streak fallback when ranged. */
+  projectile_id: number | null
+}
+
+export type ProjectileRow = {
+  id: number
+  name: string
+  /** `flight` (default) or `shape` area overlay. */
+  kind: string
+  scale_pct: number
+  start_offset_pct: number
+  end_offset_pct: number
+  height_pct: number
+  motion: string
+  impact_effect: string | null
+  /** When Hit/Die start during shape overlay (0–100). */
+  hit_pct: number
 }
 
 export type UnitRetaliation = {
@@ -915,6 +932,7 @@ export type ReferenceCatalog = {
   ground_effect: GroundEffectRow[]
   event: EventRow[]
   battle_hit_reaction: BattleHitReactionRow[]
+  projectile: ProjectileRow[]
 }
 
 export type BattleHitDirection = 'level' | 'above' | 'below'
@@ -4872,6 +4890,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       class_id?: unknown
       tier?: unknown
       town_id?: unknown
+      projectile_id?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const imageAlt =
@@ -4888,6 +4907,11 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
     const townRaw = extra.town_id
     const townId =
       townRaw == null || townRaw === '' ? null : asInt(townRaw)
+    const projectileRaw = extra.projectile_id
+    const projectileId =
+      projectileRaw == null || projectileRaw === ''
+        ? null
+        : asInt(projectileRaw)
     return {
       ...row,
       cost: asCost(row.cost),
@@ -4922,8 +4946,38 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
           .upgrade_cost,
       ),
       level: catalogLevel((row as { level?: unknown }).level),
+      projectile_id:
+        projectileId != null && projectileId > 0 ? projectileId : null,
     }
   })
+  const projectile: ProjectileRow[] = (
+    Array.isArray((payload as { projectile?: unknown }).projectile)
+      ? (payload as { projectile: unknown[] }).projectile
+      : []
+  )
+    .map((row) => {
+      const rec = row as Record<string, unknown>
+      const name = String(rec.name ?? '').trim()
+      return {
+        id: asInt(rec.id),
+        name,
+        scale_pct: asInt(rec.scale_pct),
+        start_offset_pct: Number(rec.start_offset_pct) || 0,
+        end_offset_pct: Number(rec.end_offset_pct) || 0,
+        height_pct: Number(rec.height_pct) || 0,
+        motion: String(rec.motion ?? 'none').trim() || 'none',
+        kind: String(rec.kind ?? 'flight').trim() || 'flight',
+        hit_pct: (() => {
+          const raw = Number(rec.hit_pct)
+          return Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 50
+        })(),
+        impact_effect:
+          typeof rec.impact_effect === 'string' && rec.impact_effect.trim()
+            ? rec.impact_effect.trim()
+            : null,
+      } satisfies ProjectileRow
+    })
+    .filter((row) => row.id > 0 && row.name.length > 0)
   const catalog: ReferenceCatalog = {
     building,
     unit,
@@ -5041,6 +5095,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       }
       return parsed.rows
     })(),
+    projectile,
   }
   enrichCatalogUnits(catalog)
   if (catalog.event.length === 0) {

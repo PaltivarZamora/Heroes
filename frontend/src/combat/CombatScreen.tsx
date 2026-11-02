@@ -107,6 +107,7 @@ import {
   preAttackDisplayStacks,
   runAttackBeatPresentation,
 } from './attackPresentation'
+import { preloadProjectileArtForUnits } from './battleProjectile'
 import {
   anyTargetReactionAnimNeeded,
   awaitBattleMovePathWaypoint,
@@ -122,7 +123,9 @@ import {
   idleVisualsForLivingStacks,
   mergeIdleSeedVisuals,
   combatUnitDrawFootPosition,
+  type CombatImpactVisual,
   type CombatProjectileVisual,
+  type CombatShapeVisual,
   type StackBattleVisual,
 } from './combatUnitAnimVisual'
 import { axialNeighborDirs } from '../hex/pathfinding'
@@ -219,7 +222,10 @@ import { warRoomSiegeMult } from '../town/townUniques'
 import { errorMessage, logConfigOnce } from '../session/configLog'
 import {
   resolveAttack,
+  attackAimFromCommit,
+  describeAttackResolveFailure,
   type AttackAnimPhase,
+  attackAimForTargetAtStand,
   pickAutoAttackTarget,
   autoActSkipLogLine,
   heroForSide,
@@ -259,7 +265,7 @@ import { applyUnitRegenAtTurnStart } from './unitRegen'
 import { visibleGroundEffects } from './groundEvasion'
 import { tryAutoSplitOnTurn } from './mudSplit'
 import {
-  actingStand,
+  attackCommitAim,
   canStrikeThisTurn,
   combatHover,
   confusedAttackIntent,
@@ -904,6 +910,11 @@ export function CombatScreen({
   const [battleProjectiles, setBattleProjectiles] = useState<
     CombatProjectileVisual[]
   >([])
+  const [battleImpacts, setBattleImpacts] = useState<CombatImpactVisual[]>([])
+  const [battleShapes, setBattleShapes] = useState<CombatShapeVisual[]>([])
+  const projectileArtByRowIdRef = useRef<
+    Map<number, import('./battleProjectile').BattleProjectileArt | null>
+  >(new Map())
   const knownTombsRef = useRef<Set<string>>(new Set())
   const strikeReactionTargetsRef = useRef<Set<string>>(new Set())
   const wipeAnimGenRef = useRef(0)
@@ -989,19 +1000,9 @@ export function CombatScreen({
       (intent.fire || intent.afterMove === 'pulse') && !attackBlocked
     const allowFriendly = intent.allowFriendly === true
     const prefix = intent.logPrefix ?? []
-    const stand = actingStand({ q: stack.q, r: stack.r }, intent.steps)
-    const aim = {
-      targetId: intent.attackTargetId,
-      hex:
-        intent.afterMove === 'pulse'
-          ? stand
-          : (intent.aimHex ?? { q: intent.q, r: intent.r }),
-      stand,
-      wedgeZone:
-        intent.arrowDeg != null
-          ? (((intent.arrowDeg / 60) % 6) + 6) % 6
-          : undefined,
-    }
+    const aim = attackAimFromCommit(
+      attackCommitAim(stack, intent, current, catalog),
+    )
     if (intent.steps.length === 0 && fire) {
       const resolved = resolveAttack(
         current,
@@ -1236,11 +1237,14 @@ export function CombatScreen({
         trapLines.push(...scatter.lines)
       }
       if (fire) {
+        const aimLive = attackAimFromCommit(
+          attackCommitAim(stack, intent, latest, catalog),
+        )
         const resolved = resolveAttack(
           latest,
           stack.id,
           catalog,
-          aim,
+          aimLive,
           field.tiles,
           combatHeroes,
           Math.random,
@@ -1272,6 +1276,14 @@ export function CombatScreen({
               ...trapLines,
               ...hazardLines,
               movementLogLine(stack, catalog, stepsDone),
+              describeAttackResolveFailure(
+                latest,
+                stack.id,
+                catalog,
+                aimLive,
+                field.tiles,
+                allowFriendly,
+              ),
             ],
             false,
             false,
@@ -2564,6 +2576,9 @@ export function CombatScreen({
           hitColor: resolved.hitColor,
           setStackVisuals: setStackBattleVisuals,
           setProjectiles: setBattleProjectiles,
+          setImpacts: setBattleImpacts,
+          setShapeVisuals: setBattleShapes,
+          projectileArtByRowId: projectileArtByRowIdRef.current,
           onHitFlash: (keys) => {
             if (keys.length > 0) {
               setHitFlash({
@@ -2675,7 +2690,7 @@ export function CombatScreen({
         next = ensureAdvFallbackGlowWarning(next, catalog)
         return next
       })
-      const [opening, fxLoaded] = await Promise.all([
+      const [opening, fxLoaded, projectileArt] = await Promise.all([
         preloadBattleUnitSheetsForBattleOpening(
           catalog,
           unitIds,
@@ -2683,12 +2698,14 @@ export function CombatScreen({
           BATTLE_OPENING_SHEET_PRELOAD_MS,
         ),
         preloadDieFallbackEffects(catalog),
+        preloadProjectileArtForUnits(catalog, unitIds),
       ])
       const { sheets, finishRemaining } = opening
       if (cancelled) {
         return
       }
       setDieFallbackEffects(fxLoaded)
+      projectileArtByRowIdRef.current = projectileArt
       const fxNames = dieFallbackEffectNames(catalog)
       if (
         fxNames.length > 0 &&
@@ -4172,11 +4189,12 @@ export function CombatScreen({
           battle,
           stack.id,
           catalog,
-          {
-            targetId: target.id,
-            hex: { q: target.q, r: target.r },
-            stand: { q: stack.q, r: stack.r },
-          },
+          attackAimForTargetAtStand(
+            { q: stack.q, r: stack.r },
+            stack,
+            target,
+            catalog,
+          ),
           field.tiles,
           combatHeroes,
         )
@@ -5955,6 +5973,8 @@ export function CombatScreen({
                           unitSheets={unitBattleSheets}
                           stackVisuals={stackBattleVisuals}
                           projectiles={battleProjectiles}
+                          impacts={battleImpacts}
+                          shapes={battleShapes}
                           paintNowMs={paintNow}
                         />
                       ) : null}

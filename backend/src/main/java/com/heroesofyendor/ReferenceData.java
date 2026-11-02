@@ -28,6 +28,7 @@ public class ReferenceData {
             "class_type",
             "building",
             "unit",
+            "projectile",
             "unit_tag",
             "condition",
             "town_name_pool",
