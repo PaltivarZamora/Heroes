@@ -29,17 +29,32 @@ const SHAPE_VISUAL_SHAPES: ReadonlySet<AttackShapeKind> = new Set([
 
 const warnedMismatch = new Set<string>()
 
-export function normalizeProjectileKind(row: ProjectileRow): 'flight' | 'shape' {
+export function normalizeProjectileKind(
+  row: ProjectileRow,
+): 'flight' | 'shape' | 'reach' {
   const k = (row.kind ?? 'flight').trim().toLowerCase()
-  return k === 'shape' ? 'shape' : 'flight'
+  if (k === 'shape') {
+    return 'shape'
+  }
+  if (k === 'reach') {
+    return 'reach'
+  }
+  return 'flight'
 }
 
 export function projectileRowFitsAttack(
   row: ProjectileRow,
   attackShape: AttackShapeKind,
   maxRange: number,
+  unit: UnitRow | null | undefined,
 ): boolean {
   const kind = normalizeProjectileKind(row)
+  if (kind === 'reach') {
+    if ((unit?.min_range ?? 0) >= 1) {
+      return false
+    }
+    return attackShape === 'single'
+  }
   if (kind === 'shape') {
     if (!SHAPE_VISUAL_SHAPES.has(attackShape)) {
       return false
@@ -86,18 +101,48 @@ export function effectiveProjectileRow(
   attackShape: AttackShapeKind,
   maxRange: number,
 ): ProjectileRow | null {
+  const unit = unitById(catalog, unitId)
   const row = unitProjectileRow(catalog, unitId)
   if (!row) {
     return null
   }
-  if (!projectileRowFitsAttack(row, attackShape, maxRange)) {
-    const unit = unitById(catalog, unitId)
+  if (!projectileRowFitsAttack(row, attackShape, maxRange, unit)) {
     if (unit) {
       warnProjectileRowMismatch(unit, row, attackShape)
     }
     return null
   }
   return row
+}
+
+/** Closest-footprint hex distance origin → aim (same as attack commit). */
+export function reachEffectOriginToAimDistance(
+  striker: CombatStack,
+  target: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
+  const aimHex = closestHexOnTargetFootprint(striker, target, catalog)
+  const origin = actionOriginFootprintHex(
+    { q: striker.q, r: striker.r },
+    striker,
+    catalog,
+    aimHex,
+  )
+  return hexDistance(origin, aimHex)
+}
+
+export function usesReachVisual(
+  row: ProjectileRow | null,
+  unit: UnitRow | null | undefined,
+  attackShape: AttackShapeKind,
+): boolean {
+  return (
+    row != null &&
+    unit != null &&
+    normalizeProjectileKind(row) === 'reach' &&
+    (unit.min_range ?? 0) < 1 &&
+    attackShape === 'single'
+  )
 }
 
 export function attackShapeAreaMaxSpan(
@@ -333,6 +378,9 @@ export function usesCatalogPerTargetFlight(
     return false
   }
   if (usesRangedAoeFlight(row, attackShape, maxRange)) {
+    return false
+  }
+  if (usesReachVisual(row, null, attackShape)) {
     return false
   }
   return true

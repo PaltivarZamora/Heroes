@@ -13,6 +13,7 @@ import {
 } from './battleUnitSound'
 import type { CombatStack } from './battle'
 import { isHeroStack } from './battle'
+import { isPolymorphed } from './condition'
 import type { CombatTombstone } from './battle'
 import {
   defaultStackVisual,
@@ -52,6 +53,10 @@ import {
   tryPrimeDieFallbackSchedule,
   type DieFallbackEffectSheet,
 } from './battleDieFallbackEffect'
+import {
+  battleAnimSheetForStack,
+  stackUsesPolymorphBattleArt,
+} from './polymorphBattleArt'
 
 type MoveAnchor = { q: number; r: number; x: number; y: number }
 
@@ -104,11 +109,14 @@ export async function beginBattleMovePathVisual(opts: {
   movePartnerStem?: string | null
   useMoveSheet: boolean
   moveFrameCount: number
+  /** Per-hex slide duration; defaults to settings.moveSecPerHex. */
+  moveSecPerHex?: number
   setStackVisuals: Dispatch<SetStateAction<Record<string, StackBattleVisual>>>
 }): Promise<number> {
   if (opts.pathFeet.length < 2) {
     return performance.now()
   }
+  const secPerHex = opts.moveSecPerHex ?? opts.settings.moveSecPerHex
   const startedMs = performance.now()
   const first = opts.pathFeet[0]!
   const second = opts.pathFeet[1]!
@@ -122,7 +130,7 @@ export async function beginBattleMovePathVisual(opts: {
       slide: {
         startedMs,
         pathFeet: opts.pathFeet,
-        secPerHex: opts.settings.moveSecPerHex,
+        secPerHex,
       },
     },
   }))
@@ -176,9 +184,13 @@ export function stackUsesBattleAnim(
   stack: CombatStack,
   catalog: ReferenceCatalog | null | undefined,
   sheets: Map<number, BattleUnitSheetSet | null>,
+  polymorphSheet?: BattleUnitSheetSet | null,
 ): boolean {
   if (!catalog || stack.qty <= 0) {
     return false
+  }
+  if (stackUsesPolymorphBattleArt(stack, catalog, polymorphSheet)) {
+    return true
   }
   return Boolean(sheets.get(stack.unitId)?.animated)
 }
@@ -190,11 +202,25 @@ export function stackShowsBattleSprites(
   sheets: Map<number, BattleUnitSheetSet | null>,
   visual: StackBattleVisual | undefined,
   paintNowMs?: number,
+  polymorphSheet?: BattleUnitSheetSet | null,
 ): boolean {
   if (!catalog || isHeroStack(stack)) {
     return false
   }
-  if (!sheets.get(stack.unitId)?.animated) {
+  if (
+    isPolymorphed(stack, catalog) &&
+    !stackUsesPolymorphBattleArt(stack, catalog, polymorphSheet) &&
+    stack.qty > 0
+  ) {
+    return false
+  }
+  const stackSet = battleAnimSheetForStack(
+    stack,
+    catalog,
+    sheets,
+    polymorphSheet,
+  )
+  if (!stackSet?.animated) {
     return false
   }
   if (
@@ -228,12 +254,28 @@ export function stackHidesFootprintBoxChrome(
   sheets: Map<number, BattleUnitSheetSet | null>,
   sheetsPreloadActive: boolean,
   visual?: StackBattleVisual,
+  polymorphSheet?: BattleUnitSheetSet | null,
 ): boolean {
   if (!catalog || isHeroStack(stack)) {
     return false
   }
-  if (stackShowsBattleSprites(stack, catalog, sheets, visual)) {
+  if (
+    stackShowsBattleSprites(
+      stack,
+      catalog,
+      sheets,
+      visual,
+      undefined,
+      polymorphSheet,
+    )
+  ) {
     return true
+  }
+  if (
+    isPolymorphed(stack, catalog) &&
+    !stackUsesPolymorphBattleArt(stack, catalog, polymorphSheet)
+  ) {
+    return false
   }
   if (stack.qty <= 0) {
     return false

@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Hippogriff_1_Move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_001": {
+      "frame": {
+        "x": 385,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_002": {
+      "frame": {
+        "x": 770,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_003": {
+      "frame": {
+        "x": 1155,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_004": {
+      "frame": {
+        "x": 1540,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_005": {
+      "frame": {
+        "x": 1925,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_006": {
+      "frame": {
+        "x": 2310,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_007": {
+      "frame": {
+        "x": 0,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_008": {
+      "frame": {
+        "x": 385,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_009": {
+      "frame": {
+        "x": 770,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_010": {
+      "frame": {
+        "x": 1155,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_011": {
+      "frame": {
+        "x": 1540,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_012": {
+      "frame": {
+        "x": 1925,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_013": {
+      "frame": {
+        "x": 2310,
+        "y": 286,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_014": {
+      "frame": {
+        "x": 0,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_015": {
+      "frame": {
+        "x": 385,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_016": {
+      "frame": {
+        "x": 770,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_017": {
+      "frame": {
+        "x": 1155,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_018": {
+      "frame": {
+        "x": 1540,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_019": {
+      "frame": {
+        "x": 1925,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_020": {
+      "frame": {
+        "x": 2310,
+        "y": 572,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_021": {
+      "frame": {
+        "x": 0,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_022": {
+      "frame": {
+        "x": 385,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_023": {
+      "frame": {
+        "x": 770,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_024": {
+      "frame": {
+        "x": 1155,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_025": {
+      "frame": {
+        "x": 1540,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_026": {
+      "frame": {
+        "x": 1925,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_027": {
+      "frame": {
+        "x": 2310,
+        "y": 858,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_028": {
+      "frame": {
+        "x": 0,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_029": {
+      "frame": {
+        "x": 385,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_030": {
+      "frame": {
+        "x": 770,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_031": {
+      "frame": {
+        "x": 1155,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_032": {
+      "frame": {
+        "x": 1540,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_033": {
+      "frame": {
+        "x": 1925,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_034": {
+      "frame": {
+        "x": 2310,
+        "y": 1144,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_035": {
+      "frame": {
+        "x": 0,
+        "y": 1430,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 75
+    },
+    "Hippogriff_1_Move_Stand": {
+      "frame": {
+        "x": 385,
+        "y": 1430,
+        "w": 385,
+        "h": 286
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 385,
+        "h": 286
+      },
+      "sourceSize": {
+        "w": 385,
+        "h": 286
+      },
+      "anchor": {
+        "x": 0.486,
+        "y": 0.9849
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Hippogriff_1_Move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2695,
+      "h": 1716
+    },
+    "scale": "1",
+    "anim": "Move",
+    "loop": true,
+    "foot": {
+      "x": 0.486,
+      "y": 0.9849
+    },
+    "rest_height": 200
+  }
+}

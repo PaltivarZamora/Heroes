@@ -1,0 +1,350 @@
+{
+  "frames": {
+    "Halberd_Reach_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_001": {
+      "frame": {
+        "x": 432,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_002": {
+      "frame": {
+        "x": 864,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_003": {
+      "frame": {
+        "x": 1296,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_004": {
+      "frame": {
+        "x": 0,
+        "y": 188,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_005": {
+      "frame": {
+        "x": 432,
+        "y": 188,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_006": {
+      "frame": {
+        "x": 864,
+        "y": 188,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_007": {
+      "frame": {
+        "x": 1296,
+        "y": 188,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_008": {
+      "frame": {
+        "x": 0,
+        "y": 376,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_009": {
+      "frame": {
+        "x": 432,
+        "y": 376,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_010": {
+      "frame": {
+        "x": 864,
+        "y": 376,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_011": {
+      "frame": {
+        "x": 1296,
+        "y": 376,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_012": {
+      "frame": {
+        "x": 0,
+        "y": 564,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_013": {
+      "frame": {
+        "x": 432,
+        "y": 564,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_014": {
+      "frame": {
+        "x": 864,
+        "y": 564,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    },
+    "Halberd_Reach_015": {
+      "frame": {
+        "x": 1296,
+        "y": 564,
+        "w": 432,
+        "h": 188
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 432,
+        "h": 188
+      },
+      "sourceSize": {
+        "w": 432,
+        "h": 188
+      },
+      "duration": 55
+    }
+  },
+  "meta": {
+    "image": "Halberd_Reach.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1728,
+      "h": 752
+    },
+    "scale": "1",
+    "loop": false
+  }
+}

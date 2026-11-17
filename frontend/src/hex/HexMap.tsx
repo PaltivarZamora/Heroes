@@ -155,8 +155,7 @@ import {
   mobUnitQty,
 } from '../session/mobs'
 import { HERO_ID, type Mob } from '../session/types'
-import { featureRenderScale, fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, isHeroTypeOffered, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, townNameForUnit, unitById, visionRange } from '../town/catalog'
-import { unitStaticPictureUrls } from '../town/slotArt'
+import { featureRenderScale, fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, isHeroTypeOffered, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, unitById, visionRange } from '../town/catalog'
 import {
   applyPixiAdvBorrowGlow,
   flushAdvancedBorrowDevLog,
@@ -164,7 +163,6 @@ import {
   unitStaticArtCandidates,
 } from '../town/unitArtFallback'
 import {
-  markUnitPictureNone,
   resolveUnitPictureTexture,
   unitPictureResolved,
 } from '../town/unitPictureTexture'
@@ -3270,49 +3268,39 @@ export function HexMap({
             isExplored(hex.q, hex.r),
           )
           const lead = mobLeadStack(session, mob)
-          const leadUnit = lead ? unitById(catalog, lead.unit_id) : null
-          const filename = leadUnit?.image_path?.trim() || null
-          const artCandidates =
-            leadUnit && catalog
-              ? unitStaticArtCandidates(catalog, leadUnit)
-              : filename
-                ? unitStaticPictureUrls(filename, townNameForUnit(catalog, leadUnit)).map(
-                    (url) => ({ url, glow: false as const }),
-                  )
-                : []
+          const leadUnit = lead && catalog ? unitById(catalog, lead.unit_id) : null
           let texture: Texture | null = null
-          if (leadUnit) {
-            if (artCandidates.length === 0) {
-              markUnitPictureNone(leadUnit.id)
-            } else {
-            const resolved = unitPictureResolved(leadUnit.id)
-            if (resolved?.kind === 'texture') {
-              texture = resolved.texture
-              if (resolved.borrowedGlow) {
-                mobBorrowedArt.set(mob.id, true)
-              }
-            } else if (resolved?.kind !== 'none') {
-              const mobId = mob.id
-              const borrowUnit = leadUnit
-              const catalogSnap = catalog
-              void resolveUnitPictureTexture(leadUnit.id, artCandidates).then(
-                (result) => {
-                  if (cancelled) {
-                    return
-                  }
-                  if (result.kind === 'texture') {
-                    if (result.borrowedGlow) {
-                      mobBorrowedArt.set(mobId, true)
-                      if (borrowUnit && catalogSnap) {
-                        noteAdvancedPictureBorrow(borrowUnit.id)
-                        flushAdvancedBorrowDevLog(catalogSnap, borrowUnit)
-                      }
+          if (leadUnit && catalog) {
+            const artCandidates = unitStaticArtCandidates(catalog, leadUnit)
+            if (artCandidates.length > 0) {
+              const resolved = unitPictureResolved(leadUnit.id)
+              if (resolved) {
+                texture = resolved.texture
+                if (resolved.borrowedGlow) {
+                  mobBorrowedArt.set(mob.id, true)
+                }
+              } else {
+                const mobId = mob.id
+                const borrowUnit = leadUnit
+                const catalogSnap = catalog
+                void resolveUnitPictureTexture(leadUnit.id, artCandidates).then(
+                  (result) => {
+                    if (cancelled) {
+                      return
                     }
-                    placeMobMarkers()
-                  }
-                },
-              )
-            }
+                    if (result) {
+                      if (result.borrowedGlow) {
+                        mobBorrowedArt.set(mobId, true)
+                        if (borrowUnit && catalogSnap) {
+                          noteAdvancedPictureBorrow(borrowUnit.id)
+                          flushAdvancedBorrowDevLog(catalogSnap, borrowUnit)
+                        }
+                      }
+                      schedulePlaceMobMarkers()
+                    }
+                  },
+                )
+              }
             }
           }
           let entry = mobMarkers.get(mob.id)
@@ -3451,6 +3439,16 @@ export function HexMap({
         }
         syncTownActorDepth()
         applyViewportCullIfNeeded(true)
+      }
+      let mobMarkersRaf = 0
+      const schedulePlaceMobMarkers = () => {
+        if (mobMarkersRaf !== 0) {
+          return
+        }
+        mobMarkersRaf = requestAnimationFrame(() => {
+          mobMarkersRaf = 0
+          placeMobMarkers()
+        })
       }
       applyHeroMarkerLabel = () => {
         placeHeroMarkers()
@@ -4050,7 +4048,9 @@ export function HexMap({
         }
       }
 
-      const updatePreview = (event: PointerEvent) => {
+      let previewRaf = 0
+      let previewEventPending: PointerEvent | null = null
+      const updatePreviewNow = (event: PointerEvent) => {
         const hero = heroRef.current
         if (!hero || moving || mapInputLocked) {
           return
@@ -4251,6 +4251,19 @@ export function HexMap({
           return
         }
         drawPreview([...(waypointPlan?.steps ?? []), ...steps], mob ?? null)
+      }
+      const updatePreview = (event: PointerEvent) => {
+        previewEventPending = event
+        if (previewRaf !== 0) {
+          return
+        }
+        previewRaf = requestAnimationFrame(() => {
+          previewRaf = 0
+          const ev = previewEventPending
+          if (ev) {
+            updatePreviewNow(ev)
+          }
+        })
       }
 
       const primeMoveSheetStem = async (

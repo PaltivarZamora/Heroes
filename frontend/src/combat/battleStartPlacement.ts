@@ -1,10 +1,8 @@
 /**
- * Battle-start army placement: whole-army layouts (classic → column → per-slot).
+ * Battle-start army placement: single back-column layout → per-slot fallback.
  * Never drops stacks.
  */
 import type { Axial } from '../hex/hero'
-import { neighborHexes } from '../hex/pathfinding'
-import { ARMY_STACK_SLOTS } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
 import {
@@ -21,7 +19,6 @@ import {
   DEFENDER_COL,
   DEFENDER_HERO_COL,
   HERO_ROW,
-  armySlotRow,
   isCombatFrameBorder,
   isSiegeExteriorCol,
   siegeWallColForRow,
@@ -46,33 +43,39 @@ import {
 } from './occupancy'
 import { tombstoneOccupancyBodies } from './tombstone'
 
-export type PlacementLayoutMode =
-  | 'classic'
-  | 'columns-gapped'
-  | 'columns-tight'
-  | 'per-slot'
+export type PlacementLayoutMode = 'column' | 'column-squeezed' | 'per-slot'
 
-function placementLayoutLogLabel(mode: PlacementLayoutMode): string {
-  switch (mode) {
-    case 'classic':
-      return 'classic'
-    case 'columns-gapped':
-      return 'columns, gapped'
-    case 'columns-tight':
-      return 'columns, tight'
-    case 'per-slot':
-      return 'per-slot fallback'
-  }
+type SideColumnResult = {
+  mode: PlacementLayoutMode
+  anchors: Map<string, Axial>
+  fallbackCount: number
+  squeezeSteps: number
 }
 
-function formatPlacementLogLine(
-  atk: PlacementLayoutMode,
-  def: PlacementLayoutMode,
-): string {
-  if (atk === def) {
-    return `Placement: ${placementLayoutLogLabel(atk)}`
+function sidePlacementLogLabel(result: SideColumnResult): string {
+  const columnPart =
+    result.anchors.size > 0
+      ? result.squeezeSteps > 0
+        ? `column squeezed (${result.squeezeSteps})`
+        : 'column'
+      : ''
+  if (result.fallbackCount === 0) {
+    return columnPart || 'column'
   }
-  return `Placement: attackers ${placementLayoutLogLabel(atk)}, defenders ${placementLayoutLogLabel(def)}`
+  const fallbackPart = `fallback for ${result.fallbackCount} stack${result.fallbackCount === 1 ? '' : 's'}`
+  if (!columnPart) {
+    return fallbackPart
+  }
+  return `${columnPart}, ${fallbackPart}`
+}
+
+function formatPlacementLogLine(atk: SideColumnResult, def: SideColumnResult): string {
+  const atkLabel = sidePlacementLogLabel(atk)
+  const defLabel = sidePlacementLogLabel(def)
+  if (atkLabel === defLabel) {
+    return `Placement: ${atkLabel}`
+  }
+  return `Placement: attackers ${atkLabel}, defenders ${defLabel}`
 }
 
 export type BattleStartPlacementOpts = {
@@ -459,38 +462,6 @@ function trialBlockKeysFromAnchors(
   return keys
 }
 
-function stackFitsAtTrial(
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-  battle: CombatBattle,
-  tiles: CombatTile[],
-  at: Axial,
-  blockedKeys: ReadonlySet<string>,
-  tileMap: Map<string, CombatTile>,
-  opts: BattleStartPlacementOpts,
-): boolean {
-  if (!startingAreaAnchor(at, stack, catalog, tileMap, opts)) {
-    return false
-  }
-  const kind = moveKindForStack(stack, catalog)
-  const blockKeys = groundEffectMovementBlockKeys(battle)
-  const occupied = new Set(blockedKeys)
-  const enterCost = (q: number, r: number) => {
-    const tile = tiles.find((row) => row.q === q && row.r === r)
-    if (!combatCanLandOn(tile, kind, undefined, blockKeys)) {
-      return null
-    }
-    return combatEnterCost(tile, kind, undefined, blockKeys)
-  }
-  return footprintFits(
-    at,
-    combatBodyFootprint(stack, catalog),
-    footprintAlong(stack.side),
-    occupied,
-    enterCost,
-  )
-}
-
 function stacksToPlaceOnSide(
   battle: CombatBattle,
   side: CombatSide,
@@ -566,78 +537,141 @@ function stackFitsAtColumnTrial(
   )
 }
 
-function columnAnchorOnOwnHalf(
-  tiles: CombatTile[],
-  colStart: number,
-  columnWidth: number,
-  side: CombatSide,
+function maxPlayableBodyRow(tiles: CombatTile[]): number {
+  let max = HERO_ROW
+  for (const tile of tiles) {
+    if (isPlayableTile(tile) && (tile.row ?? 0) >= HERO_ROW) {
+      max = Math.max(max, tile.row ?? 0)
+    }
+  }
+  return max
+}
+
+function stackFootprintRowSpan(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
+  return footprintExtent(combatBodyFootprint(stack, catalog)).rows
+}
+
+/** Blank playable rows between stack i feet and stack i+1 head; gaps length = stacks - 1. */
+function buildFootRowsForStacks(
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+  blankGaps: number[],
+  footAdjust: number[],
+): number[] {
+  const footRows: number[] = []
+  let foot = HERO_ROW + (footAdjust[0] ?? 0)
+  for (let i = 0; i < stacks.length; i += 1) {
+    if (i > 0) {
+      const blank = blankGaps[i - 1] ?? 1
+      const span = stackFootprintRowSpan(stacks[i]!, catalog)
+      foot =
+        footRows[i - 1]! + blank + span
+      foot += footAdjust[i] ?? 0
+    }
+    footRows.push(foot)
+  }
+  return footRows
+}
+
+function columnFootRowsFit(
+  stacks: CombatStack[],
+  catalog: ReferenceCatalog,
+  footRows: number[],
+  maxRow: number,
 ): boolean {
-  const span = Math.max(1, columnWidth)
-  const minCol = side === 'atk' ? colStart : colStart - span + 1
-  const maxCol = side === 'atk' ? colStart + span - 1 : colStart
-  for (let col = minCol; col <= maxCol; col += 1) {
-    const tile = tiles.find((row) => row.col === col)
-    if (!tile || !tileOnOwnSide(tile, side, tiles)) {
+  for (let i = 0; i < stacks.length; i += 1) {
+    const span = stackFootprintRowSpan(stacks[i]!, catalog)
+    const foot = footRows[i]!
+    const top = foot - (span - 1)
+    if (foot > maxRow || top < 0) {
+      return false
+    }
+    if (foot < HERO_ROW) {
+      return false
+    }
+    if (i === 0) {
+      continue
+    }
+    if (top < HERO_ROW) {
       return false
     }
   }
   return true
 }
 
-function footRowsForColumn(
-  tiles: CombatTile[],
-  col: number,
-  minBodyTopRow: number,
-): number[] {
-  const rows = new Set<number>()
-  for (const tile of tiles) {
-    if (tile.col !== col || !isPlayableTile(tile)) {
-      continue
-    }
-    if ((tile.row ?? 0) < HERO_ROW) {
-      continue
-    }
-    rows.add(tile.row as number)
-  }
-  return [...rows]
-    .filter((row) => row >= minBodyTopRow)
-    .sort((a, b) => a - b)
+type ColumnPlaceResult = {
+  anchors: Map<string, Axial>
+  /** Index of first stack not placed; stacks.length when all placed. */
+  failedFrom: number
 }
 
-function findColumnFootAnchor(
+function footAnchorAlignedToBackCol(
+  origin: Axial,
   stack: CombatStack,
   catalog: ReferenceCatalog,
+  tileMap: Map<string, CombatTile>,
+  colStart: number,
+): boolean {
+  const bounds = bodyGridBounds(origin, stack, catalog, tileMap)
+  if (!bounds) {
+    return false
+  }
+  if (stack.side === 'atk' && bounds.minCol !== colStart) {
+    return false
+  }
+  if (stack.side === 'def' && bounds.maxCol !== colStart) {
+    return false
+  }
+  return true
+}
+
+function stackFootRowsInBounds(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  footRow: number,
+  maxRow: number,
+  stackIndex: number,
+): boolean {
+  const span = stackFootprintRowSpan(stack, catalog)
+  const top = footRow - (span - 1)
+  if (footRow > maxRow || top < 0 || footRow < HERO_ROW) {
+    return false
+  }
+  if (stackIndex === 0) {
+    return true
+  }
+  return top >= HERO_ROW
+}
+
+function tryPlaceColumnAtFootRows(
   battle: CombatBattle,
+  catalog: ReferenceCatalog,
   tiles: CombatTile[],
   tileMap: Map<string, CombatTile>,
   opts: BattleStartPlacementOpts,
-  colStart: number,
-  minBodyTopRow: number,
-  columnWidth: number,
-  anchors: ReadonlyMap<string, Axial>,
-): Axial | null {
-  const side = stack.side
-  const rows = footRowsForColumn(tiles, colStart, minBodyTopRow)
-  for (const row of rows) {
-    const origin = anchorAtColRow(tiles, colStart, row)
+  side: CombatSide,
+  stacks: CombatStack[],
+  footRowsIn: number[],
+): ColumnPlaceResult | null {
+  const colStart = backDeployCol(side, opts)
+  const maxRow = maxPlayableBodyRow(tiles)
+  const anchors = new Map<string, Axial>()
+
+  for (let i = 0; i < stacks.length; i += 1) {
+    const stack = stacks[i]!
+    const footRow = footRowsIn[i]!
+    if (!stackFootRowsInBounds(stack, catalog, footRow, maxRow, i)) {
+      return i === 0 ? null : { anchors, failedFrom: i }
+    }
+    const origin = anchorAtColRow(tiles, colStart, footRow)
     if (!origin) {
-      continue
+      return i === 0 ? null : { anchors, failedFrom: i }
     }
-    const bounds = bodyGridBounds(origin, stack, catalog, tileMap)
-    if (!bounds) {
-      continue
-    }
-    if (side === 'atk' && bounds.minCol !== colStart) {
-      continue
-    }
-    if (side === 'def' && bounds.maxCol !== colStart) {
-      continue
-    }
-    if (columnWidth > 0 && bounds.width > columnWidth) {
-      continue
-    }
-    if (bounds.topRow < minBodyTopRow) {
-      continue
+    if (!footAnchorAlignedToBackCol(origin, stack, catalog, tileMap, colStart)) {
+      return i === 0 ? null : { anchors, failedFrom: i }
     }
     const blocked = trialBlockKeysFromAnchors(battle, catalog, anchors, stack.id)
     if (
@@ -652,116 +686,145 @@ function findColumnFootAnchor(
         opts,
       )
     ) {
-      continue
-    }
-    return origin
-  }
-  return null
-}
-
-function tryLayoutClassic(
-  battle: CombatBattle,
-  catalog: ReferenceCatalog,
-  tiles: CombatTile[],
-  tileMap: Map<string, CombatTile>,
-  opts: BattleStartPlacementOpts,
-  side: CombatSide,
-): Map<string, Axial> | null {
-  const attackerCol = opts.attackerCol ?? ATTACKER_COL
-  const defenderCol = opts.defenderCol ?? DEFENDER_COL
-  const anchors = new Map<string, Axial>()
-  for (const stack of stacksToPlaceOnSide(battle, side)) {
-    const origin = classicSlotAnchor(
-      stack,
-      tiles,
-      catalog,
-      attackerCol,
-      defenderCol,
-    )
-    if (!origin) {
-      return null
-    }
-    const blocked = trialBlockKeysFromAnchors(battle, catalog, anchors, stack.id)
-    if (
-      !stackFitsAtTrial(
-        stack,
-        catalog,
-        battle,
-        tiles,
-        origin,
-        blocked,
-        tileMap,
-        opts,
-      )
-    ) {
-      return null
+      return { anchors, failedFrom: i }
     }
     anchors.set(stack.id, origin)
   }
-  return anchors
+  return { anchors, failedFrom: stacks.length }
 }
 
-function tryLayoutColumns(
+function tryColumnLayout(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   tileMap: Map<string, CombatTile>,
   opts: BattleStartPlacementOpts,
   side: CombatSide,
-  gapped: boolean,
-): Map<string, Axial> | null {
+): { anchors: Map<string, Axial>; squeezeSteps: number } | null {
   const stacks = stacksToPlaceOnSide(battle, side)
   if (stacks.length === 0) {
-    return new Map()
+    return { anchors: new Map(), squeezeSteps: 0 }
   }
-  const anchors = new Map<string, Axial>()
-  let colStart = backDeployCol(side, opts)
-  let columnWidth = 0
-  let minBodyTopRow = HERO_ROW
+  const maxRow = maxPlayableBodyRow(tiles)
+  const gapCount = Math.max(0, stacks.length - 1)
+  const blankGaps = Array(gapCount).fill(1)
+  const footAdjust = Array(stacks.length).fill(0)
+  let squeezeSteps = 0
 
-  for (const stack of stacks) {
-    let placed = false
-    let guard = 0
-    while (!placed) {
-      guard += 1
-      if (guard > 64) {
-        return null
+  const tryPlaceAtLayout = (): ColumnPlaceResult | 'no-rows' => {
+    const footRows = buildFootRowsForStacks(
+      stacks,
+      catalog,
+      blankGaps,
+      footAdjust,
+    )
+    if (!columnFootRowsFit(stacks, catalog, footRows, maxRow)) {
+      return 'no-rows'
+    }
+    const placed = tryPlaceColumnAtFootRows(
+      battle,
+      catalog,
+      tiles,
+      tileMap,
+      opts,
+      side,
+      stacks,
+      footRows,
+    )
+    return placed ?? { anchors: new Map(), failedFrom: 0 }
+  }
+
+  while (true) {
+    const placed = tryPlaceAtLayout()
+    if (placed !== 'no-rows') {
+      if (placed.failedFrom === stacks.length) {
+        return { anchors: placed.anchors, squeezeSteps }
       }
-      const origin = findColumnFootAnchor(
-        stack,
+      if (placed.anchors.size > 0) {
+        return { anchors: placed.anchors, squeezeSteps }
+      }
+      return null
+    }
+
+    let stepped = false
+    for (let i = 0; i < stacks.length; i += 1) {
+      footAdjust[i]! -= 1
+      const footRows = buildFootRowsForStacks(
+        stacks,
         catalog,
-        battle,
-        tiles,
-        tileMap,
-        opts,
-        colStart,
-        minBodyTopRow,
-        columnWidth,
-        anchors,
+        blankGaps,
+        footAdjust,
       )
-      if (origin) {
-        const bounds = bodyGridBounds(origin, stack, catalog, tileMap)
-        if (!bounds) {
-          return null
-        }
-        columnWidth = Math.max(columnWidth, bounds.width)
-        minBodyTopRow = gapped
-          ? bounds.bottomRow + 2
-          : bounds.bottomRow
-        anchors.set(stack.id, origin)
-        placed = true
+      if (!columnFootRowsFit(stacks, catalog, footRows, maxRow)) {
+        footAdjust[i]! += 1
         continue
       }
-      const step = Math.max(1, columnWidth)
-      colStart = side === 'atk' ? colStart + step : colStart - step
-      if (!columnAnchorOnOwnHalf(tiles, colStart, step, side)) {
-        return null
+      squeezeSteps += 1
+      stepped = true
+      break
+    }
+    if (stepped) {
+      continue
+    }
+
+    for (let i = 0; i < gapCount; i += 1) {
+      if (blankGaps[i]! <= 0) {
+        continue
       }
-      columnWidth = 0
-      minBodyTopRow = HERO_ROW
+      blankGaps[i]! -= 1
+      const footRows = buildFootRowsForStacks(
+        stacks,
+        catalog,
+        blankGaps,
+        footAdjust,
+      )
+      if (!columnFootRowsFit(stacks, catalog, footRows, maxRow)) {
+        blankGaps[i]! += 1
+        continue
+      }
+      squeezeSteps += 1
+      stepped = true
+      break
+    }
+    if (stepped) {
+      continue
+    }
+    return null
+  }
+}
+
+function resolveSideColumnLayout(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  tileMap: Map<string, CombatTile>,
+  opts: BattleStartPlacementOpts,
+  side: CombatSide,
+): SideColumnResult {
+  const stacks = stacksToPlaceOnSide(battle, side)
+  if (stacks.length === 0) {
+    return { mode: 'column', anchors: new Map(), fallbackCount: 0, squeezeSteps: 0 }
+  }
+  const column = tryColumnLayout(battle, catalog, tiles, tileMap, opts, side)
+  if (column) {
+    const placedCount = column.anchors.size
+    const fallbackCount = stacks.length - placedCount
+    return {
+      mode:
+        fallbackCount === 0 && column.squeezeSteps > 0
+          ? 'column-squeezed'
+          : 'column',
+      anchors: column.anchors,
+      fallbackCount,
+      squeezeSteps: column.squeezeSteps,
     }
   }
-  return anchors
+  return {
+    mode: 'per-slot',
+    anchors: new Map(),
+    fallbackCount: stacks.length,
+    squeezeSteps: 0,
+  }
 }
 
 function applySideAnchors(
@@ -775,37 +838,6 @@ function applySideAnchors(
   return next
 }
 
-function resolveSideLayout(
-  battle: CombatBattle,
-  catalog: ReferenceCatalog,
-  tiles: CombatTile[],
-  tileMap: Map<string, CombatTile>,
-  opts: BattleStartPlacementOpts,
-  side: CombatSide,
-): { mode: PlacementLayoutMode; anchors: Map<string, Axial> } {
-  const tries: Array<{
-    mode: PlacementLayoutMode
-    run: () => Map<string, Axial> | null
-  }> = [
-    { mode: 'classic', run: () => tryLayoutClassic(battle, catalog, tiles, tileMap, opts, side) },
-    {
-      mode: 'columns-gapped',
-      run: () => tryLayoutColumns(battle, catalog, tiles, tileMap, opts, side, true),
-    },
-    {
-      mode: 'columns-tight',
-      run: () => tryLayoutColumns(battle, catalog, tiles, tileMap, opts, side, false),
-    },
-  ]
-  for (const attempt of tries) {
-    const anchors = attempt.run()
-    if (anchors) {
-      return { mode: attempt.mode, anchors }
-    }
-  }
-  return { mode: 'per-slot', anchors: new Map() }
-}
-
 function applyPerSlotFallback(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
@@ -814,6 +846,7 @@ function applyPerSlotFallback(
   opts: BattleStartPlacementOpts,
   side: CombatSide,
   lines: string[],
+  keepColumnIds: ReadonlySet<string> = new Set(),
 ): CombatBattle {
   let next = battle
   const placedIds = new Set<string>()
@@ -828,6 +861,9 @@ function applyPerSlotFallback(
     }
   }
   for (const stack of stacksToPlaceOnSide(next, side)) {
+    if (keepColumnIds.has(stack.id)) {
+      continue
+    }
     const live = next.stacks.find((row) => row.id === stack.id)
     if (!live || live.qty <= 0) {
       continue
@@ -844,39 +880,6 @@ function applyPerSlotFallback(
   return next
 }
 
-function classicSlotFootGridRow(
-  slotIndex: number,
-  catalog: ReferenceCatalog,
-  stack: CombatStack,
-): number {
-  const markerRow = armySlotRow(slotIndex)
-  const code = combatBodyFootprint(stack, catalog)
-  if (footprintExtent(code).rows <= 1) {
-    return markerRow
-  }
-  // Slot marker row is the foot (body) hex; head extends north, not onto the row above the prior stack's body.
-  return markerRow
-}
-
-function classicSlotAnchor(
-  stack: CombatStack,
-  tiles: CombatTile[],
-  catalog: ReferenceCatalog,
-  attackerCol: number,
-  defenderCol: number,
-): Axial | null {
-  if (stack.slot < 0 || stack.slot >= ARMY_STACK_SLOTS) {
-    return null
-  }
-  const col = stack.side === 'atk' ? attackerCol : defenderCol
-  const row = classicSlotFootGridRow(stack.slot, catalog, stack)
-  const tile = tiles.find((t) => t.col === col && t.row === row)
-  if (!tile || !isPlayableTile(tile)) {
-    return null
-  }
-  return { q: tile.q, r: tile.r }
-}
-
 function anchorAtColRow(
   tiles: CombatTile[],
   col: number,
@@ -889,108 +892,6 @@ function anchorAtColRow(
   return { q: tile.q, r: tile.r }
 }
 
-function nudgeClashesHeroIcon(
-  col: number,
-  row: number,
-  side: CombatSide,
-): boolean {
-  if (row !== HERO_ROW) {
-    return false
-  }
-  const heroCol = side === 'atk' ? ATTACKER_HERO_COL : DEFENDER_HERO_COL
-  return col === heroCol
-}
-
-function sortTilesBackEdgeFirst(
-  a: CombatTile,
-  b: CombatTile,
-  side: CombatSide,
-): number {
-  const ca = a.col ?? 0
-  const cb = b.col ?? 0
-  return side === 'atk' ? ca - cb : cb - ca
-}
-
-/** Foot origins one grid row up/down: both diagonal neighbours on that row, back edge first. */
-function rowStepOrigins(
-  classic: Axial,
-  stack: CombatStack,
-  tiles: CombatTile[],
-  rowDelta: number,
-): Axial[] {
-  const start = tiles.find((t) => t.q === classic.q && t.r === classic.r)
-  if (start?.row == null) {
-    return []
-  }
-  const targetRow = start.row + rowDelta
-  const candidates = neighborHexes(classic)
-    .map((n) => tiles.find((t) => t.q === n.q && t.r === n.r))
-    .filter(
-      (t): t is CombatTile =>
-        !!t && isPlayableTile(t) && t.row === targetRow,
-    )
-  candidates.sort((a, b) => sortTilesBackEdgeFirst(a, b, stack.side))
-  return candidates.map((t) => ({ q: t.q, r: t.r }))
-}
-
-/** b–e from classic foot anchor: back, up, forward, down (skip invalid / hero clashes). */
-function slotNudgeAnchors(
-  classic: Axial,
-  stack: CombatStack,
-  tiles: CombatTile[],
-): Axial[] {
-  const start = tiles.find((t) => t.q === classic.q && t.r === classic.r)
-  if (start?.col == null || start.row == null) {
-    return []
-  }
-  const col = start.col
-  const row = start.row
-  const backCol = stack.side === 'atk' ? col - 1 : col + 1
-  const forwardCol = stack.side === 'atk' ? col + 1 : col - 1
-  const out: Axial[] = []
-  const back = anchorAtColRow(tiles, backCol, row)
-  if (back && !nudgeClashesHeroIcon(backCol, row, stack.side)) {
-    out.push(back)
-  }
-  for (const up of rowStepOrigins(classic, stack, tiles, -1)) {
-    const tile = tiles.find((t) => t.q === up.q && t.r === up.r)
-    if (
-      tile?.col != null &&
-      !nudgeClashesHeroIcon(tile.col, tile.row ?? 0, stack.side)
-    ) {
-      out.push(up)
-    }
-  }
-  const forward = anchorAtColRow(tiles, forwardCol, row)
-  if (forward) {
-    out.push(forward)
-  }
-  for (const down of rowStepOrigins(classic, stack, tiles, 1)) {
-    out.push(down)
-  }
-  return out
-}
-
-function firstFittingAnchor(
-  origins: Axial[],
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-  battle: CombatBattle,
-  tiles: CombatTile[],
-  zoneFilter: (origin: Axial) => boolean,
-  placedIds: ReadonlySet<string>,
-): Axial | null {
-  for (const origin of origins) {
-    if (!zoneFilter(origin)) {
-      continue
-    }
-    if (stackFitsAt(stack, catalog, battle, tiles, origin, placedIds)) {
-      return origin
-    }
-  }
-  return null
-}
-
 function pickAnchor(
   stack: CombatStack,
   catalog: ReferenceCatalog,
@@ -1000,34 +901,8 @@ function pickAnchor(
   opts: BattleStartPlacementOpts,
   placedIds: ReadonlySet<string>,
 ): Axial | null {
-  const attackerCol = opts.attackerCol ?? ATTACKER_COL
-  const defenderCol = opts.defenderCol ?? DEFENDER_COL
-  const classic = classicSlotAnchor(
-    stack,
-    tiles,
-    catalog,
-    attackerCol,
-    defenderCol,
-  )
   const inZone = (origin: Axial) =>
     startingAreaAnchor(origin, stack, catalog, tileMap, opts)
-
-  const earlyOrigins: Axial[] = []
-  if (classic) {
-    earlyOrigins.push(classic, ...slotNudgeAnchors(classic, stack, tiles))
-  }
-  const early = firstFittingAnchor(
-    earlyOrigins,
-    stack,
-    catalog,
-    battle,
-    tiles,
-    inZone,
-    placedIds,
-  )
-  if (early) {
-    return early
-  }
 
   const anchor = pickOverflowAnchor(
     stack,
@@ -1097,26 +972,46 @@ export function applyBattleStartPlacement(
   const tileMap = tileByHex(tiles)
   let next = battle
 
-  const atk = resolveSideLayout(next, catalog, tiles, tileMap, opts, 'atk')
-  const def = resolveSideLayout(next, catalog, tiles, tileMap, opts, 'def')
+  const atk = resolveSideColumnLayout(next, catalog, tiles, tileMap, opts, 'atk')
+  const def = resolveSideColumnLayout(next, catalog, tiles, tileMap, opts, 'def')
 
   const hadArmy =
     stacksToPlaceOnSide(next, 'atk').length > 0 ||
     stacksToPlaceOnSide(next, 'def').length > 0
   if (hadArmy) {
-    lines.push(formatPlacementLogLine(atk.mode, def.mode))
+    lines.push(formatPlacementLogLine(atk, def))
   }
 
-  if (atk.mode === 'per-slot') {
-    next = applyPerSlotFallback(next, catalog, tiles, tileMap, opts, 'atk', lines)
-  } else {
+  if (atk.anchors.size > 0) {
     next = applySideAnchors(next, atk.anchors)
   }
+  if (atk.fallbackCount > 0) {
+    next = applyPerSlotFallback(
+      next,
+      catalog,
+      tiles,
+      tileMap,
+      opts,
+      'atk',
+      lines,
+      new Set(atk.anchors.keys()),
+    )
+  }
 
-  if (def.mode === 'per-slot') {
-    next = applyPerSlotFallback(next, catalog, tiles, tileMap, opts, 'def', lines)
-  } else {
+  if (def.anchors.size > 0) {
     next = applySideAnchors(next, def.anchors)
+  }
+  if (def.fallbackCount > 0) {
+    next = applyPerSlotFallback(
+      next,
+      catalog,
+      tiles,
+      tileMap,
+      opts,
+      'def',
+      lines,
+      new Set(def.anchors.keys()),
+    )
   }
 
   return { battle: next, lines }

@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Polymorph_1_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_001": {
+      "frame": {
+        "x": 320,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_002": {
+      "frame": {
+        "x": 640,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_003": {
+      "frame": {
+        "x": 960,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_004": {
+      "frame": {
+        "x": 1280,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_005": {
+      "frame": {
+        "x": 1600,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_006": {
+      "frame": {
+        "x": 1920,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_007": {
+      "frame": {
+        "x": 0,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_008": {
+      "frame": {
+        "x": 320,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_009": {
+      "frame": {
+        "x": 640,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_010": {
+      "frame": {
+        "x": 960,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_011": {
+      "frame": {
+        "x": 1280,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_012": {
+      "frame": {
+        "x": 1600,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_013": {
+      "frame": {
+        "x": 1920,
+        "y": 204,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_014": {
+      "frame": {
+        "x": 0,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_015": {
+      "frame": {
+        "x": 320,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_016": {
+      "frame": {
+        "x": 640,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_017": {
+      "frame": {
+        "x": 960,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_018": {
+      "frame": {
+        "x": 1280,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_019": {
+      "frame": {
+        "x": 1600,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_020": {
+      "frame": {
+        "x": 1920,
+        "y": 408,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_021": {
+      "frame": {
+        "x": 0,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_022": {
+      "frame": {
+        "x": 320,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_023": {
+      "frame": {
+        "x": 640,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_024": {
+      "frame": {
+        "x": 960,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_025": {
+      "frame": {
+        "x": 1280,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_026": {
+      "frame": {
+        "x": 1600,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_027": {
+      "frame": {
+        "x": 1920,
+        "y": 612,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_028": {
+      "frame": {
+        "x": 0,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_029": {
+      "frame": {
+        "x": 320,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_030": {
+      "frame": {
+        "x": 640,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_031": {
+      "frame": {
+        "x": 960,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_032": {
+      "frame": {
+        "x": 1280,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_033": {
+      "frame": {
+        "x": 1600,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_034": {
+      "frame": {
+        "x": 1920,
+        "y": 816,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_035": {
+      "frame": {
+        "x": 0,
+        "y": 1020,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 81
+    },
+    "Polymorph_1_Idle_Stand": {
+      "frame": {
+        "x": 320,
+        "y": 1020,
+        "w": 320,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 320,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 320,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.417,
+        "y": 0.9908
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Polymorph_1_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2240,
+      "h": 1224
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.417,
+      "y": 0.9908
+    },
+    "rest_height": 200
+  }
+}

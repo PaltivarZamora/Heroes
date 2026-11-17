@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Paladin_2_Move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_001": {
+      "frame": {
+        "x": 151,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_002": {
+      "frame": {
+        "x": 302,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_003": {
+      "frame": {
+        "x": 453,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_004": {
+      "frame": {
+        "x": 604,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_005": {
+      "frame": {
+        "x": 755,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_006": {
+      "frame": {
+        "x": 906,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_007": {
+      "frame": {
+        "x": 0,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_008": {
+      "frame": {
+        "x": 151,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_009": {
+      "frame": {
+        "x": 302,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_010": {
+      "frame": {
+        "x": 453,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_011": {
+      "frame": {
+        "x": 604,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_012": {
+      "frame": {
+        "x": 755,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_013": {
+      "frame": {
+        "x": 906,
+        "y": 210,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_014": {
+      "frame": {
+        "x": 0,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_015": {
+      "frame": {
+        "x": 151,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_016": {
+      "frame": {
+        "x": 302,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_017": {
+      "frame": {
+        "x": 453,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_018": {
+      "frame": {
+        "x": 604,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_019": {
+      "frame": {
+        "x": 755,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_020": {
+      "frame": {
+        "x": 906,
+        "y": 420,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_021": {
+      "frame": {
+        "x": 0,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_022": {
+      "frame": {
+        "x": 151,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_023": {
+      "frame": {
+        "x": 302,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_024": {
+      "frame": {
+        "x": 453,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_025": {
+      "frame": {
+        "x": 604,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_026": {
+      "frame": {
+        "x": 755,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_027": {
+      "frame": {
+        "x": 906,
+        "y": 630,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_028": {
+      "frame": {
+        "x": 0,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_029": {
+      "frame": {
+        "x": 151,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_030": {
+      "frame": {
+        "x": 302,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_031": {
+      "frame": {
+        "x": 453,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_032": {
+      "frame": {
+        "x": 604,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_033": {
+      "frame": {
+        "x": 755,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_034": {
+      "frame": {
+        "x": 906,
+        "y": 840,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_035": {
+      "frame": {
+        "x": 0,
+        "y": 1050,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 80
+    },
+    "Paladin_2_Move_Stand": {
+      "frame": {
+        "x": 151,
+        "y": 1050,
+        "w": 151,
+        "h": 210
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 151,
+        "h": 210
+      },
+      "sourceSize": {
+        "w": 151,
+        "h": 210
+      },
+      "anchor": {
+        "x": 0.4262,
+        "y": 0.9721
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Paladin_2_Move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1057,
+      "h": 1260
+    },
+    "scale": "1",
+    "anim": "Move",
+    "loop": true,
+    "foot": {
+      "x": 0.4262,
+      "y": 0.9721
+    },
+    "rest_height": 200
+  }
+}

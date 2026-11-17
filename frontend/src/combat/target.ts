@@ -16,6 +16,7 @@ import {
   attackTargetPolicyOk,
   closestTargetFootprintHex,
   isValidAttackTarget,
+  pickAutoAttackTarget,
   targetInNormalAttackReach,
   type AttackIconKind,
   type AttackCommitAim,
@@ -454,9 +455,7 @@ export function canStrikeThisTurn(
   }
   const spec = unitAttackShape(unit)
   if (unitAutoTarget(unit)) {
-    return battle.stacks.some((row) =>
-      isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
-    )
+    return canAutoActThisTurn(attacker, battle, catalog, tiles, heroes)
   }
   if (shapePulsesOnMove(spec.shape) && !spec.pullTarget) {
     return false
@@ -1548,4 +1547,249 @@ export function confusedAttackIntent(
     arrowDeg: wedgeZone != null ? wedgeZone * 60 : undefined,
     allowFriendly: true,
   }
+}
+
+export type AutoActTurnPlan =
+  | { kind: 'attack'; target: CombatStack }
+  | { kind: 'intent'; intent: CombatHover; logPrefix: string[] }
+  | { kind: 'skip' }
+
+function autoActPolicyTargets(
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+): CombatStack[] {
+  return battle.stacks.filter((row) => {
+    if (row.qty <= 0) {
+      return false
+    }
+    return attackTargetPolicyOk(attacker, row, catalog, false)
+  })
+}
+
+function autoActRandomPick<T>(items: T[], random: () => number): T | null {
+  if (items.length === 0) {
+    return null
+  }
+  const i = Math.min(items.length - 1, Math.floor(random() * items.length))
+  return items[i] ?? null
+}
+
+function autoActMoveAttackIntent(
+  attacker: CombatStack,
+  target: CombatStack,
+  steps: Axial[],
+  catalog: ReferenceCatalog,
+): CombatHover {
+  const stand = actingStand({ q: attacker.q, r: attacker.r }, steps)
+  const aimHex = closestTargetFootprintHex(stand, attacker, target, catalog)
+  const unit = unitById(catalog, attacker.unitId)
+  return {
+    icon: attackIconFor(unit),
+    q: aimHex.q,
+    r: aimHex.r,
+    steps,
+    attackTargetId: target.id,
+    fire: true,
+    afterMove: null,
+    impactKeys: [],
+    aimHex,
+  }
+}
+
+function autoActMoveOnlyIntent(attacker: CombatStack, steps: Axial[]): CombatHover {
+  const dest = actingStand({ q: attacker.q, r: attacker.r }, steps)
+  return {
+    icon: 'move',
+    q: dest.q,
+    r: dest.r,
+    steps,
+    attackTargetId: null,
+    fire: false,
+    afterMove: null,
+    impactKeys: [],
+  }
+}
+
+function bestApproachTowardEnemyFootprint(
+  attacker: CombatStack,
+  target: CombatStack,
+  reachable: Map<string, Axial[]>,
+  catalog: ReferenceCatalog,
+): { hex: Axial; steps: Axial[] } | null {
+  let best: { hex: Axial; steps: Axial[] } | null = null
+  let bestDist = Infinity
+  let bestLen = Infinity
+  for (const [key, steps] of reachable) {
+    if (steps.length === 0) {
+      continue
+    }
+    const [qs, rs] = key.split(',')
+    const hex = { q: Number(qs), r: Number(rs) }
+    const dist = minFootprintHexDistance(hex, attacker, target, catalog)
+    if (dist < bestDist || (dist === bestDist && steps.length < bestLen)) {
+      best = { hex, steps }
+      bestDist = dist
+      bestLen = steps.length
+    }
+  }
+  return best
+}
+
+function autoActReachable(
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes?: CombatHeroes,
+): Map<string, Axial[]> {
+  const unit = unitById(catalog, attacker.unitId)
+  const kind = moveKindForUnit(unit, catalog)
+  const costAdjust = deathKnightShadowMoveAdjust(
+    battle,
+    catalog,
+    heroes,
+    attacker.side,
+    kind,
+  )
+  return combatMovementReachable(
+    attacker,
+    battle,
+    tiles,
+    catalog,
+    costAdjust,
+  )
+}
+
+function planRandomEnemyAutoTurn(
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes: CombatHeroes | undefined,
+  random: () => number,
+): AutoActTurnPlan {
+  const unit = unitById(catalog, attacker.unitId)
+  const name = unit?.name ?? 'Unit'
+  const pool = autoActPolicyTargets(attacker, battle, catalog)
+  if (pool.length === 0) {
+    return { kind: 'skip' }
+  }
+
+  const inRange = pool.filter((row) =>
+    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
+  )
+  const now = autoActRandomPick(inRange, random)
+  if (now) {
+    return { kind: 'attack', target: now }
+  }
+
+  if (unitIsStationary(unit) || (stackMoveSpeed(attacker, catalog) ?? 0) <= 0) {
+    return { kind: 'skip' }
+  }
+
+  const reachable = autoActReachable(attacker, battle, catalog, tiles, heroes)
+  const canHitAfterMove = pool.filter((target) =>
+    bestAttackStand(
+      attacker,
+      target,
+      reachable,
+      catalog,
+      tiles,
+      battle.stacks,
+    ),
+  )
+  const moveAttackTarget = autoActRandomPick(canHitAfterMove, random)
+  if (moveAttackTarget) {
+    const stand = bestAttackStand(
+      attacker,
+      moveAttackTarget,
+      reachable,
+      catalog,
+      tiles,
+      battle.stacks,
+    )
+    if (stand) {
+      const steps = reachable.get(hexKey(stand.q, stand.r)) ?? []
+      const targetName =
+        unitById(catalog, moveAttackTarget.unitId)?.name ?? 'enemy'
+      return {
+        kind: 'intent',
+        intent: autoActMoveAttackIntent(
+          attacker,
+          moveAttackTarget,
+          steps,
+          catalog,
+        ),
+        logPrefix: [`${name} moves to attack ${targetName}`],
+      }
+    }
+  }
+
+  const toward = autoActRandomPick(pool, random)
+  if (!toward) {
+    return { kind: 'skip' }
+  }
+  const approach = bestApproachTowardEnemyFootprint(
+    attacker,
+    toward,
+    reachable,
+    catalog,
+  )
+  if (!approach) {
+    return { kind: 'skip' }
+  }
+  const targetName = unitById(catalog, toward.unitId)?.name ?? 'enemy'
+  return {
+    kind: 'intent',
+    intent: autoActMoveOnlyIntent(attacker, approach.steps),
+    logPrefix: [`${name} moves toward ${targetName}`],
+  }
+}
+
+export function planAutoTargetTurn(
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes?: CombatHeroes,
+  random: () => number = Math.random,
+): AutoActTurnPlan {
+  const mode = unitAutoTarget(unitById(catalog, attacker.unitId))
+  if (!mode) {
+    return { kind: 'skip' }
+  }
+  if (mode === 'random_enemy' || mode === 'random_enemy_los') {
+    return planRandomEnemyAutoTurn(
+      attacker,
+      battle,
+      catalog,
+      tiles,
+      heroes,
+      random,
+    )
+  }
+  const target = pickAutoAttackTarget(
+    attacker,
+    battle,
+    catalog,
+    tiles,
+    random,
+  )
+  if (!target) {
+    return { kind: 'skip' }
+  }
+  return { kind: 'attack', target }
+}
+
+export function canAutoActThisTurn(
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes?: CombatHeroes,
+): boolean {
+  return (
+    planAutoTargetTurn(attacker, battle, catalog, tiles, heroes).kind !== 'skip'
+  )
 }

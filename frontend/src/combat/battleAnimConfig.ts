@@ -5,21 +5,67 @@ import { getBattleHitReactionLoadStatus } from '../town/catalog'
 import {
   nonNegativeAnimConfig,
   positiveAnimConfig,
+  animConfigRaw,
 } from '../config/animConfig'
+import { isFootprintCode, type FootprintCode } from './footprint'
 import { appendLogEntry, logViewPlayerId } from '../session/gameLog'
 import { appendBattleAnimCombatLog } from './battleAnimLogBridge'
+import type { UnitRow } from '../town/catalog'
+
+const BATTLE_IDLE_FPS_KEY = 'battle_idle_fps'
+const BATTLE_MOVE_FPS_KEY = 'battle_move_fps'
+const DEFAULT_BATTLE_IDLE_FPS = 18
+const DEFAULT_BATTLE_MOVE_FPS = 18
 
 export type BattleAnimSettings = {
   spriteScalePct: number
   /** Null → no max-width cap (warn once if anim_config missing). */
   spriteMaxWidthPct: number | null
   footOffsetPct: number
-  animFps: number
+  idleFps: number
+  moveFps: number
   moveSecPerHex: number
   attackSec: number
   hitSec: number
   dieSec: number
   projectileHexPerSec: number
+}
+
+/** battle_idle_fps: Idle only; battle_move_fps: Move, Attack, Hit, Die, and effects. */
+export function battleUnitSheetFps(
+  settings: BattleAnimSettings,
+  kind: import('./battleUnitSheet').BattleUnitAnimKind | 'idle',
+): number {
+  if (kind === 'Idle' || kind === 'idle') {
+    return settings.idleFps
+  }
+  return settings.moveFps
+}
+
+function configuredBattleIdleFps(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  const v = positiveAnimConfig(catalog, BATTLE_IDLE_FPS_KEY)
+  if (v == null && !warnedKeys.has(BATTLE_IDLE_FPS_KEY)) {
+    warnedKeys.add(BATTLE_IDLE_FPS_KEY)
+    appendBattleAnimCombatLog(
+      `[Dev] [anim_config] ${BATTLE_IDLE_FPS_KEY} missing or invalid — using ${DEFAULT_BATTLE_IDLE_FPS}.`,
+    )
+  }
+  return v ?? DEFAULT_BATTLE_IDLE_FPS
+}
+
+function configuredBattleMoveFps(
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  const v = positiveAnimConfig(catalog, BATTLE_MOVE_FPS_KEY)
+  if (v == null && !warnedKeys.has(BATTLE_MOVE_FPS_KEY)) {
+    warnedKeys.add(BATTLE_MOVE_FPS_KEY)
+    appendBattleAnimCombatLog(
+      `[Dev] [anim_config] ${BATTLE_MOVE_FPS_KEY} missing or invalid — using ${DEFAULT_BATTLE_MOVE_FPS}.`,
+    )
+  }
+  return v ?? DEFAULT_BATTLE_MOVE_FPS
 }
 
 export type BattleIdleSettings = {
@@ -80,7 +126,8 @@ export function battleAnimSettings(
     ),
     moveSecPerHex:
       positiveAnimConfig(catalog, 'battle_move_sec_per_hex') ?? 0.2,
-    animFps: positiveAnimConfig(catalog, 'battle_anim_fps') ?? 18,
+    idleFps: configuredBattleIdleFps(catalog),
+    moveFps: configuredBattleMoveFps(catalog),
     attackSec: positiveAnimConfig(catalog, 'battle_attack_sec') ?? 1,
     hitSec: positiveAnimConfig(catalog, 'battle_hit_sec') ?? 0.5,
     dieSec: positiveAnimConfig(catalog, 'battle_die_sec') ?? 1.5,
@@ -89,6 +136,77 @@ export function battleAnimSettings(
     projectileHexPerSec:
       positiveAnimConfig(catalog, 'battle_projectile_hex_per_sec') ?? 12,
   }
+}
+
+/** Battlefield move slide timing for one stack (unit override or global anim_config). */
+export function battleMoveSecPerHexForUnit(
+  unit: UnitRow | null | undefined,
+  catalog: ReferenceCatalog | null | undefined,
+): number {
+  const per = unit?.move_sec_per_hex
+  if (per != null && per > 0) {
+    return per
+  }
+  return battleAnimSettings(catalog).moveSecPerHex
+}
+
+const BATTLE_HERO_FOOTPRINT_KEY = 'battle_hero_footprint'
+const HERO_MOUNT_FOOTPRINT_DEFAULT: FootprintCode = '2x1'
+
+/** Visual footprint for hero mount art (anchor column hex; extra hexes outward / up only). */
+export function battleHeroMountFootprint(
+  catalog: ReferenceCatalog | null | undefined,
+): FootprintCode {
+  const raw = animConfigRaw(catalog, BATTLE_HERO_FOOTPRINT_KEY)
+  if (raw == null || !raw.trim()) {
+    if (!warnedKeys.has(BATTLE_HERO_FOOTPRINT_KEY)) {
+      warnedKeys.add(BATTLE_HERO_FOOTPRINT_KEY)
+      appendBattleAnimCombatLog(
+        `[anim_config] ${BATTLE_HERO_FOOTPRINT_KEY} missing or invalid — using ${HERO_MOUNT_FOOTPRINT_DEFAULT}.`,
+      )
+    }
+    return HERO_MOUNT_FOOTPRINT_DEFAULT
+  }
+  const code = raw.trim().toLowerCase()
+  if (isFootprintCode(code)) {
+    return code
+  }
+  if (!warnedKeys.has(BATTLE_HERO_FOOTPRINT_KEY)) {
+    warnedKeys.add(BATTLE_HERO_FOOTPRINT_KEY)
+    appendBattleAnimCombatLog(
+      `[anim_config] ${BATTLE_HERO_FOOTPRINT_KEY} invalid (${raw.trim()}) — using ${HERO_MOUNT_FOOTPRINT_DEFAULT}.`,
+    )
+  }
+  return HERO_MOUNT_FOOTPRINT_DEFAULT
+}
+
+const POLYMORPH_STEM_KEY = 'polymorph_stem'
+const POLYMORPH_TOWN_ID_KEY = 'polymorph_town_id'
+
+export type PolymorphBattleArtConfig = {
+  stem: string
+  townFolder: string
+}
+
+/** Polymorph battlefield + stack still (`{stem}_Stand.png` under the town units folder). */
+export function polymorphBattleArtConfig(
+  catalog: ReferenceCatalog | null | undefined,
+): PolymorphBattleArtConfig | null {
+  const stem = animConfigRaw(catalog, POLYMORPH_STEM_KEY)?.trim()
+  const townId = positiveAnimConfig(catalog, POLYMORPH_TOWN_ID_KEY)
+  if (!stem || townId == null) {
+    return null
+  }
+  const town = catalog?.town.find((row) => row.id === townId)
+  const townFolder = town?.name?.trim()
+  if (!townFolder) {
+    return null
+  }
+  return { stem, townFolder }
+}
+
+export function polymorphStandFilename(stem: string): string {
+  return `${stem}_Stand.png`
 }
 
 const BATTLE_IDLE_CONFIG_KEY = 'battle_idle_config'
@@ -187,9 +305,14 @@ export function ensureBattleAnimConfigWarnings(
       label: 'battle_foot_offset_pct',
     },
     {
-      key: 'battle_anim_fps',
-      ok: positiveAnimConfig(catalog, 'battle_anim_fps') != null,
-      label: 'battle_anim_fps',
+      key: BATTLE_IDLE_FPS_KEY,
+      ok: positiveAnimConfig(catalog, BATTLE_IDLE_FPS_KEY) != null,
+      label: BATTLE_IDLE_FPS_KEY,
+    },
+    {
+      key: BATTLE_MOVE_FPS_KEY,
+      ok: positiveAnimConfig(catalog, BATTLE_MOVE_FPS_KEY) != null,
+      label: BATTLE_MOVE_FPS_KEY,
     },
     {
       key: 'battle_move_sec_per_hex',

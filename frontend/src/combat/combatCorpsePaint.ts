@@ -1,5 +1,8 @@
 import type { BattleAnimSettings } from './battleAnimConfig'
-import { combatBattleUnitSpriteScale } from './combatStackArtBox'
+import {
+  combatBattleUnitScaleForSheetSet,
+  combatBattleUnitSpriteScale,
+} from './combatStackArtBox'
 import type { CombatSide, CombatTombstone } from './battle'
 import type { FootprintCode } from './footprint'
 import {
@@ -54,11 +57,29 @@ export function tombCorpseDrawFoot(
   )
 }
 
+/** Same unit scale as live battle sprites (Stand-based). */
+export function corpseBattleSpriteScale(
+  hexPx: number,
+  footprint: FootprintCode,
+  side: CombatSide,
+  set: BattleUnitSheetSet,
+  settings: BattleAnimSettings,
+): number {
+  return combatBattleUnitScaleForSheetSet(
+    hexPx,
+    footprint,
+    side,
+    set,
+    settings,
+  )
+}
+
+/** Units without anim sheets: height from corpse art, width cap from loaded image. */
 export function corpseStaticImageScale(
   hexPx: number,
   footprint: FootprintCode,
   side: CombatSide,
-  frameWidth: number,
+  standFrameWidth: number,
   settings: BattleAnimSettings,
 ): number {
   return combatBattleUnitSpriteScale(
@@ -66,25 +87,7 @@ export function corpseStaticImageScale(
     footprint,
     side,
     CORPSE_BODY_REST_HEIGHT_PX,
-    frameWidth,
-    settings,
-  )
-}
-
-export function corpseDieFrameScale(
-  hexPx: number,
-  footprint: FootprintCode,
-  side: CombatSide,
-  dieRestHeight: number,
-  frameWidth: number,
-  settings: BattleAnimSettings,
-): number {
-  return combatBattleUnitSpriteScale(
-    hexPx,
-    footprint,
-    side,
-    dieRestHeight,
-    frameWidth,
+    standFrameWidth,
     settings,
   )
 }

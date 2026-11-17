@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -25,6 +26,8 @@ import {
   armySlotRow,
   combatGridRow,
   combatEncounterSeed,
+  combatTileAt,
+  combatTileIsDisplayFrame,
   combatTilesFromHexField,
   createCombatHexGrid,
   generateCombatHexTerrainField,
@@ -67,7 +70,9 @@ import { setNavalMaskDebugState } from './navalMaskDebugBridge'
 import { formatMp } from '../hex/hero'
 import {
   battleAnimSettings,
+  battleHeroMountFootprint,
   battleIdleSettings,
+  battleMoveSecPerHexForUnit,
   ensureBattleAnimConfigWarnings,
   ensureBattleIdleConfigWarnings,
   ensureBattleHitConfigWarnings,
@@ -185,8 +190,19 @@ import {
 } from './battle'
 import { stackArtBox } from './combatStackArtBox'
 import {
-  footprintBottomRow,
-} from './footprint'
+  heroBattleMountArtBox,
+  heroBattlePortraitArtBox,
+} from './combatHeroMountArt'
+import {
+  preloadHeroMountBattleArt,
+  resetHeroMountBattleSheetCache,
+  type HeroMountBattleArt,
+} from './heroMountBattleSheet'
+import {
+  defaultBattleFootOffsetPct,
+  resetBattleStackPaintOrderCache,
+  resolveLivingStacksPaintOrder,
+} from './battleStackPaintOrder'
 import {
   canCombatStep,
   combatMovementReachable,
@@ -205,7 +221,6 @@ import {
 import {
   expandAnchorKeysForFootprint,
   expandHitFlashHexKeys,
-  footprintAlong,
   stackFootprint,
 } from './occupancy'
 import { deathKnightShadowMoveAdjust } from './shadow'
@@ -226,7 +241,6 @@ import {
   describeAttackResolveFailure,
   type AttackAnimPhase,
   attackAimForTargetAtStand,
-  pickAutoAttackTarget,
   autoActSkipLogLine,
   heroForSide,
   type HitFlashColor,
@@ -247,9 +261,21 @@ import {
   pickFleeSteps,
   pickRetreatSteps,
   polymorphConditionName,
-  POLYMORPH_ART_FILENAME,
   stunConditionId,
 } from './condition'
+import {
+  battleAnimSheetForStack,
+  loadPolymorphBattleArt,
+  polymorphStandImagePath,
+  resetPolymorphBattleArtWarnings,
+  stackUsesPolymorphStaticStill,
+} from './polymorphBattleArt'
+import {
+  devLogPolymorphPaintOnce,
+  resetPolymorphDevDiagnostics,
+  stackHasPolymorphCondition,
+} from './polymorphDevLog'
+import { resolvePolymorphPaintPath } from './combatStackPolymorphPaint'
 import {
   resolveAbility,
   abilityAimImpactKeys,
@@ -269,6 +295,7 @@ import {
   canStrikeThisTurn,
   combatHover,
   confusedAttackIntent,
+  planAutoTargetTurn,
   pointerHexZone,
   type CombatHover,
   type HexZone,
@@ -289,10 +316,12 @@ import {
   canAffordAbility,
   deductAbilityCost,
   markHeroActed,
+  heroStackAtHex,
   ownHeroAtHex,
   recordAbilityCast,
   type HeroCast,
 } from './heroCast'
+import { ensureBattleUnitArtLoaded } from './ensureBattleUnitArt'
 import { abilityMeetsCastGate, applyShamanBattleStartTotems } from './summon'
 import {
   commitCombatEscape,
@@ -608,6 +637,7 @@ function CombatStackArt({
         townName={view.townName}
         catalog={catalog}
         unitId={view.unitId}
+        preferFilename={view.preferFilename}
       />
     </div>
   )
@@ -685,44 +715,6 @@ function anchorAt(anchors: HexAnchor[], q: number, r: number): HexAnchor | null 
   return anchors.find((row) => row.q === q && row.r === r) ?? null
 }
 
-/** Bottom of the screen first; sort by footprint foot row so lower stacks paint in front. */
-function stacksBottomUp(
-  stacks: CombatStack[],
-  anchors: HexAnchor[],
-  catalog: ReturnType<typeof getCachedCatalog> | null,
-): CombatStack[] {
-  const footScreenY = (stack: CombatStack): number => {
-    const anchor = anchorAt(anchors, stack.q, stack.r)
-    if (!catalog || isHeroStack(stack)) {
-      return anchor?.y ?? 0
-    }
-    const code = combatStackFootprint(stack, catalog)
-    const bottom = footprintBottomRow(
-      { q: stack.q, r: stack.r },
-      code,
-      footprintAlong(stack.side),
-    )
-    let maxY = anchor?.y ?? 0
-    for (const hex of bottom) {
-      const pos = anchorAt(anchors, hex.q, hex.r)
-      if (pos && pos.y > maxY) {
-        maxY = pos.y
-      }
-    }
-    return maxY
-  }
-  return [...stacks].sort((a, b) => {
-    const ya = footScreenY(a)
-    const yb = footScreenY(b)
-    if (yb !== ya) {
-      return yb - ya
-    }
-    const xa = anchorAt(anchors, a.q, a.r)?.x ?? 0
-    const xb = anchorAt(anchors, b.q, b.r)?.x ?? 0
-    return xa - xb
-  })
-}
-
 function stackViewFromCombat(
   stack: CombatStack,
   catalog: ReturnType<typeof getCachedCatalog>,
@@ -736,9 +728,16 @@ function stackViewFromCombat(
         ? siegeEngineArt(townName)
         : null
   let filename = siegeArt || unit?.image_path?.trim() || null
+  let preferFilename = false
+  let stackTownName = townNameForUnit(catalog, unit)
   if (!siegeArt && catalog) {
     if (isPolymorphed(stack, catalog)) {
-      filename = POLYMORPH_ART_FILENAME
+      const still = polymorphStandImagePath(catalog)
+      if (still) {
+        filename = still.filename
+        stackTownName = still.townFolder
+        preferFilename = true
+      }
     } else if (stack.silenced) {
       const alt = unit?.image_path_alt?.trim()
       if (alt) {
@@ -750,8 +749,9 @@ function stackViewFromCombat(
     empty: false,
     filename,
     qty: stack.qty,
-    townName: townNameForUnit(catalog, unit),
+    townName: stackTownName,
     unitId: stack.unitId,
+    preferFilename: preferFilename || undefined,
   }
 }
 
@@ -897,6 +897,11 @@ export function CombatScreen({
   const [unitBattleSheets, setUnitBattleSheets] = useState<
     Map<number, BattleUnitSheetSet | null>
   >(new Map())
+  const [polymorphBattleSheet, setPolymorphBattleSheet] =
+    useState<BattleUnitSheetSet | null>(null)
+  const [heroMountBattleArt, setHeroMountBattleArt] = useState<
+    Map<string, HeroMountBattleArt | null>
+  >(new Map())
   const [dieFallbackEffects, setDieFallbackEffects] = useState<
     Map<string, DieFallbackEffectSheet | null>
   >(new Map())
@@ -920,6 +925,9 @@ export function CombatScreen({
   const wipeAnimGenRef = useRef(0)
   const unitBattleSheetsRef = useRef(unitBattleSheets)
   unitBattleSheetsRef.current = unitBattleSheets
+  const polymorphBattleSheetRef = useRef(polymorphBattleSheet)
+  polymorphBattleSheetRef.current = polymorphBattleSheet
+  const battleUnitArtInflightRef = useRef<Set<number>>(new Set())
   const dieFallbackEffectsRef = useRef(dieFallbackEffects)
   dieFallbackEffectsRef.current = dieFallbackEffects
   const [battleSheetPreloadKey, setBattleSheetPreloadKey] = useState(0)
@@ -1062,6 +1070,8 @@ export function CombatScreen({
         }
       }
       const moveSettings = battleAnimSettings(catalog)
+      const pathMoveUnit = unitById(catalog, stack.unitId)
+      const pathMoveSecPerHex = battleMoveSecPerHexForUnit(pathMoveUnit, catalog)
       const pathStartStack = latest.stacks.find((row) => row.id === stack.id)
       const pathStartQ = pathStartStack?.q ?? stack.q
       const pathStartR = pathStartStack?.r ?? stack.r
@@ -1077,12 +1087,18 @@ export function CombatScreen({
       )
       const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
       const pathUseMoveSheet =
-        stackUsesBattleAnim(stack, catalog, unitBattleSheetsRef.current) &&
+        stackUsesBattleAnim(
+          stack,
+          catalog,
+          unitBattleSheetsRef.current,
+          polymorphBattleSheetRef.current,
+        ) &&
         Boolean(pathAnimSet?.sheets.Move)
       const pathStartedMs = await beginBattleMovePathVisual({
         stackId: stack.id,
         pathFeet,
         settings: moveSettings,
+        moveSecPerHex: pathMoveSecPerHex,
         moveStem: pathUseMoveSheet ? pathAnimSet!.stem : null,
         movePartnerStem: pathAnimSet?.partnerSoundStem ?? null,
         useMoveSheet: pathUseMoveSheet,
@@ -1105,7 +1121,7 @@ export function CombatScreen({
         waypointIndex += 1
         await awaitBattleMovePathWaypoint(
           pathStartedMs,
-          moveSettings.moveSecPerHex,
+          pathMoveSecPerHex,
           waypointIndex,
           () => walkGenRef.current !== gen,
         )
@@ -1387,22 +1403,23 @@ export function CombatScreen({
     if (acting && actingOwner?.is_ai) {
       return
     }
+    const heroOnHex = acting
+      ? heroStackAtHex(battle, catalog, q, r, acting.side)
+      : null
+    if (heroOnHex && acting) {
+      setHoverTarget(null)
+      reachApiRef.current?.draw([])
+      setWaypointPlan(null)
+      setHeroCast({ stackId: heroOnHex.id, abilityId: null })
+      return
+    }
+    if (combatTileIsDisplayFrame(combatTileAt(field.tiles, q, r))) {
+      return
+    }
     const occupant =
       stackOccupyingHex(battle.stacks, q, r, catalog) ??
       battle.stacks.find((row) => row.q === q && row.r === r) ??
       null
-    if (
-      occupant &&
-      isHeroStack(occupant) &&
-      acting &&
-      occupant.side === acting.side
-    ) {
-      setHoverTarget(null)
-      reachApiRef.current?.draw([])
-      setWaypointPlan(null)
-      setHeroCast({ stackId: occupant.id, abilityId: null })
-      return
-    }
     const stack = acting
     if (
       stack &&
@@ -2522,6 +2539,7 @@ export function CombatScreen({
       actor,
       cat,
       unitBattleSheetsRef.current,
+      polymorphBattleSheetRef.current,
     )
     if (!attackerAnim && !needsTargetReactions) {
       syncPresentAttackStrike(resolved)
@@ -2642,12 +2660,17 @@ export function CombatScreen({
     }
     setBattleFieldPaintReady(false)
     resetBattleUnitSheetSessionWarnings()
+    resetHeroMountBattleSheetCache()
     resetBattleUnitSoundWarnings()
     resetDieFallbackSessionWarnings()
     resetAdvancedBorrowSessionLog()
     resetUnitCorpsePictureSessionCache()
     resetCombatBattlefieldPropPaintLog()
+    resetPolymorphBattleArtWarnings()
+    resetPolymorphDevDiagnostics()
+    setPolymorphBattleSheet(null)
     setDieFallbackEffects(new Map())
+    setHeroMountBattleArt(new Map())
     let cancelled = false
     const unitIds = [
       ...new Set(
@@ -2657,17 +2680,24 @@ export function CombatScreen({
       ),
     ]
     const battleStacks = battle.stacks
-    const applyLoaded = (loaded: Map<number, BattleUnitSheetSet | null>) => {
+    const applyLoaded = (
+      loaded: Map<number, BattleUnitSheetSet | null>,
+      polymorphSheet: BattleUnitSheetSet | null,
+    ) => {
       setUnitBattleSheets(loaded)
+      setPolymorphBattleSheet(polymorphSheet)
       setStackBattleVisuals((prev) =>
         mergeIdleSeedVisuals(
           prev,
           idleVisualsForLivingStacks(
             battleStacks,
             loaded,
-            (stack) => stackUsesBattleAnim(stack, catalog, loaded),
+            (stack) =>
+              stackUsesBattleAnim(stack, catalog, loaded, polymorphSheet),
             catalog,
             battleIdleSettings(catalog),
+            (stack) =>
+              battleAnimSheetForStack(stack, catalog, loaded, polymorphSheet),
           ),
         ),
       )
@@ -2690,16 +2720,24 @@ export function CombatScreen({
         next = ensureAdvFallbackGlowWarning(next, catalog)
         return next
       })
-      const [opening, fxLoaded, projectileArt] = await Promise.all([
-        preloadBattleUnitSheetsForBattleOpening(
-          catalog,
-          unitIds,
-          (id) => unitById(catalog, id),
-          BATTLE_OPENING_SHEET_PRELOAD_MS,
-        ),
-        preloadDieFallbackEffects(catalog),
-        preloadProjectileArtForUnits(catalog, unitIds),
-      ])
+      const [opening, fxLoaded, projectileArt, heroMounts, polymorphSheet] =
+        await Promise.all([
+          preloadBattleUnitSheetsForBattleOpening(
+            catalog,
+            unitIds,
+            (id) => unitById(catalog, id),
+            BATTLE_OPENING_SHEET_PRELOAD_MS,
+          ),
+          preloadDieFallbackEffects(catalog),
+          preloadProjectileArtForUnits(catalog, unitIds),
+          preloadHeroMountBattleArt(
+            battleStacks,
+            getSession(),
+            catalog,
+            combatHeroesRef.current,
+          ),
+          loadPolymorphBattleArt(catalog),
+        ])
       const { sheets, finishRemaining } = opening
       if (cancelled) {
         return
@@ -2725,13 +2763,14 @@ export function CombatScreen({
           ),
         )
       }
-      applyLoaded(sheets)
+      applyLoaded(sheets, polymorphSheet)
+      setHeroMountBattleArt(heroMounts)
       setBattleFieldPaintReady(true)
       void finishRemaining().then((full) => {
         if (cancelled) {
           return
         }
-        applyLoaded(full)
+        applyLoaded(full, polymorphSheet)
       })
     })()
     return () => {
@@ -2739,8 +2778,208 @@ export function CombatScreen({
     }
   }, [catalog, battleSheetPreloadKey])
 
+  const polymorphStacksKey = useMemo(() => {
+    if (!battle) {
+      return ''
+    }
+    return battle.stacks
+      .map((row) => {
+        const active = Object.entries(row.conditions ?? {})
+          .filter(([, left]) => (left ?? 0) > 0)
+          .map(([id]) => id)
+          .sort()
+        return `${row.id}:${active.join(',')}`
+      })
+      .join('|')
+  }, [battle?.stacks])
+
+  /** Static stack squares: keyed on battle conditions (not paint-order cache). */
+  const combatUnitStackViews = useMemo(() => {
+    if (!battle || !catalog) {
+      return {} as Record<string, UnitStackView>
+    }
+    const out: Record<string, UnitStackView> = {}
+    for (const stack of battle.stacks) {
+      if (stack.qty > 0 && !isHeroStack(stack)) {
+        out[stack.id] = stackViewFromCombat(stack, catalog, siegeTownArtName)
+      }
+    }
+    return out
+  }, [battle, catalog, polymorphStacksKey, siegeTownArtName])
+
+  /** Dev + paint routing when conditions change (not each animation frame). */
+  useEffect(() => {
+    if (!battle || !catalog || battleSheetPreloadKey === 0) {
+      return
+    }
+    const paintNow = battlePaintNowRef.current
+    for (const stack of battle.stacks) {
+      if (stack.qty <= 0 || isHeroStack(stack)) {
+        continue
+      }
+      if (!stackHasPolymorphCondition(stack, catalog)) {
+        continue
+      }
+      const view = combatUnitStackViews[stack.id]
+      const paintPath = resolvePolymorphPaintPath(
+        stack,
+        catalog,
+        view,
+        unitBattleSheets,
+        polymorphBattleSheet,
+        stackBattleVisuals[stack.id],
+        paintNow,
+        battleSheetPreloadKey > 0,
+      )
+      devLogPolymorphPaintOnce(
+        stack,
+        catalog,
+        paintPath,
+        polymorphBattleSheet,
+      )
+    }
+  }, [
+    battle,
+    catalog,
+    polymorphStacksKey,
+    combatUnitStackViews,
+    battleSheetPreloadKey,
+    polymorphBattleSheet,
+    unitBattleSheets,
+    stackBattleVisuals,
+  ])
+
+  /** Load polymorph sheets when any stack gains Polymorph (incl. mid-battle). */
+  useEffect(() => {
+    if (!battle || !catalog || battleSheetPreloadKey === 0) {
+      return
+    }
+    if (!battle.stacks.some((row) => isPolymorphed(row, catalog))) {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      let sheet = polymorphBattleSheetRef.current
+      if (!sheet) {
+        await fetchCatalog().catch(() => {})
+        sheet = await loadPolymorphBattleArt(catalog)
+        if (cancelled) {
+          return
+        }
+        if (sheet) {
+          setPolymorphBattleSheet(sheet)
+          polymorphBattleSheetRef.current = sheet
+        }
+      }
+      if (!sheet) {
+        return
+      }
+      setStackBattleVisuals((prev) =>
+        mergeIdleSeedVisuals(
+          prev,
+          idleVisualsForLivingStacks(
+            battle.stacks,
+            unitBattleSheetsRef.current,
+            (stack) =>
+              stackUsesBattleAnim(
+                stack,
+                catalog,
+                unitBattleSheetsRef.current,
+                sheet,
+              ),
+            catalog,
+            battleIdleSettings(catalog),
+            (stack) =>
+              battleAnimSheetForStack(
+                stack,
+                catalog,
+                unitBattleSheetsRef.current,
+                sheet,
+              ),
+          ),
+        ),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [battle, catalog, battleSheetPreloadKey, polymorphStacksKey])
+
+  useEffect(() => {
+    if (!battle || !catalog || battleSheetPreloadKey === 0) {
+      return
+    }
+    const unitIds = [
+      ...new Set(
+        battle.stacks
+          .filter((row) => !isHeroStack(row) && row.qty > 0)
+          .map((row) => row.unitId),
+      ),
+    ]
+    const missing = unitIds.filter(
+      (id) =>
+        !unitBattleSheetsRef.current.has(id) &&
+        !battleUnitArtInflightRef.current.has(id),
+    )
+    if (missing.length === 0) {
+      return
+    }
+    for (const id of missing) {
+      battleUnitArtInflightRef.current.add(id)
+    }
+    let cancelled = false
+    void ensureBattleUnitArtLoaded(catalog, missing).then((loaded) => {
+      if (cancelled) {
+        return
+      }
+      for (const id of missing) {
+        battleUnitArtInflightRef.current.delete(id)
+      }
+      for (const [rowId, art] of loaded.projectilesByRowId) {
+        projectileArtByRowIdRef.current.set(rowId, art)
+      }
+      setUnitBattleSheets((prev) => {
+        const next = new Map(prev)
+        for (const [id, set] of loaded.sheets) {
+          next.set(id, set)
+        }
+        setStackBattleVisuals((prevVis) =>
+          mergeIdleSeedVisuals(
+            prevVis,
+            idleVisualsForLivingStacks(
+              battle.stacks,
+              next,
+              (stack) =>
+                stackUsesBattleAnim(
+                  stack,
+                  catalog,
+                  next,
+                  polymorphBattleSheetRef.current,
+                ),
+              catalog,
+              battleIdleSettings(catalog),
+              (stack) =>
+                battleAnimSheetForStack(
+                  stack,
+                  catalog,
+                  next,
+                  polymorphBattleSheetRef.current,
+                ),
+            ),
+          ),
+        )
+        return next
+      })
+      updateSession((current) => loaded.sessionPatches(current))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [battle, catalog, battleSheetPreloadKey])
+
   useEffect(() => {
     if (!battle || summary) {
+      resetBattleStackPaintOrderCache()
       return
     }
     let raf = 0
@@ -3155,6 +3394,7 @@ export function CombatScreen({
     setBattle(created)
     setStackBattleVisuals({})
     setUnitBattleSheets(new Map())
+    battleUnitArtInflightRef.current = new Set()
     setBattleSheetPreloadKey((key) => key + 1)
     knownTombsRef.current = new Set()
     strikeReactionTargetsRef.current.clear()
@@ -3681,6 +3921,11 @@ export function CombatScreen({
             }
           }
           const moveSettings = battleAnimSettings(catalog)
+          const pathMoveUnit = unitById(catalog, stack.unitId)
+          const pathMoveSecPerHex = battleMoveSecPerHexForUnit(
+            pathMoveUnit,
+            catalog,
+          )
           const pathStartStack = latest.stacks.find((row) => row.id === stack.id)
           const pathStartQ = pathStartStack?.q ?? stack.q
           const pathStartR = pathStartStack?.r ?? stack.r
@@ -3696,12 +3941,18 @@ export function CombatScreen({
           )
           const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
           const pathUseMoveSheet =
-            stackUsesBattleAnim(stack, catalog, unitBattleSheetsRef.current) &&
+            stackUsesBattleAnim(
+          stack,
+          catalog,
+          unitBattleSheetsRef.current,
+          polymorphBattleSheetRef.current,
+        ) &&
             Boolean(pathAnimSet?.sheets.Move)
           const pathStartedMs = await beginBattleMovePathVisual({
             stackId: stack.id,
             pathFeet,
             settings: moveSettings,
+            moveSecPerHex: pathMoveSecPerHex,
             moveStem: pathUseMoveSheet ? pathAnimSet!.stem : null,
             movePartnerStem: pathAnimSet?.partnerSoundStem ?? null,
             useMoveSheet: pathUseMoveSheet,
@@ -3724,7 +3975,7 @@ export function CombatScreen({
             waypointIndex += 1
             await awaitBattleMovePathWaypoint(
               pathStartedMs,
-              moveSettings.moveSecPerHex,
+              pathMoveSecPerHex,
               waypointIndex,
               () => walkGenRef.current !== gen,
             )
@@ -3980,6 +4231,11 @@ export function CombatScreen({
             }
           }
           const moveSettings = battleAnimSettings(catalog)
+          const pathMoveUnit = unitById(catalog, stack.unitId)
+          const pathMoveSecPerHex = battleMoveSecPerHexForUnit(
+            pathMoveUnit,
+            catalog,
+          )
           const pathStartStack = latest.stacks.find((row) => row.id === stack.id)
           const pathStartQ = pathStartStack?.q ?? stack.q
           const pathStartR = pathStartStack?.r ?? stack.r
@@ -3995,12 +4251,18 @@ export function CombatScreen({
           )
           const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
           const pathUseMoveSheet =
-            stackUsesBattleAnim(stack, catalog, unitBattleSheetsRef.current) &&
+            stackUsesBattleAnim(
+          stack,
+          catalog,
+          unitBattleSheetsRef.current,
+          polymorphBattleSheetRef.current,
+        ) &&
             Boolean(pathAnimSet?.sheets.Move)
           const pathStartedMs = await beginBattleMovePathVisual({
             stackId: stack.id,
             pathFeet,
             settings: moveSettings,
+            moveSecPerHex: pathMoveSecPerHex,
             moveStem: pathUseMoveSheet ? pathAnimSet!.stem : null,
             movePartnerStem: pathAnimSet?.partnerSoundStem ?? null,
             useMoveSheet: pathUseMoveSheet,
@@ -4023,7 +4285,7 @@ export function CombatScreen({
             waypointIndex += 1
             await awaitBattleMovePathWaypoint(
               pathStartedMs,
-              moveSettings.moveSecPerHex,
+              pathMoveSecPerHex,
               waypointIndex,
               () => walkGenRef.current !== gen,
             )
@@ -4169,13 +4431,14 @@ export function CombatScreen({
           )
           return
         }
-        const target = pickAutoAttackTarget(
+        const plan = planAutoTargetTurn(
           stack,
           battle,
           catalog,
           field.tiles,
+          combatHeroes,
         )
-        if (!target) {
+        if (plan.kind === 'skip') {
           presentTurnEndRef.current(
             battle,
             stack.id,
@@ -4185,6 +4448,27 @@ export function CombatScreen({
           )
           return
         }
+        if (plan.kind === 'intent') {
+          const started = performCombatIntentRef.current(
+            {
+              ...plan.intent,
+              logPrefix: plan.logPrefix,
+            },
+            stack,
+            battle,
+          )
+          if (!started) {
+            presentTurnEndRef.current(
+              battle,
+              stack.id,
+              [autoActSkipLogLine(stack, catalog)],
+              false,
+              true,
+            )
+          }
+          return
+        }
+        const target = plan.target
         const resolved = resolveAttack(
           battle,
           stack.id,
@@ -5150,14 +5434,18 @@ export function CombatScreen({
 
       const canvas = instance.canvas
       canvas.style.cursor = 'pointer'
-      const hexFromPointer = (event: PointerEvent) => {
+      const pointerGridPoint = (event: PointerEvent) => {
         const local = clientPointInElement(canvas, event.clientX, event.clientY)
-        return grid.pointToHex(
-          {
-            x: local.x - offsetX,
-            y: local.y - offsetY,
-          },
-          { allowOutside: false },
+        return {
+          x: local.x - offsetX,
+          y: local.y - offsetY,
+        }
+      }
+      const hexFromPointer = (event: PointerEvent) => {
+        const point = pointerGridPoint(event)
+        return (
+          grid.pointToHex(point, { allowOutside: false }) ??
+          grid.pointToHex(point, { allowOutside: true })
         )
       }
       const zoneAt = (event: PointerEvent, hex: Hex): HexZone => {
@@ -5190,6 +5478,16 @@ export function CombatScreen({
         currentCatalog: NonNullable<typeof catalogRef.current>,
         hex: { q: number; r: number },
       ) => {
+        const hero = heroStackAtHex(
+          currentBattle,
+          currentCatalog,
+          hex.q,
+          hex.r,
+        )
+        if (hero) {
+          onHoverInspectRef.current(hero.id)
+          return
+        }
         const occupant = stackOccupyingHex(
           currentBattle.stacks,
           hex.q,
@@ -5220,6 +5518,31 @@ export function CombatScreen({
         }
         const cast = heroCastRef.current
         if (cast && cast.abilityId == null) {
+          const stack = activeStack(currentBattle)
+          const heroStack =
+            stack != null
+              ? ownHeroAtHex(
+                  currentBattle,
+                  currentCatalog,
+                  hex.q,
+                  hex.r,
+                  stack.side,
+                )
+              : heroStackAtHex(currentBattle, currentCatalog, hex.q, hex.r)
+          if (heroStack) {
+            setInspectHoverAt(currentBattle, currentCatalog, hex)
+            onHoverRef.current({
+              icon: 'hero',
+              q: hex.q,
+              r: hex.r,
+              steps: [],
+              attackTargetId: null,
+              fire: false,
+              afterMove: null,
+              impactKeys: [],
+            })
+            return
+          }
           clearHover()
           return
         }
@@ -5301,6 +5624,20 @@ export function CombatScreen({
           isPolymorphed(stack, currentCatalog)
         ) {
           drawReach([])
+          const frameOnly = combatTileIsDisplayFrame(
+            combatTileAt(liveTiles(), hex.q, hex.r),
+          )
+          const heroInspect = heroStackAtHex(
+            currentBattle,
+            currentCatalog,
+            hex.q,
+            hex.r,
+          )
+          if (frameOnly && !heroInspect) {
+            onHoverRef.current(null)
+            onHoverInspectRef.current(null)
+            return
+          }
           setInspectHoverAt(currentBattle, currentCatalog, hex)
           const tomb = tombstoneAt(currentBattle, hex.q, hex.r, currentCatalog)
           const tombKey = tomb
@@ -5353,6 +5690,15 @@ export function CombatScreen({
             afterMove: null,
             impactKeys: [],
           })
+          return
+        }
+        if (
+          combatTileIsDisplayFrame(
+            combatTileAt(liveTiles(), hex.q, hex.r),
+          )
+        ) {
+          drawReach([])
+          onHoverRef.current(null)
           return
         }
         const intent = combatHover(
@@ -5804,6 +6150,18 @@ export function CombatScreen({
                           )
                         }),
                       )
+                  const footOffsetPct = defaultBattleFootOffsetPct(catalog)
+                  const stacksPaintOrder = catalog
+                    ? resolveLivingStacksPaintOrder(
+                        viewBattle.stacks,
+                        field.anchors,
+                        catalog,
+                        stackBattleVisuals,
+                        field.hexPx,
+                        footOffsetPct,
+                        paintNow,
+                      )
+                    : viewBattle.stacks.filter((row) => row.qty > 0)
                   return (
                     <>
                       {renderZones('below_units')}
@@ -5844,7 +6202,10 @@ export function CombatScreen({
                           paintNowMs={paintNow}
                         />
                       ) : null}
-                      {stacksBottomUp(viewBattle.stacks, field.anchors, catalog).map((stack) => {
+                      {stacksPaintOrder.map((paintStack) => {
+                  const stack =
+                    battle.stacks.find((row) => row.id === paintStack.id) ??
+                    paintStack
                   if (stack.id === teleportVanishStackId) {
                     return null
                   }
@@ -5857,17 +6218,32 @@ export function CombatScreen({
                     : undefined
                   const view = hero
                     ? null
-                    : stackViewFromCombat(stack, catalog, siegeTownArtName)
+                    : (combatUnitStackViews[stack.id] ??
+                      stackViewFromCombat(stack, catalog, siegeTownArtName))
                   const moveSettings = catalog
                     ? battleAnimSettings(catalog)
                     : null
                   const stackVisual = stackBattleVisuals[stack.id]
-                  let box = stackArtBox(
-                    pos,
-                    field.hexPx,
-                    catalog ? combatStackFootprint(stack, catalog) : '1x1',
-                    stack.side,
-                  )
+                  const heroMountArt = hero
+                    ? heroMountBattleArt.get(stack.id) ?? null
+                    : null
+                  const heroShowsMount = Boolean(hero && heroMountArt)
+                  let box =
+                    hero && catalog
+                      ? heroShowsMount
+                        ? heroBattleMountArtBox(
+                            pos,
+                            field.hexPx,
+                            stack.side,
+                            battleHeroMountFootprint(catalog),
+                          )
+                        : heroBattlePortraitArtBox(pos, field.hexPx, stack.side)
+                      : stackArtBox(
+                          pos,
+                          field.hexPx,
+                          catalog ? combatStackFootprint(stack, catalog) : '1x1',
+                          stack.side,
+                        )
                   if (moveSettings && stackVisual?.slide) {
                     const stackFp = catalog
                       ? combatStackFootprint(stack, catalog)
@@ -5910,16 +6286,30 @@ export function CombatScreen({
                       unitBattleSheets,
                       stackVisual,
                       paintNow,
+                      polymorphBattleSheet,
                     )
                   const hideFootprintBox =
                     catalog != null &&
-                    stackHidesFootprintBoxChrome(
+                    (heroShowsMount ||
+                      stackHidesFootprintBoxChrome(
+                        stack,
+                        catalog,
+                        unitBattleSheets,
+                        battleSheetPreloadKey > 0,
+                        stackVisual,
+                        polymorphBattleSheet,
+                      ))
+                  const polymorphStaticStill =
+                    catalog != null &&
+                    stackUsesPolymorphStaticStill(
                       stack,
                       catalog,
-                      unitBattleSheets,
-                      battleSheetPreloadKey > 0,
-                      stackVisual,
+                      polymorphBattleSheet,
                     )
+                  const showStackStatic =
+                    !useBattleAnim &&
+                    !hideFootprintBox &&
+                    (!polymorphStaticStill || view?.preferFilename)
                   return (
                     <div
                       key={stack.id}
@@ -5947,14 +6337,27 @@ export function CombatScreen({
                         top: box.top,
                       }}
                     >
-                      {hero || isHeroStack(stack) ? (
+                      {heroShowsMount ? (
+                        <span
+                          className={
+                            stack.hasActedThisRound
+                              ? 'combat-hero-status combat-hero-status-acted'
+                              : 'combat-hero-status combat-hero-status-ready'
+                          }
+                          aria-label={
+                            stack.hasActedThisRound ? 'Has acted' : 'Has not acted'
+                          }
+                        >
+                          {stack.hasActedThisRound ? '✕' : '✓'}
+                        </span>
+                      ) : hero || isHeroStack(stack) ? (
                         <HeroHexArt
                           hero={hero}
                           acted={stack.hasActedThisRound}
                         />
                       ) : (
                         <>
-                          {!useBattleAnim && !hideFootprintBox ? (
+                          {showStackStatic ? (
                             <CombatStackArt view={view!} catalog={catalog} />
                           ) : null}
                           <span className="combat-stack-qty">
@@ -5972,6 +6375,8 @@ export function CombatScreen({
                           catalog={catalog}
                           unitSheets={unitBattleSheets}
                           stackVisuals={stackBattleVisuals}
+                          heroMountArt={heroMountBattleArt}
+                          polymorphBattleSheet={polymorphBattleSheet}
                           projectiles={battleProjectiles}
                           impacts={battleImpacts}
                           shapes={battleShapes}
@@ -6097,7 +6502,16 @@ export function CombatScreen({
                       return null
                     }
                     const tipText = heroTooltipText(catalog, hero, session)
-                    const box = stackArtBox(pos, field.hexPx, '1x1', stack.side)
+                    const mountArt = heroMountBattleArt.get(stack.id) ?? null
+                    const box =
+                      mountArt != null
+                        ? heroBattleMountArtBox(
+                            pos,
+                            field.hexPx,
+                            stack.side,
+                            battleHeroMountFootprint(catalog),
+                          )
+                        : heroBattlePortraitArtBox(pos, field.hexPx, stack.side)
                     const tipEstimatePx = 10 + tipText.split('\n').length * 17
                     const placeBelow = box.top - 4 - tipEstimatePx < 0
                     return (

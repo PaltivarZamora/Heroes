@@ -82,6 +82,30 @@ export function isCombatFrameBorder(col: number, row: number): boolean {
   return false
 }
 
+export function combatTileAt(
+  tiles: CombatTile[],
+  q: number,
+  r: number,
+): CombatTile | undefined {
+  return tiles.find((tile) => tile.q === q && tile.r === r)
+}
+
+/** Display frame: non-playable border cols/rows (still valid for hero mount hit). */
+export function combatTileIsDisplayFrame(
+  tile: CombatTile | undefined,
+): boolean {
+  if (!tile) {
+    return false
+  }
+  if (tile.displayOnly) {
+    return true
+  }
+  if (tile.col == null || tile.row == null) {
+    return false
+  }
+  return isCombatFrameBorder(tile.col, tile.row)
+}
+
 export function siegeWallColForRow(row: number): number {
   const playRow = playableRowIndex(row)
   return SIEGE_WALL_COL + (WALL_COL_OFFSET_BY_ROW[playRow] ?? 0)

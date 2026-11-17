@@ -23,6 +23,7 @@ export function CombatBattleStaticCorpseBody({
   footX,
   footY,
   flipX,
+  spriteScale: spriteScaleProp,
 }: {
   unitId: number
   unitDisplayName: string
@@ -36,6 +37,8 @@ export function CombatBattleStaticCorpseBody({
   footX: number
   footY: number
   flipX: boolean
+  /** Stand-based unit scale; when omitted, derived from loaded image width. */
+  spriteScale?: number
 }) {
   const [resolved, setResolved] = useState<UnitCorpsePictureResolved | null>(
     urlOverride
@@ -81,13 +84,9 @@ export function CombatBattleStaticCorpseBody({
 
   const natW = natural?.w ?? 200
   const natH = natural?.h ?? 200
-  const scale = corpseStaticImageScale(
-    hexPx,
-    footprint,
-    side,
-    natW,
-    settings,
-  )
+  const scale =
+    spriteScaleProp ??
+    corpseStaticImageScale(hexPx, footprint, side, natW, settings)
   const frameW = natW * scale
   const frameH = natH * scale
   const anchorX = 0.5

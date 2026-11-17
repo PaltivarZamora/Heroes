@@ -118,6 +118,8 @@ export type UnitRow = {
   level: number
   /** Reference `projectile.id`; null = streak fallback when ranged. */
   projectile_id: number | null
+  /** Battle move slide seconds per hex; null = anim_config.battle_move_sec_per_hex. */
+  move_sec_per_hex: number | null
 }
 
 export type ProjectileRow = {
@@ -4891,6 +4893,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       tier?: unknown
       town_id?: unknown
       projectile_id?: unknown
+      move_sec_per_hex?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const imageAlt =
@@ -4912,6 +4915,14 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       projectileRaw == null || projectileRaw === ''
         ? null
         : asInt(projectileRaw)
+    const moveSecRaw = extra.move_sec_per_hex
+    const moveSecPerHex = (() => {
+      if (moveSecRaw == null || moveSecRaw === '') {
+        return null
+      }
+      const n = Number(moveSecRaw)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })()
     return {
       ...row,
       cost: asCost(row.cost),
@@ -4948,6 +4959,7 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       level: catalogLevel((row as { level?: unknown }).level),
       projectile_id:
         projectileId != null && projectileId > 0 ? projectileId : null,
+      move_sec_per_hex: moveSecPerHex,
     }
   })
   const projectile: ProjectileRow[] = (

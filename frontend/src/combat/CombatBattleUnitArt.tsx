@@ -201,6 +201,9 @@ export function CombatBattleShapeVisual({
   angleDeg,
   flipY,
   rotate,
+  scaleUniform = true,
+  pinAnchorX,
+  pinAnchorY,
 }: {
   x: number
   y: number
@@ -210,19 +213,25 @@ export function CombatBattleShapeVisual({
   angleDeg: number
   flipY: boolean
   rotate: boolean
+  scaleUniform?: boolean
+  pinAnchorX?: number
+  pinAnchorY?: number
 }) {
-  const uniformScale = Math.min(
-    displayWidthPx / Math.max(1, frame.w),
-    displayHeightPx / Math.max(1, frame.h),
-  )
-  const frameW = frame.w * uniformScale
-  const frameH = frame.h * uniformScale
-  const left = x - frame.anchorX * frameW
-  const top = y - frame.anchorY * frameH
-  const bgW = frame.atlasW * uniformScale
-  const bgH = frame.atlasH * uniformScale
-  const bgX = -frame.rect.x * uniformScale
-  const bgY = -frame.rect.y * uniformScale
+  const scaleX = displayWidthPx / Math.max(1, frame.w)
+  const scaleY = displayHeightPx / Math.max(1, frame.h)
+  const uniformScale = Math.min(scaleX, scaleY)
+  const sx = scaleUniform ? uniformScale : scaleX
+  const sy = scaleUniform ? uniformScale : scaleY
+  const frameW = frame.w * sx
+  const frameH = frame.h * sy
+  const ax = pinAnchorX ?? frame.anchorX
+  const ay = pinAnchorY ?? frame.anchorY
+  const left = x - ax * frameW
+  const top = y - ay * frameH
+  const bgW = frame.atlasW * sx
+  const bgH = frame.atlasH * sy
+  const bgX = -frame.rect.x * sx
+  const bgY = -frame.rect.y * sy
   const flipParts: string[] = []
   if (rotate) {
     flipParts.push(`rotate(${angleDeg}deg)`)
@@ -242,7 +251,7 @@ export function CombatBattleShapeVisual({
         ...(flipParts.length > 0
           ? {
               transform: flipParts.join(' '),
-              transformOrigin: `${frame.anchorX * 100}% ${frame.anchorY * 100}%`,
+              transformOrigin: `${ax * 100}% ${ay * 100}%`,
             }
           : {}),
         pointerEvents: 'none',

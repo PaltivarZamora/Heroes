@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Angelic_Warrior_1_Move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_001": {
+      "frame": {
+        "x": 369,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_002": {
+      "frame": {
+        "x": 738,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_003": {
+      "frame": {
+        "x": 1107,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_004": {
+      "frame": {
+        "x": 1476,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_005": {
+      "frame": {
+        "x": 1845,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_006": {
+      "frame": {
+        "x": 2214,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_007": {
+      "frame": {
+        "x": 0,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_008": {
+      "frame": {
+        "x": 369,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_009": {
+      "frame": {
+        "x": 738,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_010": {
+      "frame": {
+        "x": 1107,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_011": {
+      "frame": {
+        "x": 1476,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_012": {
+      "frame": {
+        "x": 1845,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_013": {
+      "frame": {
+        "x": 2214,
+        "y": 270,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_014": {
+      "frame": {
+        "x": 0,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_015": {
+      "frame": {
+        "x": 369,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_016": {
+      "frame": {
+        "x": 738,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_017": {
+      "frame": {
+        "x": 1107,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_018": {
+      "frame": {
+        "x": 1476,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_019": {
+      "frame": {
+        "x": 1845,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_020": {
+      "frame": {
+        "x": 2214,
+        "y": 540,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_021": {
+      "frame": {
+        "x": 0,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_022": {
+      "frame": {
+        "x": 369,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_023": {
+      "frame": {
+        "x": 738,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_024": {
+      "frame": {
+        "x": 1107,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_025": {
+      "frame": {
+        "x": 1476,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_026": {
+      "frame": {
+        "x": 1845,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_027": {
+      "frame": {
+        "x": 2214,
+        "y": 810,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_028": {
+      "frame": {
+        "x": 0,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_029": {
+      "frame": {
+        "x": 369,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_030": {
+      "frame": {
+        "x": 738,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_031": {
+      "frame": {
+        "x": 1107,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_032": {
+      "frame": {
+        "x": 1476,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_033": {
+      "frame": {
+        "x": 1845,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_034": {
+      "frame": {
+        "x": 2214,
+        "y": 1080,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_035": {
+      "frame": {
+        "x": 0,
+        "y": 1350,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 76
+    },
+    "Angelic_Warrior_1_Move_Stand": {
+      "frame": {
+        "x": 369,
+        "y": 1350,
+        "w": 369,
+        "h": 270
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 369,
+        "h": 270
+      },
+      "sourceSize": {
+        "w": 369,
+        "h": 270
+      },
+      "anchor": {
+        "x": 0.5387,
+        "y": 0.9902
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Angelic_Warrior_1_Move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2583,
+      "h": 1620
+    },
+    "scale": "1",
+    "anim": "Move",
+    "loop": true,
+    "foot": {
+      "x": 0.5387,
+      "y": 0.9902
+    },
+    "rest_height": 200
+  }
+}

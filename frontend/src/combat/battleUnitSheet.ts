@@ -478,6 +478,40 @@ export async function preloadBattleUnitSheetsForBattleOpening(
   }
 }
 
+const STAND_SCALE_SHEET_ORDER: BattleUnitAnimKind[] = [
+  'Idle',
+  'Move',
+  'Attack',
+  'Hit',
+  'Die',
+]
+
+/** Stand pose used for battle sprite scale (height + width cap), not per-frame. */
+export function battleUnitStandScaleReference(
+  set: BattleUnitSheetSet,
+): { restHeight: number; frameWidth: number } | null {
+  for (const kind of STAND_SCALE_SHEET_ORDER) {
+    const sheet = set.sheets[kind]
+    if (sheet?.stand) {
+      return {
+        restHeight: sheet.restHeight,
+        frameWidth: sheet.stand.w,
+      }
+    }
+  }
+  for (const kind of STAND_SCALE_SHEET_ORDER) {
+    const sheet = set.sheets[kind]
+    const frame = sheet?.frames[0]
+    if (sheet && frame) {
+      return {
+        restHeight: sheet.restHeight,
+        frameWidth: frame.w,
+      }
+    }
+  }
+  return null
+}
+
 export function battleUnitSheetForUnit(
   catalog: ReferenceCatalog,
   unit: UnitRow | null | undefined,
@@ -614,6 +648,110 @@ export function reportBattleUnitDieNotDrawable(
 export function resetBattleUnitSheetSessionWarnings(): void {
   warnedMissingUnitType.clear()
   warnedDieNotDrawable.clear()
+}
+
+import { setDevPolymorphSheetStatus } from './polymorphDevLog'
+
+const POLYMORPH_SHEET_CACHE_PREFIX = 'polymorph/'
+
+function polymorphSheetCacheKey(stem: string, townFolder: string): string {
+  return `${POLYMORPH_SHEET_CACHE_PREFIX}${cacheKey(stem, townFolder)}`
+}
+
+async function loadStandOnlyIdleSheet(
+  dir: string,
+  stem: string,
+): Promise<BattleUnitAnimSheet | null> {
+  const standFile = `${stem}_Stand.png`
+  const url = `${dir}/${standFile.replace(/^\/+/, '')}`
+  try {
+    const tex = await Assets.load<Texture>(url)
+    if (tex.width < 1 || tex.height < 1) {
+      return null
+    }
+    const stand: BattleUnitFrame = {
+      texture: tex,
+      w: tex.width,
+      h: tex.height,
+      anchorX: 0.5,
+      anchorY: 1,
+      atlasUrl: url,
+      atlasW: tex.width,
+      atlasH: tex.height,
+      rect: { x: 0, y: 0, w: tex.width, h: tex.height },
+    }
+    return {
+      kind: 'Idle',
+      loop: true,
+      restHeight: tex.height,
+      soundStartPct: 0,
+      stand,
+      frames: [],
+      atlasUrl: url,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Clear a failed polymorph load so a later battle/catalog retry can fetch art. */
+export function invalidatePolymorphBattleSheetCache(
+  stem: string,
+  townFolder: string,
+): void {
+  const key = polymorphSheetCacheKey(stem, townFolder)
+  if (sheetCache.get(key) === null) {
+    sheetCache.delete(key)
+  }
+  sheetInflight.delete(key)
+}
+
+/** Idle (or Stand still) for polymorph art — no Move/Attack/Die sheets. */
+export async function loadPolymorphBattleIdleSheet(
+  stem: string,
+  townFolder: string,
+): Promise<BattleUnitSheetSet | null> {
+  const key = polymorphSheetCacheKey(stem, townFolder)
+  if (sheetCache.has(key)) {
+    return sheetCache.get(key) ?? null
+  }
+  const inflight = sheetInflight.get(key)
+  if (inflight) {
+    return inflight as Promise<BattleUnitSheetSet | null>
+  }
+  const dir = battleUnitTownDir(townFolder)
+  const promise = (async (): Promise<BattleUnitSheetSet | null> => {
+    const idle = await loadOneAnimSheet(dir, stem, 'Idle')
+    let idleSheet = idle.sheet
+    if (!idleSheet) {
+      idleSheet = await loadStandOnlyIdleSheet(dir, stem)
+    }
+    if (!idleSheet) {
+      const reason =
+        idle.fail != null
+          ? `${idle.fail.url} — ${idle.fail.reason}`
+          : `stand-only ${dir}/${stem}_Stand.png`
+      setDevPolymorphSheetStatus({ kind: 'failed', reason })
+      return null
+    }
+    const set: BattleUnitSheetSet = {
+      stem,
+      townFolder,
+      sheets: { Idle: idleSheet },
+      animated: true,
+      hasDie: false,
+      partnerSoundStem: null,
+    }
+    sheetCache.set(key, set)
+    setDevPolymorphSheetStatus({ kind: 'loaded' })
+    return set
+  })()
+  sheetInflight.set(key, promise as Promise<BattleUnitSheetSet | null>)
+  try {
+    return await promise
+  } finally {
+    sheetInflight.delete(key)
+  }
 }
 
 /** Drop cached sheets so the next battle preload picks up new JSON/png. */

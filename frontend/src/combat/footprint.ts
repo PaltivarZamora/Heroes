@@ -46,6 +46,11 @@ export function parseFootprint(raw: unknown): FootprintCode {
   return '1x1'
 }
 
+export function footprintBottomRowWidth(code: FootprintCode): number {
+  const widths = FOOTPRINT_ROW_WIDTHS[code] ?? FOOTPRINT_ROW_WIDTHS['1x1']
+  return widths[0] ?? 1
+}
+
 /** Bounding cols×rows of the diamond (for sprite scaling). */
 export function footprintExtent(code: FootprintCode): {
   cols: number

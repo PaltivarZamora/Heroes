@@ -1,4 +1,8 @@
-import type { BattleAnimSettings, BattleIdleSettings } from './battleAnimConfig'
+import {
+  battleUnitSheetFps,
+  type BattleAnimSettings,
+  type BattleIdleSettings,
+} from './battleAnimConfig'
 import type { FootprintCode } from './footprint'
 import { stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
 import type { BattleUnitAnimKind, BattleUnitSheetSet } from './battleUnitSheet'
@@ -84,6 +88,11 @@ export type CombatShapeVisual = {
   rotate: boolean
   frames: import('./battleUnitSheet').BattleUnitFrame[]
   animFps: number
+  /** When false, stretch width and height independently. */
+  scaleUniform?: boolean
+  /** Override frame anchor for placement (reach: blade at 1, 0.5). */
+  pinAnchorX?: number
+  pinAnchorY?: number
 }
 
 export type CombatImpactVisual = {
@@ -178,13 +187,16 @@ export function idleVisualsForLivingStacks(
   usesAnim: (stack: CombatStack) => boolean,
   catalog: ReferenceCatalog,
   idleSettings: BattleIdleSettings,
+  sheetForStack?: (
+    stack: CombatStack,
+  ) => BattleUnitSheetSet | null | undefined,
 ): Record<string, StackBattleVisual> {
   const out: Record<string, StackBattleVisual> = {}
   for (const stack of stacks) {
     if (stack.qty <= 0 || !usesAnim(stack)) {
       continue
     }
-    const set = sheets.get(stack.unitId)
+    const set = sheetForStack?.(stack) ?? sheets.get(stack.unitId)
     const unit = unitById(catalog, stack.unitId)
     out[stack.id] = defaultIdleVisualForStack(stack, set, unit, idleSettings)
   }
@@ -320,7 +332,7 @@ export function pickVisualFrame(
     const frame = frameAtProgress(
       moveSheet,
       0,
-      settings.animFps,
+      settings.moveFps,
       visual.startedMs,
       visual.frameOffset,
     )
@@ -331,7 +343,7 @@ export function pickVisualFrame(
     const frame = frameAtProgress(
       idleSheet,
       0,
-      settings.animFps,
+      settings.idleFps,
       visual.startedMs,
       visual.frameOffset,
     )
@@ -366,7 +378,7 @@ export function pickVisualFrame(
   let frame = frameAtProgress(
     sheet,
     progress,
-    settings.animFps,
+    battleUnitSheetFps(settings, kind),
     visual.startedMs,
     visual.frameOffset,
   )

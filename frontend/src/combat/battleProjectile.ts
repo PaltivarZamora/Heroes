@@ -21,6 +21,7 @@ export type BattleProjectileArt = {
   restHeight: number
   frames: BattleUnitFrame[] | null
   atlasUrl: string
+  animFps?: number
 }
 
 export type BattleImpactEffectArt = {
@@ -148,6 +149,7 @@ async function loadSheetFrames(
   loop: boolean
   restHeight: number
   atlasUrl: string
+  animFps: number
 } | null> {
   const jsonUrl = `${PROJECTILE_ASSET_DIR}/${name}.json`
   try {
@@ -191,10 +193,13 @@ async function loadSheetFrames(
     }
     const loopRaw = data.meta?.loop
     const loop = typeof loopRaw === 'boolean' ? loopRaw : true
+    const fpsRaw = Number(data.meta?.fps)
+    const animFps =
+      Number.isFinite(fpsRaw) && fpsRaw > 0 ? fpsRaw : 0
     const restRaw = Number(data.meta?.rest_height)
     const restHeight =
       Number.isFinite(restRaw) && restRaw > 0 ? restRaw : frames[0]!.h
-    return { frames, loop, restHeight, atlasUrl }
+    return { frames, loop, restHeight, atlasUrl, animFps }
   } catch {
     return null
   }
@@ -231,9 +236,30 @@ export async function loadBattleProjectileArt(
         restHeight: sheet.restHeight,
         frames: sheet.frames,
         atlasUrl: sheet.atlasUrl,
+        animFps: sheet.animFps > 0 ? sheet.animFps : undefined,
       }
       projectileArtById.set(row.id, shapeArt)
       return shapeArt
+    }
+    if (kind === 'reach') {
+      if (!sheet || sheet.frames.length === 0) {
+        appendBattleAnimCombatLog(
+          `[Dev] Reach projectile '${row.name}' requires ${row.name}.json animation.`,
+        )
+        projectileArtById.set(row.id, null)
+        return null
+      }
+      const reachArt: BattleProjectileArt = {
+        row,
+        staticUrl: pngUrl,
+        loop: false,
+        restHeight: sheet.restHeight,
+        frames: sheet.frames,
+        atlasUrl: sheet.atlasUrl,
+        animFps: sheet.animFps > 0 ? sheet.animFps : undefined,
+      }
+      projectileArtById.set(row.id, reachArt)
+      return reachArt
     }
     if (sheet) {
       const art: BattleProjectileArt = {
@@ -442,6 +468,96 @@ export function computeProjectileFlightEndpoints(opts: {
   const fromY = fromFootY + uy * startAlong - lift
   const toY = toFootY - uy * endAlong - lift
   return { fromX, fromY, toX, toY }
+}
+
+export function computeReachEffectPlacement(opts: {
+  striker: CombatStack
+  target: CombatStack
+  catalog: ReferenceCatalog
+  anchors: HexAnchor[]
+  hexPx: number
+  footOffsetPct: number
+  row: ProjectileRow
+  frameWidth: number
+  frameHeight: number
+}): {
+  x: number
+  y: number
+  displayWidthPx: number
+  displayHeightPx: number
+  angleDeg: number
+  flipY: boolean
+  rotate: boolean
+  impactX: number
+  impactY: number
+  pinAnchorX: number
+  pinAnchorY: number
+} | null {
+  const stand = { q: opts.striker.q, r: opts.striker.r }
+  const aimHex = closestHexOnTargetFootprint(
+    opts.striker,
+    opts.target,
+    opts.catalog,
+  )
+  const originHex = actionOriginFootprintHex(
+    stand,
+    opts.striker,
+    opts.catalog,
+    aimHex,
+  )
+  const originCenter = hexCenter(opts.anchors, originHex.q, originHex.r)
+  const targetCenter = hexCenter(opts.anchors, aimHex.q, aimHex.r)
+  if (!originCenter || !targetCenter) {
+    return null
+  }
+  const targetAnchor = opts.anchors.find(
+    (row) => row.q === opts.target.q && row.r === opts.target.r,
+  )
+  const targetFoot = targetAnchor
+    ? stackArtBoxFoot(
+        stackArtBox(
+          targetAnchor,
+          opts.hexPx,
+          combatStackFootprint(opts.target, opts.catalog),
+          opts.target.side,
+        ),
+        opts.hexPx,
+        opts.footOffsetPct,
+      )
+    : null
+  const dx = targetCenter.x - originCenter.x
+  const dy = targetCenter.y - originCenter.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const half = opts.hexPx / 2
+  const endAlong = half - (opts.row.end_offset_pct / 100) * opts.hexPx
+  const lift = (opts.row.height_pct / 100) * opts.hexPx
+  const toFootY = targetFoot?.footY ?? targetCenter.y
+  const toX = targetCenter.x - ux * endAlong
+  const toY = toFootY - uy * endAlong - lift
+  const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI
+  const displayHeightPx = projectileDisplayHeightPx(
+    opts.hexPx,
+    opts.row.scale_pct ?? 100,
+    opts.frameHeight,
+  )
+  const uniformScale =
+    opts.frameHeight > 0 ? displayHeightPx / opts.frameHeight : 1
+  const displayWidthPx = opts.frameWidth * uniformScale
+  return {
+    x: toX,
+    y: toY,
+    displayWidthPx,
+    displayHeightPx,
+    angleDeg,
+    flipY: dx < 0,
+    rotate: true,
+    impactX: toX,
+    impactY: toY,
+    pinAnchorX: 1,
+    pinAnchorY: 0.5,
+  }
 }
 
 export function projectileDisplayHeightPx(

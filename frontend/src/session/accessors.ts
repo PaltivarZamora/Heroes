@@ -46,6 +46,7 @@ import {
   genericSlotBuildings,
   heroMovementPoints,
   heroResourcePools,
+  heroTypeName,
   isArmySlot,
   isBuildRoot,
   isLibraryBuilding,
@@ -1113,9 +1114,10 @@ export function grantBuildArmy(
     }
   }
   const townLabel = town.name?.trim() || 'your first town'
+  const className = heroTypeName(catalog, classId) || `class ${classId}`
   return {
     session: next,
-    notice: `Built Army ${armyChoice} (slots 11–16) in ${townLabel} with initial growth`,
+    notice: `Built Army ${armyChoice} (${className}, basic dwellings) in slots 11–16, ${townLabel}`,
   }
 }
 

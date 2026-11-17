@@ -26,12 +26,28 @@ import {
   fetchCatalog,
   getCachedCatalog,
   heroResourcePools,
+  heroTypeName,
   reloadReferenceData,
+  townArmyClassIdsOrdered,
 } from '../town/catalog'
 import { LIBRARY_TIERS } from '../town/libraryRules'
 import { archName } from '../ai/weights'
 import type { FixedFightKind } from '../session/fixedFight'
 import { DevItemsPanel } from './DevItemsPanel'
+
+function buildArmyDevLabel(choice: 1 | 2): string {
+  const catalog = getCachedCatalog()
+  const player = activePlayer(getSession())
+  const town = player
+    ? getSession().towns.find((row) => row.player_id === player.id)
+    : undefined
+  if (!catalog || !town) {
+    return `Build Army ${choice}`
+  }
+  const classId = townArmyClassIdsOrdered(catalog, town.town_type_id)[choice - 1]
+  const name = classId != null ? heroTypeName(catalog, classId) : ''
+  return name ? `Build Army ${choice} (${name} → basic)` : `Build Army ${choice}`
+}
 
 const STEPS_FLAT = FLAT_HERO_MOVEMENT_STEPS
 
@@ -414,7 +430,7 @@ export function DevToolsPanel({
               flash(result.notice)
             }}
           >
-            Build Army 1
+            {buildArmyDevLabel(1)}
           </button>
           <button
             type="button"
@@ -425,7 +441,7 @@ export function DevToolsPanel({
               flash(result.notice)
             }}
           >
-            Build Army 2
+            {buildArmyDevLabel(2)}
           </button>
           <button
             type="button"

@@ -2228,6 +2228,8 @@ export type AttackAnimPhase = {
   hitKeys: string[]
   strikeStacks: CombatStack[]
   strikeTombstones: CombatTombstone[]
+  /** Display-only: defender retaliation beat (no reach swoosh). */
+  isRetaliation?: boolean
 }
 
 export function resolveAttack(
@@ -3874,6 +3876,7 @@ export function resolveAttack(
       hitKeys: retalHitKeys,
       strikeStacks: display.strikeStacks,
       strikeTombstones: display.strikeTombstones,
+      isRetaliation: true,
     })
   }
 

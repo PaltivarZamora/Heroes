@@ -2,6 +2,10 @@ import type { CombatSide } from './battle'
 import { footprintExtent, type FootprintCode } from './footprint'
 import type { BattleAnimSettings } from './battleAnimConfig'
 import { CORPSE_BODY_REST_HEIGHT_PX } from '../town/unitCorpsePicture'
+import {
+  battleUnitStandScaleReference,
+  type BattleUnitSheetSet,
+} from './battleUnitSheet'
 
 export type StackArtBox = {
   width: number
@@ -48,17 +52,17 @@ export function combatBattleUnitTargetRestHeight(
 
 /**
  * Scale so rest body height matches combatBattleUnitTargetRestHeight; width cap
- * at spriteMaxWidthPct % of box width when configured.
+ * at spriteMaxWidthPct % of box width when configured (Stand frame width only).
  */
 export function combatBattleUnitSpriteScale(
   hexPx: number,
   code: FootprintCode,
   side: CombatSide,
-  restHeight: number,
-  frameWidth: number,
+  standRestHeight: number,
+  standFrameWidth: number,
   settings: BattleAnimSettings,
 ): number {
-  if (restHeight < 1) {
+  if (standRestHeight < 1) {
     return 1
   }
   const box = stackArtBox({ x: 0, y: hexPx }, hexPx, code, side)
@@ -67,16 +71,38 @@ export function combatBattleUnitSpriteScale(
     hexPx,
     settings.spriteScalePct,
   )
-  let scale = targetRest / restHeight
+  let scale = targetRest / standRestHeight
   const maxPct = settings.spriteMaxWidthPct
-  if (maxPct != null && frameWidth > 0) {
-    const scaledW = frameWidth * scale
+  if (maxPct != null && standFrameWidth > 0) {
+    const scaledW = standFrameWidth * scale
     const maxW = box.width * (maxPct / 100)
     if (scaledW > maxW) {
       scale *= maxW / scaledW
     }
   }
   return scale
+}
+
+/** One battle scale per unit from its Stand pose (all anim sheets + corpse). */
+export function combatBattleUnitScaleForSheetSet(
+  hexPx: number,
+  code: FootprintCode,
+  side: CombatSide,
+  set: BattleUnitSheetSet,
+  settings: BattleAnimSettings,
+): number {
+  const ref = battleUnitStandScaleReference(set)
+  if (!ref) {
+    return 1
+  }
+  return combatBattleUnitSpriteScale(
+    hexPx,
+    code,
+    side,
+    ref.restHeight,
+    ref.frameWidth,
+    settings,
+  )
 }
 
 /** Corpse still scale: target rest height ÷ 200 px art; no width cap. */

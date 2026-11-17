@@ -34,6 +34,7 @@ import {
 import { playBattleUnitSoundOnce } from './battleUnitSound'
 import {
   computeProjectileFlightEndpoints,
+  computeReachEffectPlacement,
   loadBattleImpactEffectArt,
   loadBattleProjectileArt,
   projectileDisplayHeightPx,
@@ -54,12 +55,14 @@ import { closestHexOnTargetFootprint } from './actionOrigin'
 import {
   beamPassProgress,
   effectiveProjectileRow,
+  reachEffectOriginToAimDistance,
   shapeVisualBoxPx,
   shapeVisualPlacement,
   usesBeamLineFlight,
   usesCatalogPerTargetFlight,
   usesChainFlight,
   usesRangedAoeFlight,
+  usesReachVisual,
   usesShapeVisual,
   warnProjectileVisualModeMissing,
 } from './attackVisualTiming'
@@ -71,6 +74,7 @@ export type AttackExchange = {
   strikeStacks: CombatStack[]
   strikeTombstones: CombatTombstone[]
   hitKeys: string[]
+  isRetaliation?: boolean
 }
 
 type HexAnchor = { q: number; r: number; x: number; y: number }
@@ -126,6 +130,7 @@ export function buildAttackExchanges(
       strikeStacks: phase.strikeStacks,
       strikeTombstones: phase.strikeTombstones,
       hitKeys: phase.hitKeys,
+      isRetaliation: phase.isRetaliation,
     })
     prev = phase.strikeStacks
     if (i + 1 < phases.length) {
@@ -511,6 +516,13 @@ export async function runAttackBeatPresentation(opts: {
 
     const shapeMode =
       effectiveRow != null && usesShapeVisual(effectiveRow, attackShape)
+    const reachEligible =
+      !exchange.isRetaliation &&
+      !ranged &&
+      effectiveRow != null &&
+      usesReachVisual(effectiveRow, strikerUnit, attackShape) &&
+      targetBefore != null &&
+      reachEffectOriginToAimDistance(striker, targetBefore, opts.catalog) > 1
     const chainMode =
       effectiveRow != null && usesChainFlight(effectiveRow, attackShape)
     const beamMode =
@@ -533,20 +545,6 @@ export async function runAttackBeatPresentation(opts: {
       effectiveRow == null &&
       rawProjectileRow == null
 
-    if (
-      ranged &&
-      strikerUnit &&
-      effectiveRow != null &&
-      !shapeMode &&
-      !chainMode &&
-      !beamMode &&
-      !rangedAoeMode &&
-      !catalogPerTargetFlight &&
-      !legacyPerTargetRanged
-    ) {
-      warnProjectileVisualModeMissing(strikerUnit, effectiveRow, attackShape)
-    }
-
     let projectileArt: BattleProjectileArt | null = null
     if (effectiveRow) {
       projectileArt =
@@ -559,6 +557,26 @@ export async function runAttackBeatPresentation(opts: {
           `${PROJECTILE_ASSET_DIR}/${effectiveRow.name}.png`,
         )
       }
+    }
+
+    const reachMode =
+      reachEligible &&
+      projectileArt?.frames != null &&
+      projectileArt.frames.length > 0
+
+    if (
+      ranged &&
+      strikerUnit &&
+      effectiveRow != null &&
+      !shapeMode &&
+      !reachMode &&
+      !chainMode &&
+      !beamMode &&
+      !rangedAoeMode &&
+      !catalogPerTargetFlight &&
+      !legacyPerTargetRanged
+    ) {
+      warnProjectileVisualModeMissing(strikerUnit, effectiveRow, attackShape)
     }
 
     const flightRow = effectiveRow
@@ -669,6 +687,15 @@ export async function runAttackBeatPresentation(opts: {
 
     let shapeDurationMs = 0
     let shapeHitDelay = 0
+    let reachDurationMs = 0
+    let reachHitDelay = 0
+    let reachImpactX = 0
+    let reachImpactY = 0
+    let reachImpactHeightPx = 0
+    const reachAnimFps =
+      projectileArt?.animFps && projectileArt.animFps > 0
+        ? projectileArt.animFps
+        : opts.settings.moveFps
     if (
       shapeMode &&
       strikerUnit &&
@@ -678,12 +705,39 @@ export async function runAttackBeatPresentation(opts: {
     ) {
       shapeDurationMs = animSheetDurationMs(
         projectileArt.frames.length,
-        opts.settings.animFps,
+        opts.settings.moveFps,
       )
       shapeHitDelay = shapeHitStartDelayMs(effectiveRow, shapeDurationMs)
     }
+    if (reachMode && effectiveRow && projectileArt?.frames) {
+      reachDurationMs = animSheetDurationMs(
+        projectileArt.frames.length,
+        reachAnimFps,
+      )
+      reachHitDelay = shapeHitStartDelayMs(effectiveRow, reachDurationMs)
+      const reachFrame = projectileArt.frames[0]!
+      const placement = computeReachEffectPlacement({
+        striker,
+        target: targetBefore!,
+        catalog: opts.catalog,
+        anchors: opts.anchors,
+        hexPx: opts.hexPx,
+        footOffsetPct: opts.settings.footOffsetPct,
+        row: effectiveRow,
+        frameWidth: reachFrame.w,
+        frameHeight: reachFrame.h,
+      })
+      if (placement) {
+        reachImpactX = placement.impactX
+        reachImpactY = placement.impactY
+        reachImpactHeightPx = placement.displayHeightPx
+      } else {
+        reachDurationMs = 0
+      }
+    }
 
-    await waitClip(strikeMs)
+    const strikeAtMs = actionStartedMs + strikeMs
+    await waitClip(Math.max(0, strikeAtMs - performance.now()))
     scheduleStrikerIdle()
     const launchMs = performance.now()
 
@@ -706,7 +760,7 @@ export async function runAttackBeatPresentation(opts: {
               : plan.staticUrl,
           sheetFrames: plan.sheetFrames,
           sheetLoop: plan.sheetLoop,
-          animFps: opts.settings.animFps,
+          animFps: opts.settings.moveFps,
         },
       ])
     }
@@ -750,12 +804,60 @@ export async function runAttackBeatPresentation(opts: {
           flipY: placement.flipY,
           rotate: placement.rotate,
           frames: projectileArt.frames!,
-          animFps: opts.settings.animFps,
+          animFps: opts.settings.moveFps,
         },
       ])
       void sleepMs(shapeDurationMs, opts.isCancelled).then(() => {
         opts.setShapeVisuals((prev) => prev.filter((row) => row.id !== shapeId))
       })
+    }
+
+    if (
+      reachMode &&
+      effectiveRow &&
+      projectileArt?.frames &&
+      targetBefore &&
+      reachDurationMs > 0
+    ) {
+      const reachFrame = projectileArt.frames[0]!
+      const placement = computeReachEffectPlacement({
+        striker,
+        target: targetBefore,
+        catalog: opts.catalog,
+        anchors: opts.anchors,
+        hexPx: opts.hexPx,
+        footOffsetPct: opts.settings.footOffsetPct,
+        row: effectiveRow,
+        frameWidth: reachFrame.w,
+        frameHeight: reachFrame.h,
+      })
+      if (placement) {
+        const shapeId = `reach:${striker.id}:${launchMs}`
+        opts.setShapeVisuals((prev) => [
+          ...prev,
+          {
+            id: shapeId,
+            x: placement.x,
+            y: placement.y,
+            startedMs: launchMs,
+            durationMs: reachDurationMs,
+            displayWidthPx: placement.displayWidthPx,
+            displayHeightPx: placement.displayHeightPx,
+            angleDeg: placement.angleDeg,
+            flipY: placement.flipY,
+            rotate: placement.rotate,
+            frames: projectileArt.frames!,
+            animFps: reachAnimFps,
+            pinAnchorX: placement.pinAnchorX,
+            pinAnchorY: placement.pinAnchorY,
+          },
+        ])
+        void sleepMs(reachDurationMs, opts.isCancelled).then(() => {
+          opts.setShapeVisuals((prev) =>
+            prev.filter((row) => row.id !== shapeId),
+          )
+        })
+      }
     }
 
     if (legacyPerTargetRanged || catalogPerTargetFlight) {
@@ -826,7 +928,7 @@ export async function runAttackBeatPresentation(opts: {
             y: args.plan.toY,
             effectName: args.plan.impactEffect,
             displayHeightPx: args.plan.displayHeightPx,
-            animFps: opts.settings.animFps,
+            animFps: opts.settings.moveFps,
             setImpacts: opts.setImpacts,
             isCancelled: opts.isCancelled,
           })
@@ -889,7 +991,7 @@ export async function runAttackBeatPresentation(opts: {
                   : plan.staticUrl,
               sheetFrames: plan.sheetFrames,
               sheetLoop: plan.sheetLoop,
-              animFps: opts.settings.animFps,
+              animFps: opts.settings.moveFps,
             },
           ])
           await waitClip(plan.travelMs)
@@ -940,7 +1042,7 @@ export async function runAttackBeatPresentation(opts: {
             y: impactY,
             effectName: rangedAoePlan.impactEffect,
             displayHeightPx: box.height,
-            animFps: opts.settings.animFps,
+            animFps: opts.settings.moveFps,
             setImpacts: opts.setImpacts,
             isCancelled: opts.isCancelled,
           })
@@ -1009,6 +1111,8 @@ export async function runAttackBeatPresentation(opts: {
         let playImpact = true
         if (shapeMode) {
           delayMs = shapeHitDelay
+        } else if (reachMode) {
+          delayMs = reachHitDelay
         } else if (beamMode && beamPlan && before) {
           delayMs =
             beamPlan.travelMs *
@@ -1040,10 +1144,30 @@ export async function runAttackBeatPresentation(opts: {
           defenderHitWaits.push(reaction)
         }
       }
+      if (reachMode && effectiveRow?.impact_effect && reachDurationMs > 0) {
+        const impactWait = (async () => {
+          await waitClip(reachHitDelay)
+          if (opts.isCancelled?.()) {
+            return
+          }
+          await spawnImpactVisual({
+            id: `imp:reach:${striker.id}:${launchMs}`,
+            x: reachImpactX,
+            y: reachImpactY,
+            effectName: effectiveRow.impact_effect!,
+            displayHeightPx: reachImpactHeightPx,
+            animFps: opts.settings.moveFps,
+            setImpacts: opts.setImpacts,
+            isCancelled: opts.isCancelled,
+          })
+        })()
+        reactionWaits.push(impactWait)
+      }
     }
 
     const immediateMeleeDisplay =
       !shapeMode &&
+      !reachMode &&
       !chainMode &&
       !beamMode &&
       !rangedAoeMode &&

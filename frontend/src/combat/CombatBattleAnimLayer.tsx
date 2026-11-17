@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react'
 import {
   battleAnimSettings,
+  battleHeroMountFootprint,
   battleIdleSettings,
   type BattleAnimSettings,
 } from './battleAnimConfig'
-import { combatBattleUnitSpriteScale, stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
+import { combatBattleUnitScaleForSheetSet, combatBattleUnitSpriteScale, stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
 import {
   battleUnitSheetForUnit,
   flipBattleUnitForSide,
@@ -31,9 +32,20 @@ import { isHeroStack } from './battle'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
 import { combatStackFootprint, moveKindForUnit } from './movement'
-import { proceduralIdleTransformCss } from './proceduralBattleIdle'
+import { proceduralIdleMotionForStack, proceduralIdleTransformCss } from './proceduralBattleIdle'
 import { proceduralHitTransformCss, proceduralHitTransformOrigin } from './proceduralBattleHit'
+import {
+  resolveCorpsePaintOrder,
+  resolveLivingStacksPaintOrder,
+  stackBattleFootPaintY,
+  type CorpsePaintEntry,
+} from './battleStackPaintOrder'
+import { tombCorpseDrawFoot } from './combatCorpsePaint'
 import { stackShowsBattleSprites } from './combatUnitAnimPlayback'
+import {
+  clampPolymorphBattleVisual,
+  stackUsesPolymorphBattleArt,
+} from './polymorphBattleArt'
 import { advFallbackGlow } from '../town/unitArtFallback'
 import {
   dieFallbackCorpseBodyVisible,
@@ -44,13 +56,18 @@ import {
 } from './battleDieFallbackEffect'
 import { CombatBattleStaticCorpseBody } from './CombatBattleStaticCorpseBody'
 import {
-  corpseDieFrameScale,
+  corpseBattleSpriteScale,
   corpseUsesOwnDieSheetHold,
   pickCorpseDieFrame,
   tombCorpseArtFootprintCode,
 } from './combatCorpsePaint'
 import type { FootprintCode } from './footprint'
 import type { CombatSide } from './battle'
+import {
+  flipHeroMountBattleForSide,
+  heroBattleMountFoot,
+} from './combatHeroMountArt'
+import type { HeroMountBattleArt } from './heroMountBattleSheet'
 
 type HexAnchor = { q: number; r: number; x: number; y: number }
 
@@ -63,6 +80,8 @@ type LayerProps = {
   catalog: ReferenceCatalog
   unitSheets: Map<number, BattleUnitSheetSet | null>
   stackVisuals: Record<string, StackBattleVisual>
+  heroMountArt?: Map<string, HeroMountBattleArt | null>
+  polymorphBattleSheet?: BattleUnitSheetSet | null
   settings?: BattleAnimSettings
   paintNowMs: number
 }
@@ -137,12 +156,11 @@ function paintCorpseNode(
     if (!picked || !die) {
       return null
     }
-    const scale = corpseDieFrameScale(
+    const scale = corpseBattleSpriteScale(
       field.hexPx,
       footprint,
       side,
-      die.restHeight,
-      picked.frame.w,
+      set,
       settings,
     )
     const dieAnimSheet = set.sheets[picked.sheetKind]
@@ -189,6 +207,17 @@ function paintCorpseNode(
       footX={drawFoot.footX}
       footY={drawFoot.footY}
       flipX={flipX}
+      spriteScale={
+        set
+          ? corpseBattleSpriteScale(
+              field.hexPx,
+              footprint,
+              side,
+              set,
+              settings,
+            )
+          : undefined
+      }
     />
   )
 }
@@ -207,8 +236,9 @@ export function CombatBattleCorpseLayer({
   const now = paintNowMs
   const nodes: ReactNode[] = []
   const painted = new Set<string>()
+  const corpseEntries: CorpsePaintEntry[] = []
 
-  const pushCorpse = (
+  const queueCorpse = (
     id: string,
     unitId: number,
     q: number,
@@ -216,11 +246,12 @@ export function CombatBattleCorpseLayer({
     side: CombatSide,
     footprint: FootprintCode,
     visual: StackBattleVisual | undefined,
+    footY: number,
   ) => {
     if (painted.has(id)) {
       return
     }
-    const node = paintCorpseNode(
+    corpseEntries.push({
       id,
       unitId,
       q,
@@ -228,21 +259,27 @@ export function CombatBattleCorpseLayer({
       side,
       footprint,
       visual,
-      catalog,
-      unitSheets,
-      field,
-      settings,
-      now,
-    )
-    if (node) {
-      painted.add(id)
-      nodes.push(node)
-    }
+      footY,
+    })
   }
 
   for (const tomb of battle.tombstones ?? []) {
     const visual = stackVisuals[tomb.id]
-    pushCorpse(
+    const anchor = anchorAt(field.anchors, tomb.q, tomb.r)
+    if (!anchor) {
+      continue
+    }
+    const foot = tombCorpseDrawFoot(
+      tomb,
+      anchor,
+      field.hexPx,
+      settings.footOffsetPct,
+      tomb.side,
+      catalog,
+      visual,
+      now,
+    )
+    queueCorpse(
       tomb.id,
       tomb.unitId,
       tomb.q,
@@ -250,6 +287,7 @@ export function CombatBattleCorpseLayer({
       tomb.side,
       corpseArtFootprintForTomb(tomb, catalog),
       visual,
+      foot.footY,
     )
   }
 
@@ -261,7 +299,20 @@ export function CombatBattleCorpseLayer({
     if (painted.has(stack.id)) {
       continue
     }
-    pushCorpse(
+    const anchor = anchorAt(field.anchors, stack.q, stack.r)
+    const footY =
+      anchor != null
+        ? stackBattleFootPaintY(
+            stack,
+            anchor,
+            field.hexPx,
+            settings.footOffsetPct,
+            catalog,
+            visual,
+            now,
+          )
+        : 0
+    queueCorpse(
       stack.id,
       stack.unitId,
       stack.q,
@@ -269,7 +320,29 @@ export function CombatBattleCorpseLayer({
       stack.side,
       combatStackFootprint(stack, catalog),
       visual,
+      footY,
     )
+  }
+
+  for (const entry of resolveCorpsePaintOrder(corpseEntries)) {
+    const node = paintCorpseNode(
+      entry.id,
+      entry.unitId,
+      entry.q,
+      entry.r,
+      entry.side,
+      entry.footprint,
+      entry.visual,
+      catalog,
+      unitSheets,
+      field,
+      settings,
+      now,
+    )
+    if (node) {
+      painted.add(entry.id)
+      nodes.push(node)
+    }
   }
 
   return (
@@ -285,6 +358,8 @@ export function CombatBattleAnimLayer({
   catalog,
   unitSheets,
   stackVisuals,
+  heroMountArt,
+  polymorphBattleSheet = null,
   projectiles,
   impacts,
   shapes,
@@ -299,29 +374,103 @@ export function CombatBattleAnimLayer({
   const idleSettings = battleIdleSettings(catalog)
   const now = paintNowMs
   const nodes: ReactNode[] = []
-  for (const stack of battle.stacks) {
+  const paintStacks = resolveLivingStacksPaintOrder(
+    battle.stacks,
+    field.anchors,
+    catalog,
+    stackVisuals,
+    field.hexPx,
+    settings.footOffsetPct,
+    now,
+  )
+  for (const stack of paintStacks) {
     const stackVisualEarly = stackVisuals[stack.id]
+    if (isHeroStack(stack)) {
+      if (stack.qty <= 0) {
+        continue
+      }
+      const mountArt = heroMountArt?.get(stack.id)
+      if (!mountArt) {
+        continue
+      }
+      const anchor = anchorAt(field.anchors, stack.q, stack.r)
+      if (!anchor) {
+        continue
+      }
+      const heroFootprint = battleHeroMountFootprint(catalog)
+      const foot = heroBattleMountFoot(
+        anchor,
+        field.hexPx,
+        settings.footOffsetPct,
+        stack.side,
+        heroFootprint,
+      )
+      const scale = combatBattleUnitSpriteScale(
+        field.hexPx,
+        heroFootprint,
+        stack.side,
+        mountArt.restHeight,
+        mountArt.frame.w,
+        settings,
+      )
+      const idleMotion = proceduralIdleMotionForStack(
+        stack.id,
+        idleSettings.periodSec,
+      )
+      const motionTransform = idleSettings.enabled
+        ? proceduralIdleTransformCss(
+            now,
+            idleMotion,
+            'ground',
+            field.hexPx,
+            idleSettings,
+          )
+        : undefined
+      nodes.push(
+        <CombatBattleUnitArt
+          key={`hero-mount:${stack.id}`}
+          frame={mountArt.frame}
+          scale={scale}
+          footX={foot.footX}
+          footY={foot.footY}
+          flipX={flipHeroMountBattleForSide(stack.side)}
+          motionTransform={motionTransform}
+        />,
+      )
+      continue
+    }
     if (
-      isHeroStack(stack) ||
       !stackShowsBattleSprites(
         stack,
         catalog,
         unitSheets,
         stackVisualEarly,
         now,
+        polymorphBattleSheet,
       )
     ) {
       continue
     }
-    const footprint = combatStackFootprint(stack, catalog)
-    const set = sheetSetForUnit(stack.unitId, catalog, unitSheets)
+    const unitFootprint = combatStackFootprint(stack, catalog)
+    const polymorphActive = stackUsesPolymorphBattleArt(
+      stack,
+      catalog,
+      polymorphBattleSheet,
+    )
+    const footprint: FootprintCode = polymorphActive ? '1x1' : unitFootprint
+    const set = polymorphActive
+      ? polymorphBattleSheet
+      : sheetSetForUnit(stack.unitId, catalog, unitSheets)
     if (!set?.animated) {
       continue
     }
-    const visual = stackVisuals[stack.id] ?? {
+    let visual = stackVisuals[stack.id] ?? {
       kind: 'idle' as const,
       startedMs: now,
       frameOffset: 0,
+    }
+    if (polymorphActive) {
+      visual = clampPolymorphBattleVisual(visual)
     }
     const anchor = anchorAt(field.anchors, stack.q, stack.r)
     if (!anchor) {
@@ -331,7 +480,7 @@ export function CombatBattleAnimLayer({
       anchor,
       field.hexPx,
       settings.footOffsetPct,
-      footprint,
+      unitFootprint,
       stack.side,
       visual,
       now,
@@ -345,12 +494,11 @@ export function CombatBattleAnimLayer({
     if (!sheet) {
       continue
     }
-    const scale = combatBattleUnitSpriteScale(
+    const scale = combatBattleUnitScaleForSheetSet(
       field.hexPx,
       footprint,
       stack.side,
-      sheet.restHeight,
-      picked.frame.w,
+      set,
       settings,
     )
     const unit = unitById(catalog, stack.unitId)
@@ -469,6 +617,9 @@ export function CombatBattleAnimLayer({
         angleDeg={sh.angleDeg}
         flipY={sh.flipY}
         rotate={sh.rotate}
+        scaleUniform={sh.scaleUniform !== false}
+        pinAnchorX={sh.pinAnchorX}
+        pinAnchorY={sh.pinAnchorY}
       />,
     )
   }

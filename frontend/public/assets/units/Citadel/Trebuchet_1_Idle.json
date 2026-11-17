@@ -1,0 +1,70 @@
+{
+  "frames": {
+    "Trebuchet_1_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 187,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 187,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 187,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.5032,
+        "y": 0.9898
+      },
+      "duration": 1000
+    },
+    "Trebuchet_1_Idle_Stand": {
+      "frame": {
+        "x": 187,
+        "y": 0,
+        "w": 187,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 187,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 187,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.5032,
+        "y": 0.9898
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "image": "Trebuchet_1_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 374,
+      "h": 204
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.5032,
+      "y": 0.9898
+    },
+    "rest_height": 200
+  }
+}

@@ -12,6 +12,7 @@ import type { CombatBattle, CombatStack, CombatTile } from './battle'
 import { isHeroStack, stackMoveSpeed, stackDefense, stackResistance, scaleBySignedPct } from './battle'
 import { chanceRollLog, rollChancePct } from './combatLog'
 import { polymorphBreakChancePct } from './abilityStatMath'
+import { devLogPolymorphConditionGained } from './polymorphDevLog'
 import {
   combatReachable,
   footprintSpecFor,
@@ -33,8 +34,8 @@ export const TAUNT_CONDITION_ID = 6
 export const VANISH_CONDITION_ID = 9
 /** BR S7-4: Slow — Speed −33% while active (duration from source ability). */
 export const SLOW_CONDITION_ID = 12
-export const POLYMORPH_ART_FILENAME = 'Polymorph_1.png'
-
+/** BR G14-7: Polymorph — harmless transform; catalog `condition.id` is 7 when seeded. */
+export const POLYMORPH_CONDITION_ID = 7
 /** Blind: attacks from the afflicted stack miss this often. */
 export const BLIND_MISS_PCT = 50
 
@@ -61,7 +62,16 @@ export function conditionRemaining(
   stack: CombatStack,
   conditionId: number,
 ): number {
-  return stack.conditions?.[conditionId] ?? 0
+  const map = stack.conditions
+  if (!map) {
+    return 0
+  }
+  const direct = map[conditionId]
+  if (direct != null) {
+    return direct
+  }
+  const keyed = (map as Record<string, number | undefined>)[String(conditionId)]
+  return keyed ?? 0
 }
 
 export function fearConditionId(catalog: ReferenceCatalog): number {
@@ -302,7 +312,14 @@ export function polymorphConditionId(catalog: ReferenceCatalog): number {
   const named = catalog.condition.find(
     (row) => row.value.trim().toLowerCase() === 'polymorph',
   )
-  return named?.id ?? 0
+  if (named) {
+    return named.id
+  }
+  const byId = catalog.condition.find((row) => row.id === POLYMORPH_CONDITION_ID)
+  if (byId) {
+    return POLYMORPH_CONDITION_ID
+  }
+  return POLYMORPH_CONDITION_ID
 }
 
 export function isPolymorphed(
@@ -310,7 +327,22 @@ export function isPolymorphed(
   catalog: ReferenceCatalog,
 ): boolean {
   const id = polymorphConditionId(catalog)
-  return id > 0 && conditionRemaining(stack, id) > 0
+  if (id > 0 && conditionRemaining(stack, id) > 0) {
+    return true
+  }
+  for (const [rawId, left] of Object.entries(stack.conditions ?? {})) {
+    if ((left ?? 0) <= 0) {
+      continue
+    }
+    const conditionId = Number(rawId)
+    if (!Number.isInteger(conditionId)) {
+      continue
+    }
+    if (conditionName(catalog, conditionId).trim().toLowerCase() === 'polymorph') {
+      return true
+    }
+  }
+  return false
 }
 
 export function polymorphConditionName(catalog: ReferenceCatalog): string {
@@ -506,6 +538,12 @@ export function tryInflictSpec(
         [spec.conditionId]: spec.extra,
       },
     }
+  }
+  if (
+    spec.conditionId === POLYMORPH_CONDITION_ID ||
+    spec.conditionId === polymorphConditionId(catalog)
+  ) {
+    devLogPolymorphConditionGained(next, catalog)
   }
   return {
     stack: next,

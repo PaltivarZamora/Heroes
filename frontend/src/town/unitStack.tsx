@@ -12,12 +12,7 @@ import {
   noteAdvancedPictureBorrow,
   unitStaticArtCandidates,
 } from './unitArtFallback'
-import {
-  isUnitPictureUrlKnownFailed,
-  markUnitPictureNone,
-  markUnitPictureUrlFailed,
-  unitPictureResolved,
-} from './unitPictureTexture'
+import { isUnitPictureUrlKnownFailed, markUnitPictureUrlFailed } from './unitPictureTexture'
 import { unitStaticPictureUrls } from './slotArt'
 
 export type UnitStackView = {
@@ -26,6 +21,8 @@ export type UnitStackView = {
   qty: number
   townName?: string | null
   unitId?: number
+  /** When true, use filename/townName instead of unitId art lookup (e.g. polymorph Stand). */
+  preferFilename?: boolean
 }
 
 export function stackView(
@@ -59,6 +56,7 @@ export function UnitStaticArtImg({
   unitId,
   glowScale = 1,
   className,
+  preferFilename = false,
 }: {
   filename: string | null
   townName?: string | null
@@ -66,11 +64,20 @@ export function UnitStaticArtImg({
   unitId?: number
   glowScale?: number
   className?: string
+  preferFilename?: boolean
 }) {
   const unit = unitId != null ? unitById(catalog ?? null, unitId) : null
   const candidates = useMemo(() => {
+    if (!catalog) {
+      return []
+    }
     let raw: Array<{ url: string; glow: boolean }> = []
-    if (unit && catalog) {
+    if (preferFilename && filename) {
+      raw = unitStaticPictureUrls(filename, townName).map((url) => ({
+        url,
+        glow: false as const,
+      }))
+    } else if (unit) {
       raw = unitStaticArtCandidates(catalog, unit)
     } else if (filename) {
       raw = unitStaticPictureUrls(filename, townName).map((url) => ({
@@ -79,17 +86,13 @@ export function UnitStaticArtImg({
       }))
     }
     return raw.filter((row) => !isUnitPictureUrlKnownFailed(row.url))
-  }, [catalog, unit, filename, townName])
+  }, [catalog, unit, filename, townName, preferFilename])
   const [index, setIndex] = useState(0)
   useEffect(() => {
     setIndex(0)
-  }, [filename, townName, unitId, catalog])
-  if (unitId != null && unitPictureResolved(unitId)?.kind === 'none') {
-    return (
-      <span className="town-building-slot-filename unit-art-placeholder">
-        {filename || 'Unknown'}
-      </span>
-    )
+  }, [filename, townName, unitId, catalog, preferFilename])
+  if (!catalog) {
+    return <span className="unit-stack-art-pending" aria-hidden="true" />
   }
   if (!filename || candidates.length === 0) {
     return (
@@ -99,9 +102,6 @@ export function UnitStaticArtImg({
     )
   }
   if (index >= candidates.length) {
-    if (unitId != null) {
-      markUnitPictureNone(unitId)
-    }
     return (
       <span className="town-building-slot-filename unit-art-placeholder">
         {filename}
@@ -128,13 +128,7 @@ export function UnitStaticArtImg({
       }}
       onError={() => {
         markUnitPictureUrlFailed(candidate.url)
-        setIndex((i) => {
-          const next = i + 1
-          if (unitId != null && next >= candidates.length) {
-            markUnitPictureNone(unitId)
-          }
-          return next
-        })
+        setIndex((i) => i + 1)
       }}
     />
   )
@@ -147,6 +141,7 @@ export function UnitStackFace({
   townName,
   unitId,
   catalog,
+  preferFilename,
 }: UnitStackView & { catalog?: ReferenceCatalog | null }) {
   if (empty) {
     return <span>Empty</span>
@@ -158,6 +153,7 @@ export function UnitStackFace({
         townName={townName}
         catalog={catalog}
         unitId={unitId}
+        preferFilename={preferFilename}
       />
       <span className="unit-qty-badge">{formatAmount(qty)}</span>
     </span>

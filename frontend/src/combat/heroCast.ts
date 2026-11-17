@@ -7,6 +7,7 @@ import {
   type CombatSide,
   type CombatStack,
 } from './battle'
+import { heroMountFootprintHexes } from './combatHeroMountArt'
 import { stackOccupyingHex } from './occupancy'
 
 const ENERGY_RESOURCE_ID = 1
@@ -135,6 +136,35 @@ export function markHeroActed(
   }
 }
 
+export function heroStackAtHex(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  q: number,
+  r: number,
+  side?: CombatSide,
+): CombatStack | null {
+  const occupant = stackOccupyingHex(battle.stacks, q, r, catalog)
+  if (occupant && !isHeroStack(occupant)) {
+    return null
+  }
+  for (const stack of battle.stacks) {
+    if (!isHeroStack(stack) || stack.qty <= 0) {
+      continue
+    }
+    if (side != null && stack.side !== side) {
+      continue
+    }
+    if (
+      heroMountFootprintHexes(stack, catalog).some(
+        (hex) => hex.q === q && hex.r === r,
+      )
+    ) {
+      return stack
+    }
+  }
+  return null
+}
+
 export function ownHeroAtHex(
   battle: CombatBattle,
   catalog: ReferenceCatalog,
@@ -142,16 +172,7 @@ export function ownHeroAtHex(
   r: number,
   side: CombatSide,
 ): CombatStack | null {
-  const occupant =
-    stackOccupyingHex(battle.stacks, q, r, catalog) ??
-    battle.stacks.find((row) => row.q === q && row.r === r) ??
-    null
-  if (
-    occupant == null ||
-    !isHeroStack(occupant) ||
-    occupant.side !== side
-  ) {
-    return null
-  }
-  return occupant
+  return heroStackAtHex(battle, catalog, q, r, side)
 }
+
+export { heroMountFootprintHexes } from './combatHeroMountArt'
