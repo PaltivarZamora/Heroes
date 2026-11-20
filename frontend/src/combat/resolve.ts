@@ -25,7 +25,9 @@ import {
 } from './battlefield'
 import { applyDemonReinforcement } from './demonReinforcement'
 import { applyClericEndOfBattlePassive } from './templePassive'
+import { battleWithoutTemporaryStacks } from './battleTemporary'
 import { isCreatureArmyUnit } from './siege'
+import { isTemporaryUnit } from '../town/unitTags'
 import { creditDefeatMobKill } from '../session/quests'
 import { removeWorldMob } from '../session/mobs'
 import { GOLD_RESOURCE_ID } from '../hex/resources'
@@ -99,7 +101,11 @@ function stackCountsTowardWipe(
   if (stack.qty <= 0 || isHeroStack(stack)) {
     return false
   }
-  return isCreatureArmyUnit(unitById(catalog, stack.unitId))
+  const unit = unitById(catalog, stack.unitId)
+  if (isTemporaryUnit(catalog, unit)) {
+    return false
+  }
+  return isCreatureArmyUnit(unit)
 }
 
 function sideHasLiving(
@@ -123,6 +129,9 @@ export function defeatedSide(
   }
   if (!defLive && atkLive) {
     return 'def'
+  }
+  if (!atkLive && !defLive) {
+    return 'atk'
   }
   return null
 }
@@ -356,6 +365,9 @@ function persistSummonedStacks(
     if (stack.persistOnSummon !== true) {
       continue
     }
+    if (isTemporaryUnit(catalog, unitById(catalog, stack.unitId))) {
+      continue
+    }
     const liveHero = next.heroes.find((row) => row.id === hero.id)
     if (!liveHero) {
       break
@@ -442,6 +454,7 @@ export function applyCombatOutcome(
   if (!loserSide) {
     return null
   }
+  battle = battleWithoutTemporaryStacks(battle, catalog)
   const winnerSide: CombatSide = loserSide === 'atk' ? 'def' : 'atk'
   const loserId = loserSide === 'atk' ? attackerHeroId : defenderHeroId
   const winnerId = winnerSide === 'atk' ? attackerHeroId : defenderHeroId
@@ -710,6 +723,7 @@ export function applyCombatEscape(
   if (!loser) {
     return null
   }
+  battle = battleWithoutTemporaryStacks(battle, catalog)
   const summary: CombatSummary = {
     loserPlayer:
       escapingSide === 'atk' ? battle.attackerPlayer : battle.defenderPlayer,

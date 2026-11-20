@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Fire_Totem_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_001": {
+      "frame": {
+        "x": 50,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_002": {
+      "frame": {
+        "x": 100,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_003": {
+      "frame": {
+        "x": 150,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_004": {
+      "frame": {
+        "x": 200,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_005": {
+      "frame": {
+        "x": 250,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_006": {
+      "frame": {
+        "x": 300,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_007": {
+      "frame": {
+        "x": 0,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_008": {
+      "frame": {
+        "x": 50,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_009": {
+      "frame": {
+        "x": 100,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_010": {
+      "frame": {
+        "x": 150,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_011": {
+      "frame": {
+        "x": 200,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_012": {
+      "frame": {
+        "x": 250,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_013": {
+      "frame": {
+        "x": 300,
+        "y": 225,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_014": {
+      "frame": {
+        "x": 0,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_015": {
+      "frame": {
+        "x": 50,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_016": {
+      "frame": {
+        "x": 100,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_017": {
+      "frame": {
+        "x": 150,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_018": {
+      "frame": {
+        "x": 200,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_019": {
+      "frame": {
+        "x": 250,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_020": {
+      "frame": {
+        "x": 300,
+        "y": 450,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_021": {
+      "frame": {
+        "x": 0,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_022": {
+      "frame": {
+        "x": 50,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_023": {
+      "frame": {
+        "x": 100,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_024": {
+      "frame": {
+        "x": 150,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_025": {
+      "frame": {
+        "x": 200,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_026": {
+      "frame": {
+        "x": 250,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_027": {
+      "frame": {
+        "x": 300,
+        "y": 675,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_028": {
+      "frame": {
+        "x": 0,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_029": {
+      "frame": {
+        "x": 50,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_030": {
+      "frame": {
+        "x": 100,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_031": {
+      "frame": {
+        "x": 150,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_032": {
+      "frame": {
+        "x": 200,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_033": {
+      "frame": {
+        "x": 250,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_034": {
+      "frame": {
+        "x": 300,
+        "y": 900,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_035": {
+      "frame": {
+        "x": 0,
+        "y": 1125,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 73
+    },
+    "Fire_Totem_Idle_Stand": {
+      "frame": {
+        "x": 50,
+        "y": 1125,
+        "w": 50,
+        "h": 225
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 225
+      },
+      "sourceSize": {
+        "w": 50,
+        "h": 225
+      },
+      "anchor": {
+        "x": 0.4755,
+        "y": 0.9915
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Fire_Totem_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 350,
+      "h": 1350
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.4755,
+      "y": 0.9915
+    },
+    "rest_height": 200
+  }
+}

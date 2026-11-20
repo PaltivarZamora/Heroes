@@ -30,7 +30,7 @@ import {
 import type { CombatBattle } from './battle'
 import { isHeroStack } from './battle'
 import type { ReferenceCatalog } from '../town/catalog'
-import { unitById } from '../town/catalog'
+import { unitById, unitFootprint } from '../town/catalog'
 import { combatStackFootprint, moveKindForUnit } from './movement'
 import { proceduralIdleMotionForStack, proceduralIdleTransformCss } from './proceduralBattleIdle'
 import { proceduralHitTransformCss, proceduralHitTransformOrigin } from './proceduralBattleHit'
@@ -743,6 +743,22 @@ export function CombatBattleDieFxLayer({
       tomb.r,
       tomb.side,
       tombCorpseArtFootprintCode(tomb, catalog),
+    )
+  }
+  for (const [id, visual] of Object.entries(stackVisuals)) {
+    if (!visual?.dieFallbackFx || seen.has(id)) {
+      continue
+    }
+    const anchor = visual.dieFxAnchor
+    if (!anchor) {
+      continue
+    }
+    pushFx(
+      id,
+      anchor.q,
+      anchor.r,
+      anchor.side,
+      unitFootprint(unitById(catalog, anchor.unitId)),
     )
   }
 

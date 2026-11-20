@@ -3,6 +3,10 @@ import type { BattleAnimSettings } from './battleAnimConfig'
 import { battleHitSettings } from './battleAnimConfig'
 import { logBattleReactionTest } from './battleAnimConfig'
 import { appendBattleAnimCombatLog } from './battleAnimLogBridge'
+import {
+  beginBattleTimeline,
+  endBattleTimeline,
+} from './battleHangWatchdog'
 import type { BattleUnitSheetSet } from './battleUnitSheet'
 import {
   beginBattleUnitMoveSound,
@@ -19,8 +23,10 @@ import {
   defaultStackVisual,
   restoreIdleStackVisual,
   sleepMs,
+  type DieFxAnchor,
   type StackBattleVisual,
 } from './combatUnitAnimVisual'
+import { unitHasNoCorpseOnWipe } from '../town/unitTags'
 import { updateSession } from '../session/store'
 import type { ReferenceCatalog } from '../town/catalog'
 import { combatStackFootprint } from './movement'
@@ -381,6 +387,8 @@ export async function runBattleHitReactionPhase(opts: {
 export async function runBattleDieReactionPhase(opts: {
   stackId: string
   set: BattleUnitSheetSet
+  catalog: ReferenceCatalog
+  unitId: number
   settings: BattleAnimSettings
   sideFlipX: boolean
   setStackVisuals: Dispatch<SetStateAction<Record<string, StackBattleVisual>>>
@@ -431,28 +439,68 @@ export async function runBattleDieReactionPhase(opts: {
     )
   }
   const animTailMs = Math.max(0, durationMs - soundDelayMs)
-  await Promise.all([
-    sleepMs(animTailMs, opts.isCancelled),
-    soundHandle ? soundHandle.waitUntilDone() : Promise.resolve(),
-  ])
-  opts.setStackVisuals((prev) => ({
-    ...prev,
-    [opts.stackId]: {
-      kind: 'Die',
-      startedMs,
-      frameOffset: 0,
-      dieHoldFrame: true,
-      flipX: opts.sideFlipX,
-    },
-  }))
-  opts.onLogged?.(
-    `Die: sheet found, sound ${soundOk ? 'played' : 'missing'}, last frame held`,
-  )
+  const dieSound = beginBattleTimeline('die-sound', opts.stackId)
+  try {
+    await Promise.all([
+      sleepMs(animTailMs, opts.isCancelled),
+      soundHandle ? soundHandle.waitUntilDone() : Promise.resolve(),
+    ])
+  } finally {
+    endBattleTimeline(dieSound)
+  }
+  const unit = unitById(opts.catalog, opts.unitId)
+  if (unitHasNoCorpseOnWipe(opts.catalog, unit)) {
+    opts.setStackVisuals((prev) => {
+      const { [opts.stackId]: _drop, ...rest } = prev
+      return rest
+    })
+    opts.onLogged?.(
+      `Die: sheet found, sound ${soundOk ? 'played' : 'missing'}, no corpse`,
+    )
+  } else {
+    opts.setStackVisuals((prev) => ({
+      ...prev,
+      [opts.stackId]: {
+        kind: 'Die',
+        startedMs,
+        frameOffset: 0,
+        dieHoldFrame: true,
+        flipX: opts.sideFlipX,
+      },
+    }))
+    opts.onLogged?.(
+      `Die: sheet found, sound ${soundOk ? 'played' : 'missing'}, last frame held`,
+    )
+  }
   return true
+}
+
+function dieFxAnchorForWipe(
+  before: CombatStack | undefined,
+  tomb: CombatTombstone | undefined,
+): DieFxAnchor | undefined {
+  if (before) {
+    return {
+      q: before.q,
+      r: before.r,
+      side: before.side,
+      unitId: before.unitId,
+    }
+  }
+  if (tomb) {
+    return {
+      q: tomb.q,
+      r: tomb.r,
+      side: tomb.side,
+      unitId: tomb.unitId,
+    }
+  }
+  return undefined
 }
 
 async function runBattleWipedDeathAnim(opts: {
   stackId: string
+  unitId: number
   set: BattleUnitSheetSet | null
   catalog: ReferenceCatalog
   settings: BattleAnimSettings
@@ -465,6 +513,7 @@ async function runBattleWipedDeathAnim(opts: {
   strikeKill: boolean
   proceduralHit: ProceduralHitMotion | null
   onDieStart?: () => void
+  dieFxAnchor?: DieFxAnchor
 }): Promise<void> {
   const hasDieSheet = battleUnitHasOwnDrawableDieSheet(opts.set)
   const hasHitSheet = opts.set ? battleUnitHasHitSheet(opts.set) : false
@@ -489,6 +538,8 @@ async function runBattleWipedDeathAnim(opts: {
           opts.setStackVisuals,
           opts.stackId,
           primedSchedule.schedule,
+          undefined,
+          opts.dieFxAnchor,
         )
         const logLine = formatDieFallbackCombatLogLine(
           opts.unitName ?? opts.stackId,
@@ -530,6 +581,8 @@ async function runBattleWipedDeathAnim(opts: {
     await runBattleDieReactionPhase({
       stackId: opts.stackId,
       set: opts.set,
+      catalog: opts.catalog,
+      unitId: opts.unitId,
       settings: opts.settings,
       sideFlipX: opts.sideFlipX,
       setStackVisuals: opts.setStackVisuals,
@@ -543,6 +596,7 @@ async function runBattleWipedDeathAnim(opts: {
   if (primedSchedule) {
     await runBattleDieFallbackAfterHit({
       stackId: opts.stackId,
+      unitId: opts.unitId,
       catalog: opts.catalog,
       settings: opts.settings,
       schedule: primedSchedule.schedule,
@@ -568,6 +622,7 @@ async function runBattleWipedDeathAnim(opts: {
   }
   const played = await runBattleDieFallbackTimeline({
     stackId: opts.stackId,
+    unitId: opts.unitId,
     catalog: opts.catalog,
     settings: opts.settings,
     loadedEffects: opts.dieFallbackEffects,
@@ -575,10 +630,16 @@ async function runBattleWipedDeathAnim(opts: {
     hitPhaseStartMs: null,
     onDieStart: opts.onDieStart,
     isCancelled: opts.isCancelled,
+    dieFxAnchor: opts.dieFxAnchor,
   })
   if (!played) {
     opts.onDieStart?.()
-    opts.onLogged?.('Die: fallback unavailable, tombstone only')
+    const unit = unitById(opts.catalog, opts.unitId)
+    opts.onLogged?.(
+      unitHasNoCorpseOnWipe(opts.catalog, unit)
+        ? 'Die: fallback unavailable, wipe only'
+        : 'Die: fallback unavailable, tombstone only',
+    )
   }
 }
 
@@ -666,6 +727,7 @@ async function runOneTargetReactionAnim(opts: {
     if (wipedEarly) {
       await runBattleWipedDeathAnim({
         stackId: opts.stackId,
+        unitId,
         set: null,
         catalog: opts.catalog,
         settings: opts.settings,
@@ -679,6 +741,7 @@ async function runOneTargetReactionAnim(opts: {
         onLogged: logReaction,
         strikeKill: before != null,
         proceduralHit: null,
+        dieFxAnchor: dieFxAnchorForWipe(before, tomb),
       })
     } else {
       logReaction('reaction skipped: no sheet set loaded')
@@ -725,6 +788,7 @@ async function runOneTargetReactionAnim(opts: {
   if (strikeKill || wiped) {
     await runBattleWipedDeathAnim({
       stackId: opts.stackId,
+      unitId,
       set,
       catalog: opts.catalog,
       settings: opts.settings,
@@ -736,6 +800,7 @@ async function runOneTargetReactionAnim(opts: {
       onLogged: logReaction,
       strikeKill,
       proceduralHit,
+      dieFxAnchor: dieFxAnchorForWipe(before, tomb),
     })
     return
   }
@@ -776,6 +841,8 @@ export async function runWipeDieAnimsForTombs(opts: {
   isCancelled?: () => boolean
 }): Promise<void> {
   const ids = opts.tombs.map((t) => t.id)
+  const wipe = beginBattleTimeline('wipe-tombs', ids.join(',') || 'none')
+  try {
   await runTargetReactionAnims({
     beforeStacks: [],
     afterStacks: [],
@@ -788,6 +855,9 @@ export async function runWipeDieAnimsForTombs(opts: {
     setStackVisuals: opts.setStackVisuals,
     isCancelled: opts.isCancelled,
   })
+  } finally {
+    endBattleTimeline(wipe)
+  }
 }
 
 export function anyTargetReactionAnimNeeded(

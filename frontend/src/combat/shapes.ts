@@ -28,6 +28,13 @@ export type ShapeHit = {
   flatPerCreature?: number
 }
 
+/** Frozen aim used to derive a beam line (preview + resolve). */
+export type BeamPathCommit = {
+  origin: Axial
+  aimHex: Axial
+  beamLineHexes?: Axial[]
+}
+
 function keyOf(hex: Axial): string {
   return occupancyKey(hex.q, hex.r)
 }
@@ -184,6 +191,124 @@ function losBlockKeys(
  * Keep hexes along a path until (and including) the first LOS blocker.
  * Used so line/beam previews and damage stop at Earth Spikes / Barricades.
  */
+/** Beam pierce path (max range + LoS clip) — same hexes damage uses. */
+export function resolveBeamPathHexes(
+  attacker: CombatStack,
+  aim: Axial,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  geometry?: ShapeGeometryOpts | null,
+): Axial[] {
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape !== 'beam') {
+    return []
+  }
+  const acting = actorAt(attacker, battle)
+  const board = boardKeys(tiles)
+  const standAnchor = geometry?.standAnchor ?? {
+    q: acting.attacker.q,
+    r: acting.attacker.r,
+  }
+  const geo: ShapeGeometryOpts = {
+    standAnchor,
+    attacker: acting.attacker,
+    wedgeZone: geometry?.wedgeZone,
+    chargeStandAnchor: geometry?.chargeStandAnchor,
+  }
+  const origin = shapeActionOrigin(geo, catalog, aim)
+  const maxRange = stackMaxRange(acting.attacker, catalog)
+  const rawHexes =
+    spec.dmgIncreasePerHex != null && spec.dmgIncreasePerHex > 0
+      ? lineHexesToRange(origin, aim, maxRange, board)
+      : geometricHexes(
+          spec,
+          origin,
+          aim,
+          battle,
+          board,
+          acting.attacker.side,
+          tiles,
+          catalog,
+          geo,
+        )
+  return clipHexesAtLosBlocker(
+    rawHexes,
+    tiles,
+    battle.stacks,
+    catalog,
+    origin,
+  )
+}
+
+/** Geometric pierce line from a frozen commit (no LoS clip). */
+export function beamLineHexesFromCommit(
+  commit: Pick<BeamPathCommit, 'origin' | 'aimHex'>,
+  attacker: CombatStack,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+): Axial[] {
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape !== 'beam') {
+    return []
+  }
+  const board = boardKeys(tiles)
+  const maxRange = stackMaxRange(attacker, catalog)
+  return lineHexesToRange(commit.origin, commit.aimHex, maxRange, board)
+}
+
+export function beamClippedPathFromCommit(
+  commit: BeamPathCommit,
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+): Axial[] {
+  const line =
+    commit.beamLineHexes ??
+    beamLineHexesFromCommit(commit, attacker, catalog, tiles)
+  if (line.length === 0) {
+    return []
+  }
+  return clipHexesAtLosBlocker(
+    line,
+    tiles,
+    battle.stacks,
+    catalog,
+    commit.origin,
+  )
+}
+
+export function beamEnemyImpactKeysOnPath(
+  pathHexes: Axial[],
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  attackerSide: CombatStack['side'],
+  allowFriendly = false,
+): string[] {
+  const keys: string[] = []
+  const seen = new Set<string>()
+  for (const hex of pathHexes) {
+    const stack = occupant(battle, hex, catalog)
+    if (isFriendly(stack, attackerSide) && !allowFriendly) {
+      continue
+    }
+    if (stack && isUntargetableStack(stack, catalog)) {
+      continue
+    }
+    if (!stack || stack.qty <= 0) {
+      continue
+    }
+    const key = keyOf(hex)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    keys.push(key)
+  }
+  return keys
+}
+
 export function clipHexesAtLosBlocker(
   hexes: Axial[],
   tiles: CombatTile[],
@@ -366,7 +491,7 @@ function hexHits(
   const seen = new Set<string>()
   for (const hex of hexes) {
     for (const stack of stacksOccupyingHex(battle.stacks, hex.q, hex.r, catalog)) {
-      if (isFriendly(stack, side) && !allowFriendly) {
+      if (stack.side === side && !allowFriendly) {
         continue
       }
       if (isUntargetableStack(stack, catalog)) {
@@ -489,13 +614,17 @@ export function geometricHexes(
         )
       }
       return uniqueHexes(hexDisk(origin, spec.radius), board)
-    case 'beam':
-      return uniqueHexes(hexLine(origin, aim), board)
+    case 'beam': {
+      const maxRange = geometry?.attacker
+        ? stackMaxRange(geometry.attacker, catalog)
+        : 99
+      return uniqueHexes(
+        lineHexesToRange(origin, aim, maxRange, board),
+        board,
+      )
+    }
     case 'charge_line':
       return uniqueHexes(chargeLineHexes(origin, aim, board), board)
-    case 'line':
-      // Full length clipped in resolveShapeHits / preview via stackMaxRange.
-      return uniqueHexes(lineHexesToRange(origin, aim, 99, board), board)
     case 'breath':
       return uniqueHexes(breathHexes(origin, aim, spec.rows), board)
     case 'rain':
@@ -540,20 +669,7 @@ export function previewImpactKeys(
   }
   const origin = shapeActionOrigin(geo, catalog, aim)
   let hexes: Axial[]
-  if (spec.shape === 'line') {
-    hexes = clipHexesAtLosBlocker(
-      lineHexesToRange(
-        origin,
-        aim,
-        stackMaxRange(acting.attacker, catalog),
-        board,
-      ),
-      tiles,
-      battle.stacks,
-      catalog,
-      origin,
-    )
-  } else if (spec.shape === 'charge_line') {
+  if (spec.shape === 'charge_line') {
     hexes = clipHexesAtLosBlocker(
       chargeLineHexes(origin, aim, board),
       tiles,
@@ -562,22 +678,22 @@ export function previewImpactKeys(
       origin,
     )
   } else if (spec.shape === 'beam') {
-    hexes = clipHexesAtLosBlocker(
-      geometricHexes(
-        spec,
-        origin,
-        aim,
-        acting.battle,
-        board,
-        acting.attacker.side,
-        tiles,
-        catalog,
-        geo,
-      ),
-      tiles,
-      battle.stacks,
-      catalog,
+    const commit: BeamPathCommit = {
       origin,
+      aimHex: aim,
+      beamLineHexes: beamLineHexesFromCommit(
+        { origin, aimHex: aim },
+        acting.attacker,
+        catalog,
+        tiles,
+      ),
+    }
+    hexes = beamClippedPathFromCommit(
+      commit,
+      acting.attacker,
+      acting.battle,
+      catalog,
+      tiles,
     )
   } else {
     hexes = geometricHexes(
@@ -592,18 +708,7 @@ export function previewImpactKeys(
       geo,
     )
   }
-  const keys: string[] = []
-  for (const hex of hexes) {
-    const stack = occupant(acting.battle, hex, catalog)
-    if (isFriendly(stack, acting.attacker.side)) {
-      continue
-    }
-    if (stack && isUntargetableStack(stack, catalog)) {
-      continue
-    }
-    keys.push(keyOf(hex))
-  }
-  return keys
+  return hexes.map((hex) => keyOf(hex))
 }
 
 export function resolveShapeHits(
@@ -628,6 +733,9 @@ export function resolveShapeHits(
     chargePathOrigin?: Axial | null
     wedgeZone?: number | null
     standAnchor?: Axial | null
+    /** Beam: frozen clipped path (LoS only re-run). */
+    beamClippedPath?: Axial[] | null
+    beamPathOrigin?: Axial | null
   },
 ): ShapeHit[] {
   const base = unitAttackShape(unitById(catalog, attacker.unitId))
@@ -696,25 +804,36 @@ export function resolveShapeHits(
     return hits
   }
 
-  if (spec.shape === 'line' || spec.shape === 'charge_line') {
+  if (
+    spec.shape === 'charge_line' ||
+    (spec.shape === 'beam' &&
+      spec.dmgIncreasePerHex != null &&
+      spec.dmgIncreasePerHex > 0)
+  ) {
     const perHex = Math.max(1, spec.dmgIncreasePerHex ?? 1)
     const minDmg = Math.max(0, stackMinDmg(acting.attacker, catalog))
-    const rawHexes =
-      spec.shape === 'line'
-        ? lineHexesToRange(
-            origin,
-            aim,
-            stackMaxRange(acting.attacker, catalog),
-            board,
-          )
-        : chargeLineHexes(origin, aim, board)
-    const hexes = clipHexesAtLosBlocker(
-      rawHexes,
-      tiles,
-      field.stacks,
-      catalog,
-      origin,
-    )
+    const pathOrigin = options?.beamPathOrigin ?? origin
+    const hexes =
+      spec.shape === 'beam' && options?.beamClippedPath != null
+        ? options.beamClippedPath
+        : (() => {
+            const rawHexes =
+              spec.shape === 'charge_line'
+                ? chargeLineHexes(origin, aim, board)
+                : lineHexesToRange(
+                    pathOrigin,
+                    aim,
+                    stackMaxRange(acting.attacker, catalog),
+                    board,
+                  )
+            return clipHexesAtLosBlocker(
+              rawHexes,
+              tiles,
+              field.stacks,
+              catalog,
+              pathOrigin,
+            )
+          })()
     const hits: ShapeHit[] = []
     const seen = new Set<string>()
     for (const hex of hexes) {
@@ -732,7 +851,7 @@ export function resolveShapeHits(
         continue
       }
       seen.add(stack.id)
-      const dist = hexDistance(origin, hex)
+      const dist = hexDistance(pathOrigin, hex)
       hits.push({
         hex,
         stack,
@@ -744,25 +863,11 @@ export function resolveShapeHits(
   }
 
   const geoHexes =
-    spec.shape === 'beam'
-      ? clipHexesAtLosBlocker(
-          geometricHexes(
-            spec,
-            origin,
-            aim,
-            field,
-            board,
-            side,
-            tiles,
-            catalog,
-            geometry,
-          ),
-          tiles,
-          field.stacks,
-          catalog,
-          origin,
-        )
-      : geometricHexes(
+    spec.shape === 'beam' && options?.beamClippedPath != null
+      ? options.beamClippedPath
+      : spec.shape === 'beam'
+        ? resolveBeamPathHexes(attacker, aim, field, catalog, tiles, geometry)
+        : geometricHexes(
           spec,
           origin,
           aim,

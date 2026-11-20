@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Earth_Totem_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_001": {
+      "frame": {
+        "x": 98,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_002": {
+      "frame": {
+        "x": 196,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_003": {
+      "frame": {
+        "x": 294,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_004": {
+      "frame": {
+        "x": 392,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_005": {
+      "frame": {
+        "x": 490,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_006": {
+      "frame": {
+        "x": 588,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_007": {
+      "frame": {
+        "x": 0,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_008": {
+      "frame": {
+        "x": 98,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_009": {
+      "frame": {
+        "x": 196,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_010": {
+      "frame": {
+        "x": 294,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_011": {
+      "frame": {
+        "x": 392,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_012": {
+      "frame": {
+        "x": 490,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_013": {
+      "frame": {
+        "x": 588,
+        "y": 205,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_014": {
+      "frame": {
+        "x": 0,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_015": {
+      "frame": {
+        "x": 98,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_016": {
+      "frame": {
+        "x": 196,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_017": {
+      "frame": {
+        "x": 294,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_018": {
+      "frame": {
+        "x": 392,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_019": {
+      "frame": {
+        "x": 490,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_020": {
+      "frame": {
+        "x": 588,
+        "y": 410,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_021": {
+      "frame": {
+        "x": 0,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_022": {
+      "frame": {
+        "x": 98,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_023": {
+      "frame": {
+        "x": 196,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_024": {
+      "frame": {
+        "x": 294,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_025": {
+      "frame": {
+        "x": 392,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_026": {
+      "frame": {
+        "x": 490,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_027": {
+      "frame": {
+        "x": 588,
+        "y": 615,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_028": {
+      "frame": {
+        "x": 0,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_029": {
+      "frame": {
+        "x": 98,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_030": {
+      "frame": {
+        "x": 196,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_031": {
+      "frame": {
+        "x": 294,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_032": {
+      "frame": {
+        "x": 392,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_033": {
+      "frame": {
+        "x": 490,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_034": {
+      "frame": {
+        "x": 588,
+        "y": 820,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_035": {
+      "frame": {
+        "x": 0,
+        "y": 1025,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 75
+    },
+    "Earth_Totem_Idle_Stand": {
+      "frame": {
+        "x": 98,
+        "y": 1025,
+        "w": 98,
+        "h": 205
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 98,
+        "h": 205
+      },
+      "sourceSize": {
+        "w": 98,
+        "h": 205
+      },
+      "anchor": {
+        "x": 0.5563,
+        "y": 0.9898
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Earth_Totem_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 686,
+      "h": 1230
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.5563,
+      "y": 0.9898
+    },
+    "rest_height": 200
+  }
+}

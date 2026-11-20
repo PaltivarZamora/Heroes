@@ -1,4 +1,8 @@
 import { Assets, Spritesheet, type Texture } from 'pixi.js'
+import {
+  isOptionalAssetNotFound,
+  optionalImageUrlReachable,
+} from '../assets/devAssetResponse'
 import type { GameSession } from '../session/types'
 import { loadSoundFile, playSoundOnce } from '../audio/soundPlayer'
 import {
@@ -6,6 +10,9 @@ import {
   nonNegativeAnimConfig,
 } from '../config/animConfig'
 import type { ReferenceCatalog } from '../town/catalog'
+import { unitById } from '../town/catalog'
+import { unitHasNoCorpseOnWipe } from '../town/unitTags'
+import type { DieFxAnchor } from './combatUnitAnimVisual'
 import { appendBattleAnimWorldLog } from './battleAnimConfig'
 import type { BattleAnimSettings } from './battleAnimConfig'
 import type { BattleUnitFrame } from './battleUnitSheet'
@@ -178,6 +185,10 @@ async function loadDieFallbackEffect(
   const promise = (async (): Promise<DieFallbackEffectSheet | null> => {
     try {
       const response = await fetch(jsonUrl)
+      if (isOptionalAssetNotFound(response)) {
+        effectCache.set(key, null)
+        return null
+      }
       if (!response.ok) {
         effectCache.set(key, null)
         return null
@@ -203,6 +214,9 @@ async function loadDieFallbackEffect(
       let imageUrl = ''
       for (const candidate of imageCandidates) {
         imageUrl = `${EFFECT_DIR}/${candidate.replace(/^\/+/, '')}`
+        if (!(await optionalImageUrlReachable(imageUrl))) {
+          continue
+        }
         try {
           const tex = await Assets.load<Texture>(imageUrl)
           if (tex.width >= 1 && tex.height >= 1) {
@@ -424,6 +438,7 @@ export function applyDieFallbackScheduleVisual(
   stackId: string,
   schedule: DieFallbackFxSchedule,
   merge?: import('./combatUnitAnimVisual').StackBattleVisual,
+  dieFxAnchor?: DieFxAnchor,
 ): void {
   setStackVisuals((prev) => ({
     ...prev,
@@ -434,8 +449,47 @@ export function applyDieFallbackScheduleVisual(
         frameOffset: 0,
       }),
       dieFallbackFx: schedule,
+      ...(dieFxAnchor ? { dieFxAnchor } : {}),
     },
   }))
+}
+
+function finishDieFallbackVisual(
+  setStackVisuals: import('react').Dispatch<
+    import('react').SetStateAction<
+      Record<string, import('./combatUnitAnimVisual').StackBattleVisual>
+    >
+  >,
+  stackId: string,
+  catalog: ReferenceCatalog,
+  unitId: number,
+): void {
+  const unit = unitById(catalog, unitId)
+  if (unitHasNoCorpseOnWipe(catalog, unit)) {
+    setStackVisuals((prev) => {
+      const { [stackId]: _drop, ...rest } = prev
+      return rest
+    })
+    return
+  }
+  setStackVisuals((prev) => {
+    const row = prev[stackId]
+    if (!row?.dieFallbackFx) {
+      return prev
+    }
+    const { dieFallbackFx: _drop, dieFxAnchor: _anchor, ...rest } = row
+    return {
+      ...prev,
+      [stackId]: {
+        ...rest,
+        kind: 'idle' as const,
+        startedMs: performance.now(),
+        frameOffset: 0,
+        flipX: rest.flipX ?? row.flipX,
+        corpseBody: true,
+      },
+    }
+  })
 }
 
 export async function awaitDieFallbackTimelineTail(opts: {
@@ -466,6 +520,7 @@ export async function awaitDieFallbackTimelineTail(opts: {
 
 export async function runBattleDieFallbackTimeline(opts: {
   stackId: string
+  unitId: number
   catalog: ReferenceCatalog
   settings: BattleAnimSettings
   loadedEffects: Map<string, DieFallbackEffectSheet | null>
@@ -477,6 +532,7 @@ export async function runBattleDieFallbackTimeline(opts: {
   hitPhaseStartMs: number | null
   onDieStart?: () => void
   isCancelled?: () => boolean
+  dieFxAnchor?: DieFxAnchor
 }): Promise<boolean> {
   const effect = pickRandomLoadedDieFallbackEffect(
     opts.catalog,
@@ -497,6 +553,8 @@ export async function runBattleDieFallbackTimeline(opts: {
     opts.setStackVisuals,
     opts.stackId,
     schedule,
+    undefined,
+    opts.dieFxAnchor,
   )
   if (opts.hitPhaseStartMs == null) {
     await sleepUntil(schedule.diePhaseStartMs, opts.isCancelled)
@@ -514,29 +572,18 @@ export async function runBattleDieFallbackTimeline(opts: {
     isCancelled: opts.isCancelled,
     atDiePhase: true,
   })
-  opts.setStackVisuals((prev) => {
-    const row = prev[opts.stackId]
-    if (!row?.dieFallbackFx) {
-      return prev
-    }
-    const { dieFallbackFx: _drop, ...rest } = row
-    return {
-      ...prev,
-      [opts.stackId]: {
-        ...rest,
-        kind: 'idle' as const,
-        startedMs: performance.now(),
-        frameOffset: 0,
-        flipX: rest.flipX ?? row.flipX,
-        corpseBody: true,
-      },
-    }
-  })
+  finishDieFallbackVisual(
+    opts.setStackVisuals,
+    opts.stackId,
+    opts.catalog,
+    opts.unitId,
+  )
   return true
 }
 
 export async function runBattleDieFallbackAfterHit(opts: {
   stackId: string
+  unitId: number
   catalog: ReferenceCatalog
   settings: BattleAnimSettings
   schedule: DieFallbackFxSchedule
@@ -556,24 +603,12 @@ export async function runBattleDieFallbackAfterHit(opts: {
     isCancelled: opts.isCancelled,
     atDiePhase: true,
   })
-  opts.setStackVisuals((prev) => {
-    const row = prev[opts.stackId]
-    if (!row?.dieFallbackFx) {
-      return prev
-    }
-    const { dieFallbackFx: _drop, ...rest } = row
-    return {
-      ...prev,
-      [opts.stackId]: {
-        ...rest,
-        kind: 'idle' as const,
-        startedMs: performance.now(),
-        frameOffset: 0,
-        flipX: rest.flipX ?? row.flipX,
-        corpseBody: true,
-      },
-    }
-  })
+  finishDieFallbackVisual(
+    opts.setStackVisuals,
+    opts.stackId,
+    opts.catalog,
+    opts.unitId,
+  )
 }
 
 export function tryPrimeDieFallbackSchedule(

@@ -6,7 +6,12 @@ import { battleHitSettings } from './battleAnimConfig'
 import { battleIdleSettings } from './battleAnimConfig'
 import { stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
 import { combatStackFootprint } from './movement'
+import { occupancyKey, stackFootprint } from './occupancy'
 import { appendBattleAnimCombatLog } from './battleAnimLogBridge'
+import {
+  beginBattleTimeline,
+  endBattleTimeline,
+} from './battleHangWatchdog'
 import type { AttackAnimPhase, HitFlashColor } from './attack'
 
 type AttackResolved = NonNullable<
@@ -34,6 +39,7 @@ import {
 import { playBattleUnitSoundOnce } from './battleUnitSound'
 import {
   computeProjectileFlightEndpoints,
+  computeProjectileFlightToHex,
   computeReachEffectPlacement,
   loadBattleImpactEffectArt,
   loadBattleProjectileArt,
@@ -53,7 +59,6 @@ import type { ReferenceCatalog } from '../town/catalog'
 import { unitAttackShape, unitById } from '../town/catalog'
 import { closestHexOnTargetFootprint } from './actionOrigin'
 import {
-  beamPassProgress,
   effectiveProjectileRow,
   reachEffectOriginToAimDistance,
   shapeVisualBoxPx,
@@ -75,6 +80,8 @@ export type AttackExchange = {
   strikeTombstones: CombatTombstone[]
   hitKeys: string[]
   isRetaliation?: boolean
+  beamPathHexes?: import('../hex/hero').Axial[]
+  beamAimTargetId?: string | null
 }
 
 type HexAnchor = { q: number; r: number; x: number; y: number }
@@ -131,6 +138,8 @@ export function buildAttackExchanges(
       strikeTombstones: phase.strikeTombstones,
       hitKeys: phase.hitKeys,
       isRetaliation: phase.isRetaliation,
+      beamPathHexes: phase.beamPathHexes?.map((hex) => ({ ...hex })),
+      beamAimTargetId: phase.beamAimTargetId,
     })
     prev = phase.strikeStacks
     if (i + 1 < phases.length) {
@@ -228,6 +237,22 @@ function applyStrikeToDisplay(
     }
   }
   return { ...display, stacks }
+}
+
+function hitFlashKeysForTarget(
+  targetId: string,
+  beforeStacks: CombatStack[],
+  hitKeys: string[],
+  catalog: ReferenceCatalog,
+): string[] {
+  const before = beforeStacks.find((row) => row.id === targetId)
+  if (!before) {
+    return []
+  }
+  const footprint = new Set(
+    stackFootprint(before, catalog).map((hex) => occupancyKey(hex.q, hex.r)),
+  )
+  return hitKeys.filter((key) => footprint.has(key))
 }
 
 function removeStackFromDisplay(
@@ -349,6 +374,8 @@ export async function runAttackBeatPresentation(opts: {
   projectileArtByRowId?: Map<number, BattleProjectileArt | null>
   onHitFlash: (keys: string[]) => void
   isCancelled?: () => boolean
+  /** Tomb wiped in-beat (orphan fallback) — mark known so field effect does not re-run. */
+  onWipeAnimated?: (stackId: string) => void
 }): Promise<void> {
   let display = opts.display
   const beatListStartedMs = performance.now()
@@ -527,6 +554,13 @@ export async function runAttackBeatPresentation(opts: {
       effectiveRow != null && usesChainFlight(effectiveRow, attackShape)
     const beamMode =
       effectiveRow != null && usesBeamLineFlight(effectiveRow, attackShape)
+    const beamVisual =
+      attackShape === 'beam' && exchange.isRetaliation !== true
+    const beamPathHexes = exchange.beamPathHexes
+    const beamEndHex =
+      beamPathHexes && beamPathHexes.length > 0
+        ? beamPathHexes[beamPathHexes.length - 1]!
+        : null
     const rangedAoeMode =
       effectiveRow != null &&
       usesRangedAoeFlight(effectiveRow, attackShape, maxRange)
@@ -535,6 +569,7 @@ export async function runAttackBeatPresentation(opts: {
       usesCatalogPerTargetFlight(effectiveRow, attackShape, maxRange)
     const legacyPerTargetRanged =
       ranged &&
+      attackShape !== 'beam' &&
       targetFoot != null &&
       !shapeMode &&
       !chainMode &&
@@ -657,8 +692,66 @@ export async function runAttackBeatPresentation(opts: {
       }
     }
 
+    const makeBeamHopToHex = (
+      fromStack: CombatStack,
+      endHex: import('../hex/hero').Axial,
+      suffix: string,
+      impactEffect: string | null,
+    ): TargetFlightPlan => {
+      const endpoints = computeProjectileFlightToHex({
+        striker: fromStack,
+        endHex,
+        catalog: opts.catalog,
+        anchors: opts.anchors,
+        hexPx: opts.hexPx,
+        footOffsetPct: opts.settings.footOffsetPct,
+        row: flightRow,
+        aimHex,
+      })
+      const fromFp =
+        fromStack.id === striker.id
+          ? attackerFoot
+          : targetFootPx(
+              fromStack,
+              opts.anchors,
+              opts.hexPx,
+              opts.settings.footOffsetPct,
+              opts.catalog,
+            )
+      const endAnchor = opts.anchors.find(
+        (row) => row.q === endHex.q && row.r === endHex.r,
+      )
+      const fromX = endpoints?.fromX ?? fromFp.x
+      const fromY = endpoints?.fromY ?? fromFp.y
+      const toX = endpoints?.toX ?? endAnchor?.x ?? fromFp.x
+      const toY = endpoints?.toY ?? endAnchor?.y ?? fromFp.y
+      const travelMs = projectileDurationMs(
+        fromX,
+        fromY,
+        toX,
+        toY,
+        opts.hexPx,
+        opts.settings.projectileHexPerSec,
+      )
+      return {
+        targetId: suffix,
+        travelMs,
+        projId: `proj:${striker.id}:${suffix}:${actionStartedMs}`,
+        fromX,
+        fromY,
+        toX,
+        toY,
+        displayHeightPx: projDisplayHeightPx,
+        staticUrl: projectileArt?.frames
+          ? null
+          : projectileArt?.staticUrl ?? null,
+        sheetFrames: projectileArt?.frames ?? null,
+        sheetLoop: projectileArt?.loop ?? true,
+        impactEffect,
+      }
+    }
+
     const flightPlans: TargetFlightPlan[] = []
-    let beamPlan: TargetFlightPlan | null = null
     let rangedAoePlan: TargetFlightPlan | null = null
 
     if (legacyPerTargetRanged || catalogPerTargetFlight) {
@@ -669,13 +762,6 @@ export async function runAttackBeatPresentation(opts: {
         }
         flightPlans.push(makeFlightPlan(targetId, striker, before, targetId))
       }
-    } else if (beamMode && targetBefore) {
-      beamPlan = makeFlightPlan(
-        exchange.targetIds[0] ?? targetBefore.id,
-        striker,
-        targetBefore,
-        'beam',
-      )
     } else if (rangedAoeMode && targetBefore) {
       rangedAoePlan = makeFlightPlan(
         exchange.targetIds[0] ?? targetBefore.id,
@@ -864,8 +950,6 @@ export async function runAttackBeatPresentation(opts: {
       for (const plan of flightPlans) {
         pushProjectile(plan)
       }
-    } else if (beamPlan) {
-      pushProjectile(beamPlan)
     } else if (rangedAoePlan) {
       pushProjectile(rangedAoePlan)
     }
@@ -887,6 +971,20 @@ export async function runAttackBeatPresentation(opts: {
         opts.onHitFlash(exchange.hitKeys)
       }
     }
+    const pushChainHopStrikeDisplay = (targetId: string) => {
+      pushDisplay(
+        applyStrikeToDisplay(display, exchange.strikeStacks, [targetId]),
+      )
+      const hopKeys = hitFlashKeysForTarget(
+        targetId,
+        exchange.beforeStacks,
+        exchange.hitKeys,
+        opts.catalog,
+      )
+      if (hopKeys.length > 0) {
+        opts.onHitFlash(hopKeys)
+      }
+    }
 
     const reactionWaits: Promise<void>[] = []
     const defenderHitWaits: Promise<void>[] = []
@@ -896,6 +994,8 @@ export async function runAttackBeatPresentation(opts: {
       delayMs: number
       plan: TargetFlightPlan | null
       playImpact: boolean
+      /** Chain hop: strike display + flash for this target only. */
+      chainHop?: boolean
     }) => {
       await waitClip(args.delayMs)
       if (opts.isCancelled?.()) {
@@ -934,7 +1034,11 @@ export async function runAttackBeatPresentation(opts: {
           })
         }
       }
-      pushStrikeDisplayOnce()
+      if (args.chainHop) {
+        pushChainHopStrikeDisplay(args.targetId)
+      } else {
+        pushStrikeDisplayOnce()
+      }
       await runTargetBeat({
         stackId: args.targetId,
         wiped,
@@ -958,7 +1062,85 @@ export async function runAttackBeatPresentation(opts: {
       })
     }
 
-    if (chainMode && effectiveRow) {
+    if (beamVisual && beamPathHexes && beamEndHex) {
+      const beamWait = (async () => {
+        const victimIds = exchange.targetIds.filter((targetId) => {
+          const before = stackRow(exchange.beforeStacks, targetId)
+          return before != null && before.side !== striker.side
+        })
+        let hopFrom = striker
+        const flySegment = async (plan: TargetFlightPlan) => {
+          const segLaunch = performance.now()
+          opts.setProjectiles((prev) => [
+            ...prev,
+            {
+              id: plan.projId,
+              fromX: plan.fromX,
+              fromY: plan.fromY,
+              toX: plan.toX,
+              toY: plan.toY,
+              startedMs: segLaunch,
+              durationMs: plan.travelMs,
+              displayHeightPx: plan.displayHeightPx,
+              flipY: plan.toX < plan.fromX,
+              staticUrl:
+                plan.sheetFrames && plan.sheetFrames.length > 0
+                  ? null
+                  : plan.staticUrl,
+              sheetFrames: plan.sheetFrames,
+              sheetLoop: plan.sheetLoop,
+              animFps: opts.settings.moveFps,
+            },
+          ])
+          await waitClip(plan.travelMs)
+          if (opts.isCancelled?.()) {
+            return false
+          }
+          opts.setProjectiles((prev) =>
+            prev.filter((row) => row.id !== plan.projId),
+          )
+          return true
+        }
+        for (const targetId of victimIds) {
+          const before = stackRow(exchange.beforeStacks, targetId)
+          if (!before) {
+            continue
+          }
+          const plan = makeFlightPlan(
+            targetId,
+            hopFrom,
+            before,
+            `beam:${targetId}`,
+          )
+          if (!(await flySegment(plan))) {
+            return
+          }
+          await runTargetReaction({
+            targetId,
+            delayMs: 0,
+            plan,
+            playImpact: true,
+            chainHop: true,
+          })
+          hopFrom = before
+        }
+        const tailPlan = makeBeamHopToHex(
+          hopFrom,
+          beamEndHex,
+          'beam:tail',
+          null,
+        )
+        await flySegment(tailPlan)
+      })()
+      reactionWaits.push(beamWait)
+      for (const targetId of exchange.targetIds) {
+        const before = stackRow(exchange.beforeStacks, targetId)
+        if (!before || before.side === striker.side) {
+          continue
+        }
+        defenderHitWaits.push(beamWait)
+      }
+    } else if (chainMode && effectiveRow) {
       const chainWait = (async () => {
         let hopFrom = striker
         for (const targetId of exchange.targetIds) {
@@ -1003,6 +1185,7 @@ export async function runAttackBeatPresentation(opts: {
             delayMs: 0,
             plan,
             playImpact: true,
+            chainHop: true,
           })
           hopFrom = before
         }
@@ -1096,15 +1279,9 @@ export async function runAttackBeatPresentation(opts: {
         }
         defenderHitWaits.push(aoeWait)
       }
-    } else {
+    } else if (!beamVisual) {
       for (const targetId of exchange.targetIds) {
         const before = stackRow(exchange.beforeStacks, targetId)
-        const wiped = isWipedTarget(
-          targetId,
-          before,
-          exchange.strikeStacks,
-          exchange.strikeTombstones,
-        )
         const plan = flightPlans.find((row) => row.targetId === targetId) ?? null
         let delayMs = 0
         let impactPlan: TargetFlightPlan | null = null
@@ -1113,21 +1290,6 @@ export async function runAttackBeatPresentation(opts: {
           delayMs = shapeHitDelay
         } else if (reachMode) {
           delayMs = reachHitDelay
-        } else if (beamMode && beamPlan && before) {
-          delayMs =
-            beamPlan.travelMs *
-            beamPassProgress(
-              striker,
-              before,
-              opts.catalog,
-              aimHex,
-              maxRange,
-            )
-          if (targetId === exchange.targetIds[0]) {
-            impactPlan = beamPlan
-          } else {
-            playImpact = false
-          }
         } else if (plan) {
           delayMs = plan.travelMs
           impactPlan = plan
@@ -1140,7 +1302,7 @@ export async function runAttackBeatPresentation(opts: {
           playImpact,
         })
         reactionWaits.push(reaction)
-        if (!wiped && before && before.side !== striker.side) {
+        if (before && before.side !== striker.side) {
           defenderHitWaits.push(reaction)
         }
       }
@@ -1169,7 +1331,7 @@ export async function runAttackBeatPresentation(opts: {
       !shapeMode &&
       !reachMode &&
       !chainMode &&
-      !beamMode &&
+      !beamVisual &&
       !rangedAoeMode &&
       !legacyPerTargetRanged &&
       !catalogPerTargetFlight
@@ -1190,6 +1352,56 @@ export async function runAttackBeatPresentation(opts: {
       }
     } else {
       await Promise.all([strikerClipWait, ...reactionWaits])
+    }
+
+    const priorTombIds = new Set(
+      (ex === 0
+        ? (opts.display.tombstones ?? [])
+        : opts.exchanges[ex - 1]!.strikeTombstones
+      ).map((tomb) => tomb.id),
+    )
+    const targetSet = new Set(exchange.targetIds)
+    for (const tomb of exchange.strikeTombstones) {
+      if (priorTombIds.has(tomb.id) || targetSet.has(tomb.id)) {
+        continue
+      }
+      const unitName =
+        unitById(opts.catalog, tomb.unitId)?.name ?? `unit ${tomb.unitId}`
+      appendBattleAnimCombatLog(
+        `[Dev] Orphan exchange wipe: ${unitName} (${tomb.id}) — playing Die in-beat.`,
+      )
+      const before = stackRow(exchange.beforeStacks, tomb.id)
+      const tFoot = before
+        ? targetFootPx(
+            before,
+            opts.anchors,
+            opts.hexPx,
+            opts.settings.footOffsetPct,
+            opts.catalog,
+          )
+        : { x: attackerFoot.x, y: attackerFoot.y }
+      await runTargetBeat({
+        stackId: tomb.id,
+        wiped: true,
+        before,
+        strikeTombs: exchange.strikeTombstones,
+        catalog: opts.catalog,
+        settings: opts.settings,
+        sheets: opts.sheets,
+        dieFallbackEffects: opts.dieFallbackEffects,
+        setStackVisuals: opts.setStackVisuals,
+        beatMs,
+        onDieStart: (tombstone) => {
+          pushDisplay(removeStackFromDisplay(display, tomb.id, tombstone))
+        },
+        isCancelled: opts.isCancelled,
+        hexPx: opts.hexPx,
+        attackerFootX: attackerFoot.x,
+        attackerFootY: attackerFoot.y,
+        targetFoot: tFoot,
+        hitOrigin: { x: attackerFoot.x, y: attackerFoot.y },
+      })
+      opts.onWipeAnimated?.(tomb.id)
     }
   }
 
@@ -1212,7 +1424,21 @@ export async function runAttackBeatPresentation(opts: {
   opts.setShapeVisuals([])
 }
 
-async function runTargetBeat(opts: {
+async function runTargetBeat(
+  opts: Parameters<typeof runTargetBeatBody>[0],
+): Promise<void> {
+  const timeline = beginBattleTimeline(
+    opts.wiped ? 'die-beat' : 'hit-beat',
+    opts.stackId,
+  )
+  try {
+    await runTargetBeatBody(opts)
+  } finally {
+    endBattleTimeline(timeline)
+  }
+}
+
+async function runTargetBeatBody(opts: {
   stackId: string
   wiped: boolean
   before: CombatStack | null
@@ -1268,6 +1494,7 @@ async function runTargetBeat(opts: {
       opts.strikeTombs.find((row) => row.id === opts.stackId) ?? null
     await runBattleWipedDeathAnim({
       stackId: opts.stackId,
+      unitId,
       set,
       catalog: opts.catalog,
       settings: opts.settings,
@@ -1279,6 +1506,21 @@ async function runTargetBeat(opts: {
       strikeKill: opts.before != null,
       proceduralHit,
       onDieStart: () => opts.onDieStart(tomb),
+      dieFxAnchor: opts.before
+        ? {
+            q: opts.before.q,
+            r: opts.before.r,
+            side: opts.before.side,
+            unitId: opts.before.unitId,
+          }
+        : tomb
+          ? {
+              q: tomb.q,
+              r: tomb.r,
+              side: tomb.side,
+              unitId: tomb.unitId,
+            }
+          : undefined,
     })
     return
   }

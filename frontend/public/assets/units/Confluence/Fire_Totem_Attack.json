@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Fire_Totem_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_001": {
+      "frame": {
+        "x": 104,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_002": {
+      "frame": {
+        "x": 208,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_003": {
+      "frame": {
+        "x": 312,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_004": {
+      "frame": {
+        "x": 416,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_005": {
+      "frame": {
+        "x": 520,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_006": {
+      "frame": {
+        "x": 624,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_008": {
+      "frame": {
+        "x": 104,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_009": {
+      "frame": {
+        "x": 208,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_010": {
+      "frame": {
+        "x": 312,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_011": {
+      "frame": {
+        "x": 416,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_012": {
+      "frame": {
+        "x": 520,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_013": {
+      "frame": {
+        "x": 624,
+        "y": 230,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_015": {
+      "frame": {
+        "x": 104,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_016": {
+      "frame": {
+        "x": 208,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_017": {
+      "frame": {
+        "x": 312,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_018": {
+      "frame": {
+        "x": 416,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_019": {
+      "frame": {
+        "x": 520,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_020": {
+      "frame": {
+        "x": 624,
+        "y": 460,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_022": {
+      "frame": {
+        "x": 104,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_023": {
+      "frame": {
+        "x": 208,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_024": {
+      "frame": {
+        "x": 312,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_025": {
+      "frame": {
+        "x": 416,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_026": {
+      "frame": {
+        "x": 520,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_027": {
+      "frame": {
+        "x": 624,
+        "y": 690,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_029": {
+      "frame": {
+        "x": 104,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_030": {
+      "frame": {
+        "x": 208,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_031": {
+      "frame": {
+        "x": 312,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_032": {
+      "frame": {
+        "x": 416,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_033": {
+      "frame": {
+        "x": 520,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_034": {
+      "frame": {
+        "x": 624,
+        "y": 920,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1150,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 79
+    },
+    "Fire_Totem_Attack_Stand": {
+      "frame": {
+        "x": 104,
+        "y": 1150,
+        "w": 104,
+        "h": 230
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 104,
+        "h": 230
+      },
+      "sourceSize": {
+        "w": 104,
+        "h": 230
+      },
+      "anchor": {
+        "x": 0.2967,
+        "y": 0.9913
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Fire_Totem_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 728,
+      "h": 1380
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.2967,
+      "y": 0.9913
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0
+  }
+}

@@ -3,8 +3,8 @@ import { TOMBSTONE_ART } from '../combat/tombstone'
 import { appendBattleAnimCombatLog } from '../combat/battleAnimLogBridge'
 import { loadTextureUrl } from '../hex/terrainTextures'
 import type { ReferenceCatalog, UnitRow } from './catalog'
-import { townNameForUnit } from './catalog'
-import { unitStaticPictureUrls } from './slotArt'
+import { unitArtTownFolder } from './catalog'
+import { unitStaticPictureUrls, unitTombstonePictureUrl } from './slotArt'
 import { basicPartnerForAdvanced } from './unitUpgrade'
 import { unitBattleSpriteStem } from '../combat/battleUnitSheet'
 
@@ -52,7 +52,7 @@ export function unitCorpseArtCandidates(
   if (!unit) {
     return []
   }
-  const town = townNameForUnit(catalog, unit)
+  const town = unitArtTownFolder(catalog, unit)
   const out: UnitCorpseArtCandidate[] = []
   const ownDead = deadFileFromImagePath(unit.image_path?.trim() || null)
   if (ownDead) {
@@ -63,7 +63,7 @@ export function unitCorpseArtCandidates(
   const partner = basicPartnerForAdvanced(catalog, unit)
   const partnerDead = deadFileFromImagePath(partner?.image_path?.trim() || null)
   if (partnerDead) {
-    const partnerTown = townNameForUnit(catalog, partner)
+    const partnerTown = unitArtTownFolder(catalog, partner)
     for (const url of unitStaticPictureUrls(partnerDead, partnerTown)) {
       out.push({
         url,
@@ -73,14 +73,12 @@ export function unitCorpseArtCandidates(
       })
     }
   }
-  for (const url of unitStaticPictureUrls(TOMBSTONE_ART, town)) {
-    out.push({
-      url,
-      glow: false,
-      source: 'tombstone',
-      fileLabel: TOMBSTONE_ART,
-    })
-  }
+  out.push({
+    url: unitTombstonePictureUrl(),
+    glow: false,
+    source: 'tombstone',
+    fileLabel: TOMBSTONE_ART,
+  })
   return out
 }
 

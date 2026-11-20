@@ -1,5 +1,6 @@
 import {
   unitById,
+  type AttackShapeKind,
   type ReferenceCatalog,
   type UnitCombatAbilities,
   type UnitRetaliation,
@@ -7,9 +8,9 @@ import {
 } from './catalog'
 import { logConfigOnce } from '../session/configLog'
 import {
+  TAG_AIR_TOTEM,
+  TAG_EARTH_TOTEM,
   TAG_FIRE_TOTEM,
-  TAG_LIGHTNING_TOTEM,
-  TAG_NATURE_TOTEM,
   unitHasNamedTag,
 } from './unitTags'
 
@@ -19,6 +20,22 @@ function enrichRetaliation(
   base: UnitRetaliation,
 ): UnitRetaliation {
   return base
+}
+
+function totemDefaultShape(
+  catalog: ReferenceCatalog,
+  unit: UnitRow,
+): AttackShapeKind | null {
+  if (unitHasNamedTag(catalog, unit, TAG_FIRE_TOTEM)) {
+    return 'single'
+  }
+  if (unitHasNamedTag(catalog, unit, TAG_AIR_TOTEM)) {
+    return 'single'
+  }
+  if (unitHasNamedTag(catalog, unit, TAG_EARTH_TOTEM)) {
+    return 'single'
+  }
+  return null
 }
 
 function enrichAbilities(
@@ -32,25 +49,22 @@ function enrichAbilities(
     next = { ...next, fizzleTerrainIds: [3, 20, 21] }
   }
 
-  if (unitHasNamedTag(catalog, unit, TAG_FIRE_TOTEM)) {
-    next = {
-      ...next,
-      shape: 'single',
-      autoTarget: next.autoTarget ?? 'random_enemy',
+  const totemShape = totemDefaultShape(catalog, unit)
+  if (totemShape != null) {
+    if (!unit.abilities_shape_in_data) {
+      logConfigOnce(
+        `totem:shape:unit:${unit.id}`,
+        `[unit ${unit.id}] totem missing abilities.shape — using default "${totemShape}". Set shape in catalog data.`,
+      )
+      next = { ...next, shape: totemShape }
     }
-  }
-  if (unitHasNamedTag(catalog, unit, TAG_LIGHTNING_TOTEM)) {
     next = {
       ...next,
-      shape: 'beam',
-      autoTarget: next.autoTarget ?? 'random_enemy',
-    }
-  }
-  if (unitHasNamedTag(catalog, unit, TAG_NATURE_TOTEM)) {
-    next = {
-      ...next,
-      shape: next.shape ?? 'single',
-      autoTarget: next.autoTarget ?? 'most_injured_ally',
+      autoTarget:
+        next.autoTarget ??
+        (unitHasNamedTag(catalog, unit, TAG_EARTH_TOTEM)
+          ? 'most_injured_ally'
+          : 'random_enemy'),
     }
   }
 

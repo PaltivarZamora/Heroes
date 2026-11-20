@@ -23,6 +23,14 @@ import { unitById } from '../town/catalog'
 
 export type StackBattleVisualKind = BattleUnitAnimKind | 'idle'
 
+/** Hex anchor for die fallback FX when the stack leaves no tombstone. */
+export type DieFxAnchor = {
+  q: number
+  r: number
+  side: CombatSide
+  unitId: number
+}
+
 export type StackBattleVisual = {
   kind: StackBattleVisualKind
   startedMs: number
@@ -53,6 +61,7 @@ export type StackBattleVisual = {
   proceduralHit?: ProceduralHitMotion
   /** Shared die FX when the unit has no Die sheet. */
   dieFallbackFx?: DieFallbackFxSchedule
+  dieFxAnchor?: DieFxAnchor
   /** Static _Dead.png corpse after die fallback (or tomb without Die sheet). */
   corpseBody?: boolean
 }

@@ -5,6 +5,8 @@ import { MOB_ARCH_ID, NEUTRAL_GARRISON_ARCH_ID } from './types'
 import { unitById, unitIsStationary, unitAttackShape, type ReferenceCatalog } from '../town/catalog'
 import {
   applyStrike,
+  closestTargetFootprintHex,
+  estimateUnitAttackDamage,
   heroForSide,
   isValidAttackTarget,
   type CombatHeroes,
@@ -31,7 +33,14 @@ import {
   pathUsesDrawbridgeEgress,
   isDefenderSiegeEgress,
 } from '../combat/siege'
-import { actingStand, bestApproachToward, combatHover, type CombatHover } from '../combat/target'
+import {
+  actingStand,
+  bestApproachToward,
+  combatHover,
+  combatStrikeIntentFromStand,
+  enumeratePlayerAttackStands,
+  type CombatHover,
+} from '../combat/target'
 import {
   computePullLandingHex,
   isValidPullAttackTarget,
@@ -301,10 +310,78 @@ function guardHex(
 function hoverIsAction(intent: CombatHover | null): intent is CombatHover {
   return (
     intent != null &&
-    (intent.fire ||
-      intent.afterMove === 'pulse' ||
-      intent.steps.length > 0)
+    (intent.fire || intent.steps.length > 0)
   )
+}
+
+/** Best stand by total expected damage (centre + six wedges); ties → fewer steps. */
+function bestAiAttackIntentForEnemy(
+  attacker: CombatStack,
+  enemy: CombatStack,
+  battle: CombatBattle,
+  tiles: CombatTile[],
+  catalog: ReferenceCatalog,
+  heroes: CombatHeroes,
+  reachable: Map<string, Axial[]>,
+): CombatHover | null {
+  const aimHex = closestTargetFootprintHex(
+    { q: attacker.q, r: attacker.r },
+    attacker,
+    enemy,
+    catalog,
+  )
+  const candidates = enumeratePlayerAttackStands(
+    attacker,
+    enemy,
+    aimHex,
+    reachable,
+    catalog,
+    tiles,
+    battle.stacks,
+    false,
+  )
+  let best: { intent: CombatHover; damage: number; steps: number } | null = null
+  for (const pick of candidates) {
+    const footprintAim = closestTargetFootprintHex(
+      pick.stand,
+      attacker,
+      enemy,
+      catalog,
+    )
+    const damage = estimateUnitAttackDamage(
+      attacker,
+      enemy,
+      footprintAim,
+      pick.stand,
+      pick.wedgeZone,
+      battle,
+      catalog,
+      tiles,
+      heroes,
+      MID_ROLL,
+    )
+    const intent = combatStrikeIntentFromStand(
+      attacker,
+      enemy,
+      pick.stand,
+      pick.steps,
+      battle,
+      catalog,
+      tiles,
+      false,
+      footprintAim,
+      pick.wedgeZone,
+    )
+    const steps = pick.steps.length
+    if (
+      !best ||
+      damage > best.damage ||
+      (damage === best.damage && steps < best.steps)
+    ) {
+      best = { intent, damage, steps }
+    }
+  }
+  return best?.intent ?? null
 }
 
 export function decideCombatAction(
@@ -414,15 +491,16 @@ export function decideCombatAction(
   if (taunter) {
     const label = `${stack.qty} ${stackName(catalog, stack)}`
     const bait = `${taunter.qty} ${stackName(catalog, taunter)}`
+    const tauntReach = reachableOf(stack, battle, tiles, catalog, heroes)
     if (isValidAttackTarget(stack, taunter, catalog, tiles, battle.stacks)) {
-      const intent = combatHover(
+      const intent = bestAiAttackIntentForEnemy(
         stack,
-        { q: taunter.q, r: taunter.r },
+        taunter,
         battle,
         tiles,
         catalog,
-        'center',
         heroes,
+        tauntReach,
       )
       if (intent?.fire) {
         appendAiTrace(
@@ -498,7 +576,7 @@ export function decideCombatAction(
 
   const scoreEnemy = (enemy: CombatStack, intent: CombatHover, kind: CombatCandidateKind) => {
     const stand = actingStand({ q: stack.q, r: stack.r }, intent.steps)
-    const canHit = intent.fire === true || intent.afterMove === 'pulse'
+    const canHit = intent.fire === true
     const factors = emptyFactors()
     factors.kill_potential = canHit
       ? killPotential(stack, enemy, stand, catalog, heroes)
@@ -562,16 +640,17 @@ export function decideCombatAction(
     }, factors)
   }
 
+  const reachable = reachableOf(stack, battle, tiles, catalog, heroes)
   if (inRange.length > 0) {
     for (const enemy of inRange) {
-      const intent = combatHover(
+      const intent = bestAiAttackIntentForEnemy(
         stack,
-        { q: enemy.q, r: enemy.r },
+        enemy,
         battle,
         tiles,
         catalog,
-        'center',
         heroes,
+        reachable,
       )
       if (!intent || !intent.fire) {
         continue
@@ -579,16 +658,15 @@ export function decideCombatAction(
       scoreEnemy(enemy, intent, 'attack')
     }
   } else {
-    const reachable = reachableOf(stack, battle, tiles, catalog, heroes)
     for (const enemy of enemies) {
-      let intent = combatHover(
+      let intent = bestAiAttackIntentForEnemy(
         stack,
-        { q: enemy.q, r: enemy.r },
+        enemy,
         battle,
         tiles,
         catalog,
-        'center',
         heroes,
+        reachable,
       )
       // combatHover can miss when the path onto the enemy hex is blocked;
       // still offer a real advance toward any closer reachable hex.

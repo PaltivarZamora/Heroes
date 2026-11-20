@@ -1,9 +1,16 @@
 import { Assets, Spritesheet, type Texture } from 'pixi.js'
+import {
+  isOptionalAssetNotFound,
+  isSilentAssetLoadFail,
+  optionalAssetNotFoundFail,
+  optionalImageUrlReachable,
+} from '../assets/devAssetResponse'
 import type { GameSession } from '../session/types'
 import {
   unitAssetsTownBase,
 } from '../town/slotArt'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
+import { unitArtTownFolder } from '../town/catalog'
 import {
   flushAdvancedBorrowDevLog,
   noteAdvancedSheetBorrow,
@@ -90,15 +97,8 @@ export function unitBattleSpriteStem(unit: UnitRow | null | undefined): string |
 export function unitBattleTownFolder(
   catalog: ReferenceCatalog,
   unit: UnitRow,
-): string {
-  const townId = unit.town_id
-  if (townId != null && townId > 0) {
-    const row = catalog.town.find((entry) => entry.id === townId)
-    if (row?.name?.trim()) {
-      return row.name.trim()
-    }
-  }
-  return 'Citadel'
+): string | null {
+  return unitArtTownFolder(catalog, unit)
 }
 
 export function battleUnitTownDir(townFolder: string): string {
@@ -234,6 +234,9 @@ async function loadOneAnimSheet(
   const jsonUrl = `${dir}/${sheetStem}.json`
   try {
     const response = await fetch(jsonUrl)
+    if (isOptionalAssetNotFound(response)) {
+      return { sheet: null, fail: optionalAssetNotFoundFail(jsonUrl) }
+    }
     if (!response.ok) {
       return { sheet: null, fail: { url: jsonUrl, reason: `HTTP ${response.status}` } }
     }
@@ -260,8 +263,13 @@ async function loadOneAnimSheet(
     }
     let atlasTexture: Texture | null = null
     let imageUrl = ''
+    let allImageCandidatesMissing = true
     for (const candidate of imageCandidates) {
       imageUrl = `${dir}/${candidate.replace(/^\/+/, '')}`
+      if (!(await optionalImageUrlReachable(imageUrl))) {
+        continue
+      }
+      allImageCandidatesMissing = false
       try {
         const tex = await Assets.load<Texture>(imageUrl)
         if (tex.width >= 1 && tex.height >= 1) {
@@ -273,6 +281,12 @@ async function loadOneAnimSheet(
       }
     }
     if (!atlasTexture) {
+      if (allImageCandidatesMissing) {
+        return {
+          sheet: null,
+          fail: optionalAssetNotFoundFail(imageUrl || jsonUrl),
+        }
+      }
       return {
         sheet: null,
         fail: { url: imageUrl || jsonUrl, reason: 'texture load error' },
@@ -322,6 +336,9 @@ export function reportBattleUnitSheetMissing(
   sheetStem: string,
   fail: { url: string; reason: string },
 ): GameSession {
+  if (isSilentAssetLoadFail(fail.reason)) {
+    return session
+  }
   if (warnedMissingSheet.has(sheetStem)) {
     return session
   }
@@ -354,6 +371,9 @@ export async function loadBattleUnitSheetSet(
     return null
   }
   const townFolder = unitBattleTownFolder(catalog, unit)
+  if (!townFolder) {
+    return null
+  }
   const key = cacheKey(stem, townFolder)
   if (sheetCache.has(key)) {
     return sheetCache.get(key) ?? null
@@ -524,6 +544,9 @@ export function battleUnitSheetForUnit(
     return null
   }
   const townFolder = unitBattleTownFolder(catalog, unit)
+  if (!townFolder) {
+    return null
+  }
   return sheetCache.get(cacheKey(stem, townFolder)) ?? null
 }
 
@@ -571,6 +594,9 @@ export function flushBattleSheetLoadFailuresToLog(
 ): GameSession {
   let next = session
   for (const [cacheKey, fail] of sheetFailCache.entries()) {
+    if (isSilentAssetLoadFail(fail.reason)) {
+      continue
+    }
     const colon = cacheKey.lastIndexOf(':')
     if (colon < 0) {
       continue
@@ -665,6 +691,9 @@ async function loadStandOnlyIdleSheet(
   const standFile = `${stem}_Stand.png`
   const url = `${dir}/${standFile.replace(/^\/+/, '')}`
   try {
+    if (!(await optionalImageUrlReachable(url))) {
+      return null
+    }
     const tex = await Assets.load<Texture>(url)
     if (tex.width < 1 || tex.height < 1) {
       return null
@@ -752,6 +781,15 @@ export async function loadPolymorphBattleIdleSheet(
   } finally {
     sheetInflight.delete(key)
   }
+}
+
+/** Shared anim sheet loader (e.g. ground effects under `/assets/effects/`). */
+export async function loadAnimSheetFromDir(
+  dir: string,
+  stem: string,
+  kind: BattleUnitAnimKind,
+): Promise<{ sheet: BattleUnitAnimSheet | null; fail?: { url: string; reason: string } }> {
+  return loadOneAnimSheet(dir, stem, kind)
 }
 
 /** Drop cached sheets so the next battle preload picks up new JSON/png. */

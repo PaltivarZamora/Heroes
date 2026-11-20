@@ -72,7 +72,7 @@ export function isDamagedCreature(
 
 /**
  * Most-injured damaged creature on `side` (front-HP deficit, then id).
- * Shared by Cleric waterfall and Shaman Nature totem single-target heal.
+ * Shared by Cleric waterfall and Shaman Earth totem single-target heal.
  */
 export function pickMostInjuredDamagedCreature(
   stacks: CombatStack[],

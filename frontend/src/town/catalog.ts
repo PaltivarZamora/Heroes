@@ -8,6 +8,7 @@ import {
 } from '../hex/resources'
 import type { DataStatus } from '../hex/debug'
 import { slotFromPlayerId } from '../session/types'
+import { appendBattleAnimCombatLog } from '../combat/battleAnimLogBridge'
 import { logConfigOnce } from '../session/configLog'
 import { parseFootprint as parseFootprintCode } from '../combat/footprint'
 import {
@@ -110,6 +111,8 @@ export type UnitRow = {
   tags: number[]
   /** True when catalog JSON had a non-empty `abilities` object. */
   has_abilities: boolean
+  /** True when `abilities.shape` was set explicitly in catalog JSON. */
+  abilities_shape_in_data: boolean
   /** Sight blocker. Drawbridge open/closed is separate and ignores this. */
   blocks_los: boolean
   /** Per-creature cost to upgrade this base unit into its Advanced form. */
@@ -167,7 +170,6 @@ export type AttackShapeKind =
   | 'pulse'
   | 'chain'
   | 'beam'
-  | 'line'
   /** Move like CHARGE; pierce-damage enemies on the traveled origin→target corridor. */
   | 'charge_line'
   | 'multi'
@@ -255,7 +257,7 @@ export type UnitCombatAbilities = {
   killAbsorbTrigger: 'per_attack' | null
   /** Qty (and startingQty) gained on a successful absorb. */
   growsQtyOnKill: number | null
-  /** Line shape: flat damage adds this × hex-distance to min_dmg. */
+  /** Beam: flat damage adds this × hex-distance to min_dmg along the line. */
   dmgIncreasePerHex: number | null
   /** Charge: escalate damage once per hex walked before the strike. */
   chargeDmgEscalation: boolean
@@ -2337,7 +2339,7 @@ function asHeroTypes(rows: unknown): HeroTypeRow[] {
           ...(livePassive ?? {}),
           display:
             livePassive?.display ??
-            'Battle start: drops all totems behind the army (up to INT/4, min 1). Each later round, adds 1 if below max — random Fire, Lightning, or Nature. Nature totems heal the most injured stack INT x4 at end of round if they survive.',
+            'Battle start: drops all totems behind the army (up to INT/4, min 1). Each later round, adds 1 if below max — random Fire, Air, or Earth. Earth totems heal the most injured stack INT x4 at end of round if they survive.',
         }
       } else if (lower === 'evoker') {
         passive_ability = {
@@ -4296,7 +4298,6 @@ const ATTACK_SHAPES = new Set<string>([
   'pulse',
   'chain',
   'beam',
-  'line',
   'charge_line',
   'multi',
   'rain',
@@ -4304,12 +4305,28 @@ const ATTACK_SHAPES = new Set<string>([
   'spiral',
 ])
 
+const warnedAttackShapeValues = new Set<string>()
+
 function asAttackShape(raw: string): AttackShapeKind {
   if (raw === 'screen') {
     return 'rain'
   }
+  if (raw === 'line') {
+    logConfigOnce(
+      'abilities:shape:line',
+      '[abilities] shape "line" was removed; using "beam". Update unit abilities JSON.',
+    )
+    return 'beam'
+  }
   if (ATTACK_SHAPES.has(raw)) {
     return raw as AttackShapeKind
+  }
+  if (raw.length > 0 && !warnedAttackShapeValues.has(raw)) {
+    warnedAttackShapeValues.add(raw)
+    logConfigOnce(
+      `abilities:shape:${raw}`,
+      `[abilities] unknown shape "${raw}" — using "${DEFAULT_UNIT_ABILITIES.shape}".`,
+    )
   }
   return DEFAULT_UNIT_ABILITIES.shape
 }
@@ -4948,6 +4965,10 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       abilities: asUnitCombatAbilities(extra.abilities),
       tags: asIntIds(extra.tags),
       has_abilities: abilitiesConfigPresent(extra.abilities),
+      abilities_shape_in_data: (() => {
+        const rec = asJsonObject(extra.abilities)
+        return typeof rec?.shape === 'string' && rec.shape.trim() !== ''
+      })(),
       blocks_los: asBoolFlag(extra.blocks_los),
       town_id: townId != null && townId > 0 ? townId : null,
       class_id: extra.class_id == null || extra.class_id === '' ? null : asInt(extra.class_id),
@@ -6416,6 +6437,45 @@ export function townNameForUnit(
   return catalog.town.find((entry) => entry.id === townId)?.name?.trim() ?? null
 }
 
+function warnUnitArtTownMissing(
+  unit: UnitRow,
+  reason: 'missing_town_id' | 'unknown_town_id',
+): void {
+  const key = `unit_art_town:${unit.id}`
+  const townId = unit.town_id
+  const detail =
+    reason === 'missing_town_id'
+      ? 'town_id missing or ≤ 0'
+      : `town_id=${townId} not in catalog.town`
+  const message = `[Dev] Unit art: id=${unit.id} "${unit.name}" — ${detail}; no assets/units/ folder.`
+  logConfigOnce(key, message)
+  appendBattleAnimCombatLog(message)
+}
+
+/**
+ * Folder under `assets/units/` for this unit's art (matches battle sheets).
+ * Requires valid `unit.town_id`; otherwise logs once per unit id and returns null.
+ */
+export function unitArtTownFolder(
+  catalog: ReferenceCatalog | null | undefined,
+  unit: UnitRow | null | undefined,
+): string | null {
+  if (!catalog || !unit) {
+    return null
+  }
+  const townId = unit.town_id
+  if (townId == null || townId <= 0) {
+    warnUnitArtTownMissing(unit, 'missing_town_id')
+    return null
+  }
+  const name = catalog.town.find((entry) => entry.id === townId)?.name?.trim()
+  if (!name) {
+    warnUnitArtTownMissing(unit, 'unknown_town_id')
+    return null
+  }
+  return name
+}
+
 /** Case-insensitive exact name match; optional town filter when names collide. */
 export function unitByName(
   catalog: ReferenceCatalog | null | undefined,
@@ -6819,6 +6879,21 @@ export function combatConfigNumber(
 ): number {
   const n = asFiniteNumber(jsonConfigRaw(catalog?.combat_config, key))
   return n != null ? n : fallback
+}
+
+/** `combat_config.aim_center_pct` ÷ 100. Null when missing (warn once; no in-code default). */
+export function combatAimCenterFrac(
+  catalog: ReferenceCatalog | null | undefined,
+): number | null {
+  const key = 'aim_center_pct'
+  const n = asFiniteNumber(jsonConfigRaw(catalog?.combat_config, key))
+  if (n != null) {
+    return Math.max(0, Math.min(100, n)) / 100
+  }
+  const message = `[combat_config] ${key} missing — reload reference data; pointer uses center-only until set`
+  logConfigOnce(`combat_config:${key}`, message)
+  appendBattleAnimCombatLog(message)
+  return null
 }
 
 /** Roll a percent from a scalar or `{ min, max }` combat_config entry. */

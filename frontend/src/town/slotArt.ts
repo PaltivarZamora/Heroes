@@ -119,24 +119,23 @@ export function unitAssetsTownBase(townName: string): string {
 }
 
 /**
- * Static unit picture URLs: town folder first, then legacy flat `assets/units/`.
- * No log when the flat fallback is used.
+ * Static unit art URLs — only `assets/units/{town}/` (no flat folder for units).
  */
 export function unitStaticPictureUrls(
   filename: string,
   townName?: string | null,
 ): string[] {
   const bare = normalizeUnitAssetFileName(filename)
-  if (!bare) {
+  const town = townName?.trim()
+  if (!bare || !town) {
     return []
   }
-  const paths: string[] = []
-  const town = townName?.trim()
-  if (town) {
-    paths.push(`${unitAssetsTownBase(town)}/${bare}`)
-  }
-  paths.push(`/assets/units/${bare}`)
-  return paths
+  return [`${unitAssetsTownBase(town)}/${bare}`]
+}
+
+/** Generic battle tombstone still (only file kept in flat `assets/units/`). */
+export function unitTombstonePictureUrl(): string {
+  return `/assets/units/Dead.png`
 }
 
 /** Primary static unit art URL (first lookup candidate). */
@@ -148,7 +147,12 @@ export function unitPortraitUrl(
   if (paths.length > 0) {
     return paths[0]!
   }
-  return `/assets/units/${filename}`
+  const bare = normalizeUnitAssetFileName(filename)
+  const town = townName?.trim()
+  if (bare && town) {
+    return `${unitAssetsTownBase(town)}/${bare}`
+  }
+  return ''
 }
 
 /** Battle anim sheet JSON under the unit's town folder. */

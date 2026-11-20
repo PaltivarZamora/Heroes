@@ -1,10 +1,11 @@
+import { logConfigOnce } from '../session/configLog'
 import type { Hero } from '../session/types'
 import type { ReferenceCatalog, UnitRow } from '../town/catalog'
 import { heroEffectiveStatsForHero, unitById, unitHasTag } from '../town/catalog'
 import {
+  TAG_AIR_TOTEM,
+  TAG_EARTH_TOTEM,
   TAG_FIRE_TOTEM,
-  TAG_LIGHTNING_TOTEM,
-  TAG_NATURE_TOTEM,
   firstUnitWithNamedTag,
   unitHasNamedTag,
 } from '../town/unitTags'
@@ -442,12 +443,12 @@ export function applyEvokerSpellBonus(
   return Math.max(0, Math.floor((raw * (100 + pct)) / 100))
 }
 
-export type TotemUnitName = 'Fire Totem' | 'Lightning Totem' | 'Nature Totem'
+export type TotemUnitName = 'Fire Totem' | 'Air Totem' | 'Earth Totem'
 
 const TOTEM_TAG_BY_KIND: Record<TotemUnitName, string> = {
   'Fire Totem': TAG_FIRE_TOTEM,
-  'Lightning Totem': TAG_LIGHTNING_TOTEM,
-  'Nature Totem': TAG_NATURE_TOTEM,
+  'Air Totem': TAG_AIR_TOTEM,
+  'Earth Totem': TAG_EARTH_TOTEM,
 }
 
 export function totemUnitByName(
@@ -455,7 +456,14 @@ export function totemUnitByName(
   name: TotemUnitName,
 ): UnitRow | null {
   const tag = TOTEM_TAG_BY_KIND[name]
-  return tag ? firstUnitWithNamedTag(catalog, tag) : null
+  const unit = tag ? firstUnitWithNamedTag(catalog, tag) : null
+  if (tag && !unit) {
+    logConfigOnce(
+      `totem_tag:${tag}`,
+      `[Shaman totems] no unit with unit_tag "${tag}" (${name}) — skipped.`,
+    )
+  }
+  return unit
 }
 
 /** Map passive_stats totem_types entry → unit name. */
@@ -464,12 +472,16 @@ export function totemTypeToUnitName(type: string): TotemUnitName | null {
   if (key === 'fire' || key === 'fire totem') {
     return 'Fire Totem'
   }
-  if (key === 'lightning' || key === 'lightning totem') {
-    return 'Lightning Totem'
+  if (key === 'air' || key === 'air totem') {
+    return 'Air Totem'
   }
-  if (key === 'nature' || key === 'nature totem') {
-    return 'Nature Totem'
+  if (key === 'earth' || key === 'earth totem') {
+    return 'Earth Totem'
   }
+  logConfigOnce(
+    `totem_type:${key}`,
+    `[Shaman totems] unknown totem_types entry "${type.trim()}" — skipped.`,
+  )
   return null
 }
 
@@ -511,7 +523,7 @@ export function shamanTotemCount(
   return Math.max(minTotems, Math.floor(intel / divisor))
 }
 
-/** Living Fire/Lightning/Nature Totem stacks on this side (Shaman summons). */
+/** Living Fire/Air/Earth Totem stacks on this side (Shaman summons). */
 export function isShamanTotemStack(
   catalog: ReferenceCatalog,
   stack: { unitId: number; qty: number },
@@ -525,12 +537,12 @@ export function isShamanTotemStack(
   }
   return (
     unitHasNamedTag(catalog, unit, TAG_FIRE_TOTEM) ||
-    unitHasNamedTag(catalog, unit, TAG_LIGHTNING_TOTEM) ||
-    unitHasNamedTag(catalog, unit, TAG_NATURE_TOTEM)
+    unitHasNamedTag(catalog, unit, TAG_AIR_TOTEM) ||
+    unitHasNamedTag(catalog, unit, TAG_EARTH_TOTEM)
   )
 }
 
-export function isNatureTotemStack(
+export function isEarthTotemStack(
   catalog: ReferenceCatalog,
   stack: { unitId: number; qty: number },
 ): boolean {
@@ -538,7 +550,7 @@ export function isNatureTotemStack(
     return false
   }
   const unit = unitById(catalog, stack.unitId)
-  return Boolean(unit && unitHasNamedTag(catalog, unit, TAG_NATURE_TOTEM))
+  return Boolean(unit && unitHasNamedTag(catalog, unit, TAG_EARTH_TOTEM))
 }
 
 /** How many totems to spawn this round when below max (default 1). */

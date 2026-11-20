@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Air_Totem_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_001": {
+      "frame": {
+        "x": 117,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_002": {
+      "frame": {
+        "x": 234,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_003": {
+      "frame": {
+        "x": 351,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_004": {
+      "frame": {
+        "x": 468,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_005": {
+      "frame": {
+        "x": 585,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_006": {
+      "frame": {
+        "x": 702,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_007": {
+      "frame": {
+        "x": 0,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_008": {
+      "frame": {
+        "x": 117,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_009": {
+      "frame": {
+        "x": 234,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_010": {
+      "frame": {
+        "x": 351,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_011": {
+      "frame": {
+        "x": 468,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_012": {
+      "frame": {
+        "x": 585,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_013": {
+      "frame": {
+        "x": 702,
+        "y": 216,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_014": {
+      "frame": {
+        "x": 0,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_015": {
+      "frame": {
+        "x": 117,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_016": {
+      "frame": {
+        "x": 234,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_017": {
+      "frame": {
+        "x": 351,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_018": {
+      "frame": {
+        "x": 468,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_019": {
+      "frame": {
+        "x": 585,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_020": {
+      "frame": {
+        "x": 702,
+        "y": 432,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_021": {
+      "frame": {
+        "x": 0,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_022": {
+      "frame": {
+        "x": 117,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_023": {
+      "frame": {
+        "x": 234,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_024": {
+      "frame": {
+        "x": 351,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_025": {
+      "frame": {
+        "x": 468,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_026": {
+      "frame": {
+        "x": 585,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_027": {
+      "frame": {
+        "x": 702,
+        "y": 648,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_028": {
+      "frame": {
+        "x": 0,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_029": {
+      "frame": {
+        "x": 117,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_030": {
+      "frame": {
+        "x": 234,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_031": {
+      "frame": {
+        "x": 351,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_032": {
+      "frame": {
+        "x": 468,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_033": {
+      "frame": {
+        "x": 585,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_034": {
+      "frame": {
+        "x": 702,
+        "y": 864,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_035": {
+      "frame": {
+        "x": 0,
+        "y": 1080,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 78
+    },
+    "Air_Totem_Idle_Stand": {
+      "frame": {
+        "x": 117,
+        "y": 1080,
+        "w": 117,
+        "h": 216
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 216
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 216
+      },
+      "anchor": {
+        "x": 0.5177,
+        "y": 0.9904
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Air_Totem_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 819,
+      "h": 1296
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.5177,
+      "y": 0.9904
+    },
+    "rest_height": 200
+  }
+}

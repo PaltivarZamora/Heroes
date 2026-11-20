@@ -22,6 +22,8 @@ export type BattleAnimSettings = {
   /** Null → no max-width cap (warn once if anim_config missing). */
   spriteMaxWidthPct: number | null
   footOffsetPct: number
+  /** Ground effect display width as % of one hex width (uniform scale). */
+  groundEffectWidthPct: number
   idleFps: number
   moveFps: number
   moveSecPerHex: number
@@ -133,6 +135,8 @@ export function battleAnimSettings(
     dieSec: positiveAnimConfig(catalog, 'battle_die_sec') ?? 1.5,
     footOffsetPct:
       nonNegativeAnimConfig(catalog, 'battle_foot_offset_pct') ?? 30,
+    groundEffectWidthPct:
+      positiveAnimConfig(catalog, 'ground_effect_width_pct') ?? 100,
     projectileHexPerSec:
       positiveAnimConfig(catalog, 'battle_projectile_hex_per_sec') ?? 12,
   }
@@ -303,6 +307,11 @@ export function ensureBattleAnimConfigWarnings(
       key: 'battle_foot_offset_pct',
       ok: nonNegativeAnimConfig(catalog, 'battle_foot_offset_pct') != null,
       label: 'battle_foot_offset_pct',
+    },
+    {
+      key: 'ground_effect_width_pct',
+      ok: positiveAnimConfig(catalog, 'ground_effect_width_pct') != null,
+      label: 'ground_effect_width_pct',
     },
     {
       key: BATTLE_IDLE_FPS_KEY,

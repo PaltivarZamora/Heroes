@@ -37,7 +37,7 @@ import {
 import { mirrorImageTopHealth } from './abilityStatMath'
 import { heroStatForAbilityResource } from './abilityResourcePool'
 import {
-  isNatureTotemStack,
+  isEarthTotemStack,
   isShamanTotemStack,
   shamanTotemCount,
   shamanTotemSpawnPerRound,
@@ -1271,7 +1271,7 @@ export function applyRadiusBlockerPlacement(
 }
 
 /**
- * Shaman S7-8: Fire/Lightning/Nature Totems.
+ * Shaman S7-8: Fire/Air/Earth Totems.
  * - Battle start (`fillToCap`): spawn every missing totem up to the INT cap,
  *   placed behind the army (not map center).
  * - Later rounds: spawn up to `totem_spawn_per_round` (usually 1) to replace
@@ -1369,7 +1369,7 @@ function shamanTotemUnitPool(
       ? rawTypes
           .map(totemTypeToUnitName)
           .filter((name): name is TotemUnitName => name != null)
-      : ['Fire Totem', 'Lightning Totem', 'Nature Totem']
+      : ['Fire Totem', 'Air Totem', 'Earth Totem']
   const unique = [...new Set(names)]
   const pool: UnitRow[] = []
   for (const name of unique) {
@@ -1382,7 +1382,7 @@ function shamanTotemUnitPool(
 }
 
 /**
- * Shaman S7-8: each surviving Nature totem heals the most-injured army stack
+ * Shaman S7-8: each surviving Earth totem heals the most-injured army stack
  * for INT × nature_heal_multiplier (sequential; re-picks target after each heal).
  * Destroyed mid-round totems do not contribute.
  */
@@ -1399,7 +1399,7 @@ export function applyShamanEndOfRoundNatureHeals(
     if (!hero || !hasPassiveKey(catalog, hero, PASSIVE_KEY.SHAMAN_TOTEMS)) {
       continue
     }
-    const stats = requirePassiveStats(catalog, hero, 'Shaman Nature totems')
+    const stats = requirePassiveStats(catalog, hero, 'Shaman Earth totems')
     if (!stats) {
       continue
     }
@@ -1411,7 +1411,7 @@ export function applyShamanEndOfRoundNatureHeals(
         catalog,
         hero,
         'nature_heal_multiplier',
-        'Shaman Nature totems',
+        'Shaman Earth totems',
       )
       continue
     }
@@ -1423,10 +1423,10 @@ export function applyShamanEndOfRoundNatureHeals(
       continue
     }
     // Spawn-order: stacks array append order (stable across the round).
-    const natureTotems = next.stacks.filter(
-      (row) => row.side === side && isNatureTotemStack(catalog, row),
+    const earthTotems = next.stacks.filter(
+      (row) => row.side === side && isEarthTotemStack(catalog, row),
     )
-    for (const totem of natureTotems) {
+    for (const totem of earthTotems) {
       // Must still be alive at end-of-round resolution.
       const liveTotem = next.stacks.find((row) => row.id === totem.id)
       if (!liveTotem || liveTotem.qty <= 0) {
@@ -1438,14 +1438,14 @@ export function applyShamanEndOfRoundNatureHeals(
         side,
       )
       if (!target) {
-        lines.push('Nature Totem: No one in range needs heal')
+        lines.push('Earth Totem: No one in range needs heal')
         break
       }
       const full = stackMaxHealth(target, catalog)
       const need = frontDeficit(target, catalog)
       const spend = Math.min(amount, need)
       if (spend <= 0) {
-        lines.push('Nature Totem: No one in range needs heal')
+        lines.push('Earth Totem: No one in range needs heal')
         break
       }
       const live = next.stacks.find((row) => row.id === target.id) ?? target
@@ -1462,7 +1462,7 @@ export function applyShamanEndOfRoundNatureHeals(
       healKeys.push(occupancyKey(live.q, live.r))
       const name = unitById(catalog, healed.stack.unitId)?.name ?? 'unit'
       lines.push(
-        `Nature Totem: healed ${healed.stack.qty} ${name} for ${healed.healed}.`,
+        `Earth Totem: healed ${healed.stack.qty} ${name} for ${healed.healed}.`,
       )
     }
   }

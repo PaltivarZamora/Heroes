@@ -4,6 +4,7 @@ import type { ReferenceCatalog } from '../town/catalog'
 import {
   shapeIsUntargeted,
   shapePulsesOnMove,
+  type UnitCombatAbilities,
   unitAttackShape,
   unitAutoTarget,
   unitById,
@@ -18,12 +19,15 @@ import {
   isValidAttackTarget,
   pickAutoAttackTarget,
   targetInNormalAttackReach,
+  attackAimFromCommit,
   type AttackIconKind,
+  attachBeamLineToCommit,
   type AttackCommitAim,
+  type AttackAim,
   type CombatHeroes,
 } from './attack'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
-import { isHeroStack, stackMoveSpeed } from './battle'
+import { stackMoveSpeed } from './battle'
 import {
   combatMovementReachable,
   combatPathSteps,
@@ -37,7 +41,12 @@ import {
   stopOnlyForMover,
   type EnterCostAdjust,
 } from './movement'
-import { reachableAtHoverHex, minFootprintHexDistance } from './occupancy'
+import {
+  occupancyKey,
+  reachableAtHoverHex,
+  minFootprintHexDistance,
+  stackFootprint,
+} from './occupancy'
 import {
   actionOriginFootprintHex,
   hexWedgeZone,
@@ -46,7 +55,12 @@ import {
 import { deathKnightShadowMoveAdjust } from './shadow'
 import { isHealAllyTarget } from './factory'
 import { tombstoneOccupancyBodies } from './tombstone'
-import { breathHexes, hasLineOfSight, previewImpactKeys } from './shapes'
+import {
+  beamClippedPathFromCommit,
+  breathHexes,
+  hasLineOfSight,
+  previewImpactKeys,
+} from './shapes'
 import {
   isSiegeEngineWallTarget,
   isUntargetableStack,
@@ -84,6 +98,8 @@ export type CombatHover = {
   fire: boolean
   afterMove: 'pulse' | null
   impactKeys: string[]
+  /** Full clipped beam path (faint preview). */
+  beamPathKeys?: string[]
   /** Enemy hex this attack aims at. Defaults to `q,r` when omitted. */
   aimHex?: Axial
   /** Outward arrow toward the chosen neighbor. */
@@ -111,14 +127,14 @@ const WEDGE_NEIGHBORS: Axial[] = [
   { q: 1, r: -1 },
 ]
 
-const CENTER_FRAC = 0.42
-
 export function pointerHexZone(
   dx: number,
   dy: number,
   hexSize: number,
+  centerFrac: number | null,
 ): HexZone {
-  if (Math.hypot(dx, dy) < hexSize * CENTER_FRAC) {
+  const frac = centerFrac ?? 1
+  if (frac >= 1 || Math.hypot(dx, dy) < hexSize * frac) {
     return 'center'
   }
   const deg = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360
@@ -140,19 +156,49 @@ export function actingStand(origin: Axial, steps: Axial[]): Axial {
   return last ?? { q: origin.q, r: origin.r }
 }
 
+/** Stand + aim from intent using the attacker's position before any walk steps. */
+export function combatAttackAimFromIntent(
+  attackerAtOrigin: CombatStack,
+  intent: Pick<
+    CombatHover,
+    | 'attackTargetId'
+    | 'aimHex'
+    | 'q'
+    | 'r'
+    | 'arrowDeg'
+    | 'steps'
+    | 'afterMove'
+    | 'fire'
+  >,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+): AttackAim {
+  return attackAimFromCommit(
+    attackCommitAim(attackerAtOrigin, intent, tiles, catalog),
+  )
+}
+
 /** Rebuild committed aim from hover intent (preview, move-then-attack, AI). */
 export function attackCommitAim(
   attacker: CombatStack,
   intent: Pick<
     CombatHover,
-    'attackTargetId' | 'aimHex' | 'q' | 'r' | 'arrowDeg' | 'steps' | 'afterMove'
+    | 'attackTargetId'
+    | 'aimHex'
+    | 'q'
+    | 'r'
+    | 'arrowDeg'
+    | 'steps'
+    | 'afterMove'
+    | 'fire'
   >,
-  _battle: CombatBattle,
+  tiles: CombatTile[],
   catalog: ReferenceCatalog,
 ): AttackCommitAim {
   const stand = actingStand({ q: attacker.q, r: attacker.r }, intent.steps)
+  const atkShape = unitAttackShape(unitById(catalog, attacker.unitId))
   const aimHex =
-    intent.afterMove === 'pulse'
+    atkShape.shape === 'pulse' && intent.fire
       ? stand
       : (intent.aimHex ?? { q: intent.q, r: intent.r })
   const wedgeZone =
@@ -160,20 +206,24 @@ export function attackCommitAim(
       ? (((intent.arrowDeg / 60) % 6) + 6) % 6
       : undefined
   const ghost = { ...attacker, q: stand.q, r: stand.r }
-  const origin = actionOriginFootprintHex(
-    stand,
+  return attachBeamLineToCommit(
+    {
+      stand,
+      aimHex,
+      targetId: intent.attackTargetId,
+      wedgeZone,
+      origin: actionOriginFootprintHex(
+        stand,
+        ghost,
+        catalog,
+        aimHex,
+        wedgeZone,
+      ),
+    },
     ghost,
     catalog,
-    aimHex,
-    wedgeZone,
+    tiles,
   )
-  return {
-    stand,
-    aimHex,
-    targetId: intent.attackTargetId,
-    wedgeZone,
-    origin,
-  }
 }
 
 function deliveryOkFromStand(
@@ -244,31 +294,74 @@ function moverStats(
   }
 }
 
-function impactFrom(
+function impactPreview(
   attacker: CombatStack,
   stand: Axial,
   aim: Axial,
   battle: CombatBattle,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
-  extra?: { wedgeZone?: number | null; chargeStandAnchor?: Axial | null },
-): string[] {
+  extra?: {
+    wedgeZone?: number | null
+    chargeStandAnchor?: Axial | null
+    targetId?: string | null
+    allowFriendly?: boolean
+  },
+): { impactKeys: string[]; beamPathKeys: string[] } {
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   const ghost = { ...attacker, q: stand.q, r: stand.r }
+  if (spec.shape === 'beam') {
+    const commit = attachBeamLineToCommit(
+      {
+        stand,
+        aimHex: aim,
+        targetId: extra?.targetId ?? null,
+        wedgeZone: extra?.wedgeZone,
+        origin: actionOriginFootprintHex(
+          stand,
+          ghost,
+          catalog,
+          aim,
+          extra?.wedgeZone,
+        ),
+      },
+      ghost,
+      catalog,
+      tiles,
+    )
+    const clipped = beamClippedPathFromCommit(
+      commit,
+      ghost,
+      battle,
+      catalog,
+      tiles,
+    )
+    const pathKeys = clipped.map((hex) => occupancyKey(hex.q, hex.r))
+    return {
+      beamPathKeys: [],
+      impactKeys: pathKeys,
+    }
+  }
   if (spec.shape === 'charge_line') {
-    return previewImpactKeys(attacker, aim, battle, catalog, tiles, {
-      standAnchor: stand,
-      attacker: ghost,
-      chargeStandAnchor:
-        extra?.chargeStandAnchor ?? { q: attacker.q, r: attacker.r },
-    })
+    return {
+      impactKeys: previewImpactKeys(attacker, aim, battle, catalog, tiles, {
+        standAnchor: stand,
+        attacker: ghost,
+        chargeStandAnchor:
+          extra?.chargeStandAnchor ?? { q: attacker.q, r: attacker.r },
+      }),
+      beamPathKeys: [],
+    }
   }
   const geometry: ShapeGeometryOpts = {
     standAnchor: stand,
     attacker: ghost,
     wedgeZone: extra?.wedgeZone,
   }
-  return previewImpactKeys(ghost, aim, battle, catalog, tiles, geometry)
+  return {
+    impactKeys: previewImpactKeys(ghost, aim, battle, catalog, tiles, geometry),
+    beamPathKeys: [],
+  }
 }
 
 function bestRangeStand(
@@ -500,52 +593,6 @@ export function canStrikeThisTurn(
     catalog,
     costAdjust,
   )
-  if (spec.shape === 'line') {
-    // LINE is stay-and-shoot from the current hex (Centaur-style). Do not
-    // treat it like Beam's "walk into range, then fire."
-    return battle.stacks.some((row) => {
-      if (
-        row.qty <= 0 ||
-        row.side === attacker.side ||
-        isHeroStack(row) ||
-        isUntargetableStack(row, catalog)
-      ) {
-        return false
-      }
-      return (
-        attackCanHitTargetAtStand(
-          attacker,
-          attacker,
-          row,
-          catalog,
-          tiles,
-          battle.stacks,
-        )
-      )
-    })
-  }
-  if (spec.shape === 'beam') {
-    return battle.stacks.some((row) => {
-      if (
-        row.qty <= 0 ||
-        row.side === attacker.side ||
-        isHeroStack(row) ||
-        isUntargetableStack(row, catalog)
-      ) {
-        return false
-      }
-      return (
-        bestRangeStand(
-          reachable,
-          { q: row.q, r: row.r },
-          attacker,
-          catalog,
-          tiles,
-          battle.stacks,
-        ) != null
-      )
-    })
-  }
   if (spec.shape === 'aoe') {
     return tiles.some(
       (tile) =>
@@ -627,6 +674,12 @@ function attackHover(
   }
   const unit = unitById(catalog, attacker.unitId)
   const stand = actingStand({ q: attacker.q, r: attacker.r }, steps)
+  const attackShape = unit ? unitAttackShape(unit).shape : 'single'
+  const previewAim = attackShape === 'pulse' ? stand : aim
+  const impact = impactPreview(attacker, stand, previewAim, battle, catalog, tiles, {
+    wedgeZone,
+    targetId,
+  })
   return {
     icon: icon ?? attackIconFor(unit),
     q: aim.q,
@@ -635,9 +688,8 @@ function attackHover(
     attackTargetId: targetId,
     fire: true,
     afterMove: null,
-    impactKeys: impactFrom(attacker, stand, aim, battle, catalog, tiles, {
-      wedgeZone,
-    }),
+    impactKeys: impact.impactKeys,
+    beamPathKeys: impact.beamPathKeys,
     aimHex: aim,
   }
 }
@@ -700,30 +752,6 @@ function stepsToward(
     movementBlockKeys,
   )
   return truncated.length > 0 ? truncated : null
-}
-
-function pickStrikeTargetFromStand(
-  stand: CombatStack,
-  attacker: CombatStack,
-  battle: CombatBattle,
-  catalog: ReferenceCatalog,
-  tiles: CombatTile[],
-): CombatStack | null {
-  for (const row of battle.stacks) {
-    if (
-      isValidAttackTarget(
-        stand,
-        row,
-        catalog,
-        tiles,
-        battle.stacks,
-        isHealAllyTarget(attacker, row, catalog),
-      )
-    ) {
-      return row
-    }
-  }
-  return null
 }
 
 /**
@@ -794,7 +822,200 @@ function bestApproachTowardTargetFootprint(
   return best
 }
 
-function strikeIntentFromStand(
+function standFootprintOccupiesHex(
+  stand: Axial,
+  attacker: CombatStack,
+  catalog: ReferenceCatalog,
+  hex: Axial,
+): boolean {
+  const body = { ...attacker, q: stand.q, r: stand.r }
+  return stackFootprint(body, catalog).some(
+    (h) => h.q === hex.q && h.r === hex.r,
+  )
+}
+
+function playerStandCanHit(
+  stand: Axial,
+  attacker: CombatStack,
+  target: CombatStack,
+  aimHex: Axial,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  allowFriendly: boolean,
+  shape: UnitCombatAbilities,
+  pointerWedge: number,
+): boolean {
+  const ghost = { ...attacker, q: stand.q, r: stand.r }
+  if (!attackTargetPolicyOk(ghost, target, catalog, allowFriendly)) {
+    return false
+  }
+  if (
+    shape.shape === 'breath' &&
+    !breathHitsTarget(
+      stand,
+      attacker,
+      catalog,
+      aimHex,
+      shape.rows,
+      pointerWedge,
+    )
+  ) {
+    return false
+  }
+  return attackDeliveryOkFromStand(
+    stand,
+    aimHex,
+    ghost,
+    catalog,
+    tiles,
+    stacks,
+    pointerWedge,
+  )
+}
+
+/**
+ * Player hover/click stand from pointer zone on a target footprint hex.
+ * Centre → fewest-step legal stand; wedge → side approach with shortest fallback.
+ */
+export function pickPlayerAttackStand(
+  attacker: CombatStack,
+  target: CombatStack,
+  targetHoverHex: Axial,
+  zone: HexZone,
+  reachable: Map<string, Axial[]>,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  allowFriendly: boolean,
+): { stand: Axial; steps: Axial[]; wedgeZone?: number } | null {
+  const unit = unitById(catalog, attacker.unitId)
+  const shape = unitAttackShape(unit)
+  const minR = unit?.min_range ?? 0
+
+  const shortestStand = (): {
+    stand: Axial
+    steps: Axial[]
+    wedgeZone?: number
+  } | null => {
+    const stand =
+      shape.shape === 'breath'
+        ? bestBreathStand(attacker, target, reachable, catalog, tiles, stacks)
+        : bestAttackStand(
+            attacker,
+            target,
+            reachable,
+            catalog,
+            tiles,
+            stacks,
+            allowFriendly,
+          )
+    if (!stand) {
+      return null
+    }
+    return {
+      stand,
+      steps: reachable.get(hexKey(stand.q, stand.r)) ?? [],
+    }
+  }
+
+  if (zone === 'center') {
+    return shortestStand()
+  }
+
+  const wedge = zone as number
+  const adj = wedgeNeighbor(targetHoverHex, wedge)
+  const candidates: { stand: Axial; steps: Axial[] }[] = []
+
+  const consider = (from: Axial, steps: Axial[]) => {
+    if (
+      isSiegeEngineWallTarget(target, catalog) &&
+      !isValidSiegeWallAttackStand(from, tiles, stacks, catalog)
+    ) {
+      return
+    }
+    if (minR <= 0) {
+      if (!standFootprintOccupiesHex(from, attacker, catalog, adj)) {
+        return
+      }
+    } else if (hexWedgeZone(targetHoverHex, from) !== wedge) {
+      return
+    }
+    if (
+      !playerStandCanHit(
+        from,
+        attacker,
+        target,
+        targetHoverHex,
+        catalog,
+        tiles,
+        stacks,
+        allowFriendly,
+        shape,
+        wedge,
+      )
+    ) {
+      return
+    }
+    candidates.push({ stand: from, steps })
+  }
+
+  consider({ q: attacker.q, r: attacker.r }, [])
+  for (const [key, steps] of reachable) {
+    const [qs, rs] = key.split(',')
+    consider({ q: Number(qs), r: Number(rs) }, steps)
+  }
+
+  if (candidates.length === 0) {
+    return shortestStand()
+  }
+
+  candidates.sort((a, b) => a.steps.length - b.steps.length)
+  const best = candidates[0]!
+  return { stand: best.stand, steps: best.steps, wedgeZone: wedge }
+}
+
+const ATTACK_STAND_ZONES: HexZone[] = ['center', 0, 1, 2, 3, 4, 5]
+
+/** Centre + six wedges via pickPlayerAttackStand (deduped stand+wedge). */
+export function enumeratePlayerAttackStands(
+  attacker: CombatStack,
+  target: CombatStack,
+  targetHoverHex: Axial,
+  reachable: Map<string, Axial[]>,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  stacks: CombatStack[],
+  allowFriendly: boolean,
+): { stand: Axial; steps: Axial[]; wedgeZone?: number }[] {
+  const seen = new Set<string>()
+  const out: { stand: Axial; steps: Axial[]; wedgeZone?: number }[] = []
+  for (const zone of ATTACK_STAND_ZONES) {
+    const pick = pickPlayerAttackStand(
+      attacker,
+      target,
+      targetHoverHex,
+      zone,
+      reachable,
+      catalog,
+      tiles,
+      stacks,
+      allowFriendly,
+    )
+    if (!pick) {
+      continue
+    }
+    const dedupeKey = `${hexKey(pick.stand.q, pick.stand.r)}|${pick.wedgeZone ?? 'center'}`
+    if (seen.has(dedupeKey)) {
+      continue
+    }
+    seen.add(dedupeKey)
+    out.push(pick)
+  }
+  return out
+}
+
+export function combatStrikeIntentFromStand(
   attacker: CombatStack,
   target: CombatStack,
   stand: Axial,
@@ -803,13 +1024,20 @@ function strikeIntentFromStand(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   allowFriendly: boolean,
+  footprintAimHex?: Axial | null,
+  pointerWedge?: number | null,
 ): CombatHover {
   const unit = unitById(catalog, attacker.unitId)
   const shape = unitAttackShape(unit)
-  const aim = closestTargetFootprintHex(stand, attacker, target, catalog)
-  const wedgeZone = usesDirectionWedges(shape.shape)
-    ? hexWedgeZone(stand, aim)
-    : undefined
+  const aim =
+    footprintAimHex ??
+    closestTargetFootprintHex(stand, attacker, target, catalog)
+  const wedgeZone =
+    pointerWedge != null
+      ? pointerWedge
+      : usesDirectionWedges(shape.shape)
+        ? hexWedgeZone(stand, aim)
+        : undefined
   return {
     ...attackHover(
       attacker,
@@ -888,15 +1116,7 @@ export function combatHover(
     catalog,
     costAdjust,
   )
-  const standAtHover =
-    reachableAtHoverHex(hover, attacker, catalog, reachable)?.anchor ?? hover
-  const strikeTarget = enemy ?? healAlly ?? pickStrikeTargetFromStand(
-    { ...attacker, q: standAtHover.q, r: standAtHover.r },
-    attacker,
-    battle,
-    catalog,
-    tiles,
-  )
+  const strikeTarget = enemy ?? healAlly
   const trapCfg = unitTrapConfig(unit)
   if (trapCfg) {
     if (occupant && !isSelf) {
@@ -965,10 +1185,18 @@ export function combatHover(
 
   if (isSelf) {
     if (shapePulsesOnMove(shape.shape) && !isUnitAttackBlocked(attacker, catalog)) {
-      return stayHover(from, {
-        afterMove: 'pulse',
-        impactKeys: impactFrom(attacker, from, from, battle, catalog, tiles),
-      })
+      const impact = impactPreview(attacker, from, from, battle, catalog, tiles)
+      return {
+        icon: attackIconFor(unit),
+        q: from.q,
+        r: from.r,
+        steps: [],
+        attackTargetId: null,
+        fire: true,
+        afterMove: null,
+        impactKeys: impact.impactKeys,
+        aimHex: from,
+      }
     }
     if (shapeIsUntargeted(shape.shape)) {
       return attackHover(
@@ -981,225 +1209,9 @@ export function combatHover(
         tiles,
       )
     }
-    if (!usesDirectionWedges(shape.shape)) {
+    if (!shapeIsUntargeted(shape.shape) && !shapePulsesOnMove(shape.shape)) {
       return unitIsStationary(unit) ? null : stayHover(from)
     }
-  }
-
-  if (usesDirectionWedges(shape.shape) && !(occupant && !isSelf)) {
-    const atHover = reachableAtHoverHex(hover, attacker, catalog, reachable)
-    const steps = atHover?.steps ?? null
-    const stand = atHover?.anchor ?? hover
-    if (steps == null) {
-      const toward = stepsToward(
-        hover,
-        reachable,
-        from,
-        budget,
-        tiles,
-        kind,
-        occupied,
-        spec,
-        attacker,
-        catalog,
-        passableMoat,
-        stopOnly,
-        landOccupied,
-        costAdjust,
-        geBlocks,
-      )
-      return toward ? moveTowardHover(from, toward) : null
-    }
-    const moveOnly = (): CombatHover => ({
-      icon: 'move',
-      q: stand.q,
-      r: stand.r,
-      steps,
-      attackTargetId: null,
-      fire: false,
-      afterMove: null,
-      impactKeys: [],
-    })
-    if (zone === 'center') {
-      return unitIsStationary(unit) ? null : moveOnly()
-    }
-    const neighbor = wedgeNeighbor(stand, zone)
-    const foe = stackOccupyingHex(
-      battle.stacks,
-      neighbor.q,
-      neighbor.r,
-      catalog,
-    )
-    const aim = foe
-      ? closestTargetFootprintHex(stand, attacker, foe, catalog)
-      : neighbor
-    const validFoe =
-      foe != null &&
-      foe.qty > 0 &&
-      attackCanHitTargetAtStand(
-        stand,
-        attacker,
-        foe,
-        catalog,
-        tiles,
-        battle.stacks,
-        isHealAllyTarget(attacker, foe, catalog),
-        zone,
-      ) &&
-      (shape.shape !== 'breath' ||
-        breathHitsTarget(stand, attacker, catalog, aim, shape.rows, zone))
-    if (!validFoe || !foe) {
-      return moveOnly()
-    }
-    if (
-      isSiegeEngineWallTarget(foe, catalog) &&
-      !isValidSiegeWallAttackStand(stand, tiles, battle.stacks, catalog)
-    ) {
-      return {
-        icon: 'invalid',
-        q: stand.q,
-        r: stand.r,
-        steps,
-        attackTargetId: null,
-        fire: false,
-        afterMove: null,
-        impactKeys: [],
-        label: "Can't Stand Here",
-      }
-    }
-    const blockLabel = unitAttackBlockHoverLabel(attacker, catalog)
-    if (blockLabel) {
-      return unitIsStationary(unit) ? null : moveOnly()
-    }
-    return {
-      icon: attackIconFor(unit),
-      q: stand.q,
-      r: stand.r,
-      steps,
-      attackTargetId: foe.id,
-      fire: true,
-      afterMove: null,
-      impactKeys: impactFrom(attacker, stand, aim, battle, catalog, tiles, {
-        wedgeZone: zone,
-      }),
-      aimHex: aim,
-      arrowDeg: zone * 60,
-      allowFriendly: isHealAllyTarget(attacker, foe, catalog),
-    }
-  }
-
-  if (shape.shape === 'beam' && strikeTarget) {
-    const atHover = reachableAtHoverHex(hover, attacker, catalog, reachable)
-    const previewStand = atHover?.anchor ?? hover
-    const aim = closestTargetFootprintHex(
-      previewStand,
-      attacker,
-      strikeTarget,
-      catalog,
-    )
-    const stand = bestRangeStand(
-      reachable,
-      aim,
-      attacker,
-      catalog,
-      tiles,
-      battle.stacks,
-    )
-    if (stand) {
-      const ghost = { ...attacker, q: stand.q, r: stand.r }
-      if (
-        !attackTargetPolicyOk(
-          ghost,
-          strikeTarget,
-          catalog,
-          healAlly != null,
-        )
-      ) {
-        return null
-      }
-      return {
-        ...attackHover(
-          attacker,
-          aim,
-          reachable.get(hexKey(stand.q, stand.r)) ?? [],
-          strikeTarget.id,
-          battle,
-          catalog,
-          tiles,
-        ),
-        allowFriendly: healAlly != null,
-      }
-    }
-  }
-
-  if (shape.shape === 'aoe') {
-    const stand = bestRangeStand(
-      reachable,
-      hover,
-      attacker,
-      catalog,
-      tiles,
-      battle.stacks,
-    )
-    if (stand) {
-      const enemyId =
-        occupant && occupant.side !== attacker.side ? occupant.id : null
-      return attackHover(
-        attacker,
-        hover,
-        reachable.get(hexKey(stand.q, stand.r)) ?? [],
-        enemyId,
-        battle,
-        catalog,
-        tiles,
-        'aoe',
-      )
-    }
-  }
-
-  // LINE: fire from the current hex only (full pierce line). Never walk into
-  // range then shoot — that Beam-style path made ranged piercers close first.
-  // (Pangolin uses charge_line: walk-then-pierce, not this branch.)
-  if (shape.shape === 'line' && strikeTarget) {
-    const aim = closestTargetFootprintHex(from, attacker, strikeTarget, catalog)
-    const canFireNow =
-      deliveryOkFromStand(
-        from,
-        aim,
-        attacker,
-        catalog,
-        tiles,
-        battle.stacks,
-      ) &&
-      attackTargetPolicyOk(
-        attacker,
-        strikeTarget,
-        catalog,
-        healAlly != null,
-      )
-    if (canFireNow) {
-      return {
-        ...attackHover(
-          attacker,
-          aim,
-          [],
-          strikeTarget.id,
-          battle,
-          catalog,
-          tiles,
-        ),
-        allowFriendly: healAlly != null,
-      }
-    }
-    if (enemy) {
-      const approach = bestApproachToward(
-        from,
-        { q: enemy.q, r: enemy.r },
-        reachable,
-      )
-      return approach ? moveTowardHover(from, approach.steps) : null
-    }
-    return null
   }
 
   if (shape.pullTarget && enemy) {
@@ -1238,7 +1250,14 @@ export function combatHover(
       battle.stacks,
     )
     if (pullNow || reachNow) {
-      const pulseKeys = impactFrom(ghost, stand, stand, battle, catalog, tiles)
+      const pulseKeys = impactPreview(
+        ghost,
+        stand,
+        stand,
+        battle,
+        catalog,
+        tiles,
+      ).impactKeys
       return {
         ...attackHover(
           ghost,
@@ -1286,35 +1305,51 @@ export function combatHover(
       if (!steps) {
         return null
       }
-      const dest = actingStand(from, steps)
-      const pulseAfter =
-        !isUnitAttackBlocked(attacker, catalog) ? ('pulse' as const) : null
-      return {
-        icon: 'move',
-        q: dest.q,
-        r: dest.r,
-        steps,
-        attackTargetId: null,
-        fire: false,
-        afterMove: pulseAfter,
-        impactKeys: pulseAfter
-          ? impactFrom(attacker, dest, dest, battle, catalog, tiles)
-          : [],
-      }
+      return moveTowardHover(from, steps)
     }
   }
 
   if (shapeIsUntargeted(shape.shape)) {
-    if (enemy && hasLineOfSight(from, { q: enemy.q, r: enemy.r }, tiles, battle.stacks, catalog)) {
-      return attackHover(
-        attacker,
-        hover,
-        [],
-        enemy.id,
-        battle,
-        catalog,
-        tiles,
-      )
+    const targetOnHex = enemy ?? healAlly
+    if (targetOnHex) {
+      const steps =
+        stepsToward(
+          hover,
+          reachable,
+          from,
+          budget,
+          tiles,
+          kind,
+          occupied,
+          spec,
+          attacker,
+          catalog,
+          passableMoat,
+          stopOnly,
+          landOccupied,
+          costAdjust,
+          geBlocks,
+        ) ?? []
+      const stand = actingStand(from, steps)
+      if (
+        hasLineOfSight(
+          stand,
+          { q: targetOnHex.q, r: targetOnHex.r },
+          tiles,
+          battle.stacks,
+          catalog,
+        )
+      ) {
+        return attackHover(
+          attacker,
+          hover,
+          steps,
+          targetOnHex.id,
+          battle,
+          catalog,
+          tiles,
+        )
+      }
     }
     const steps = stepsToward(
       hover,
@@ -1337,36 +1372,30 @@ export function combatHover(
   }
 
   if (strikeTarget) {
-    const stand =
-      shape.shape === 'breath' && enemy
-        ? bestBreathStand(
-            attacker,
-            enemy,
-            reachable,
-            catalog,
-            tiles,
-            battle.stacks,
-          )
-        : bestAttackStand(
-            attacker,
-            strikeTarget,
-            reachable,
-            catalog,
-            tiles,
-            battle.stacks,
-            healAlly != null,
-          )
-    if (stand) {
+    const picked = pickPlayerAttackStand(
+      attacker,
+      strikeTarget,
+      hover,
+      zone,
+      reachable,
+      catalog,
+      tiles,
+      battle.stacks,
+      healAlly != null,
+    )
+    if (picked) {
       return {
-        ...strikeIntentFromStand(
+        ...combatStrikeIntentFromStand(
           attacker,
           strikeTarget,
-          stand,
-          reachable.get(hexKey(stand.q, stand.r)) ?? [],
+          picked.stand,
+          picked.steps,
           battle,
           catalog,
           tiles,
           healAlly != null,
+          hover,
+          picked.wedgeZone,
         ),
       }
     }
@@ -1399,7 +1428,7 @@ export function combatHover(
         )
         const ghost = { ...attacker, q: approach.hex.q, r: approach.hex.r }
         const inRange =
-          shape.shape === 'aoe' || shape.shape === 'beam'
+          shape.shape === 'aoe'
             ? attackDeliveryOkFromStand(
                 approach.hex,
                 aimAtEnemy,
@@ -1415,10 +1444,10 @@ export function combatHover(
                 catalog,
                 tiles,
                 battle.stacks,
-                false,
+                healAlly != null,
               )
         if (inRange) {
-          return strikeIntentFromStand(
+          return combatStrikeIntentFromStand(
             attacker,
             enemy,
             approach.hex,
@@ -1426,7 +1455,9 @@ export function combatHover(
             battle,
             catalog,
             tiles,
-            false,
+            healAlly != null,
+            hover,
+            zone === 'center' ? undefined : (zone as number),
           )
         }
         return moveTowardHover(from, approach.steps)
@@ -1440,9 +1471,7 @@ export function combatHover(
     }
   }
 
-  // Beams never fire at empty ground (Thor Construct regression). Unit aims
-  // are handled above via strikeTarget / bestAttackStand. LINE is stay-and-shoot
-  // from the current hex (see dedicated branch above).
+  // Unit aims (incl. beam) via strikeTarget / bestAttackStand; no empty-ground beam.
   if (occupant && !isSelf) {
     return null
   }
@@ -1486,37 +1515,7 @@ export function confusedAttackIntent(
   }
   const unit = unitById(catalog, stack.unitId)
   const shape = unitAttackShape(unit)
-  const from = { q: stack.q, r: stack.r }
   const reachable = combatMovementReachable(stack, battle, tiles, catalog)
-  // LINE: stay-and-shoot — never relocate before the confused strike.
-  if (shape.shape === 'line') {
-    if (
-      !attackCanHitTargetAtStand(
-        stack,
-        stack,
-        target,
-        catalog,
-        tiles,
-        battle.stacks,
-        true,
-      )
-    ) {
-      return null
-    }
-    const aimHex = closestTargetFootprintHex(from, stack, target, catalog)
-    return {
-      icon: attackIconFor(unit),
-      q: from.q,
-      r: from.r,
-      steps: [],
-      attackTargetId: target.id,
-      fire: true,
-      afterMove: null,
-      impactKeys: [],
-      aimHex,
-      allowFriendly: true,
-    }
-  }
   const stand = bestAttackStand(
     stack,
     target,

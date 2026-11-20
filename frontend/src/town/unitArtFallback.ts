@@ -6,7 +6,7 @@ import {
 } from '../config/animConfig'
 import { devToolsEnabled } from '../settings/playerSettings'
 import type { ReferenceCatalog, UnitRow } from './catalog'
-import { isAdvancedUnit, townNameForUnit } from './catalog'
+import { isAdvancedUnit, unitArtTownFolder } from './catalog'
 import { unitStaticPictureUrls } from './slotArt'
 import {
   basicPartnerForAdvanced,
@@ -98,7 +98,7 @@ export function unitStaticArtCandidates(
   if (!unit) {
     return []
   }
-  const town = townNameForUnit(catalog, unit)
+  const town = unitArtTownFolder(catalog, unit)
   const out: UnitStaticArtCandidate[] = []
   const advFile = unit.image_path?.trim()
   if (advFile) {
@@ -109,7 +109,7 @@ export function unitStaticArtCandidates(
   const partner = basicPartnerForAdvanced(catalog, unit)
   const partnerFile = partner?.image_path?.trim()
   if (partnerFile) {
-    const partnerTown = townNameForUnit(catalog, partner)
+    const partnerTown = unitArtTownFolder(catalog, partner)
     for (const url of unitStaticPictureUrls(partnerFile, partnerTown)) {
       out.push({ url, glow: true })
     }

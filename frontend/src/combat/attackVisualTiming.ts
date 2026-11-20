@@ -18,8 +18,6 @@ import type { CombatStack } from './battle'
 import { appendBattleAnimCombatLog } from './battleAnimLogBridge'
 import { unitProjectileRow } from './battleProjectile'
 import { stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
-import { hexLine } from './shapes'
-
 const SHAPE_VISUAL_SHAPES: ReadonlySet<AttackShapeKind> = new Set([
   'breath',
   'pulse',
@@ -67,7 +65,7 @@ export function projectileRowFitsAttack(
   if (attackShape === 'chain') {
     return true
   }
-  if (attackShape === 'beam' || attackShape === 'line') {
+  if (attackShape === 'beam') {
     return true
   }
   if (attackShape === 'aoe' && maxRange > 1) {
@@ -280,37 +278,27 @@ export function shapeVisualPlacement(opts: {
   }
 }
 
-/** Fraction along beam/line (0–1) when projectile reaches target footprint. */
-export function beamPassProgress(
+/** Fraction along resolved beam path (0–1) when the shot reaches a victim. */
+export function beamPassProgressOnPath(
+  pathHexes: Axial[],
   striker: CombatStack,
   target: CombatStack,
   catalog: ReferenceCatalog,
-  aimHex: Axial,
-  maxRange: number,
 ): number {
-  const origin = actionOriginFootprintHex(
-    { q: striker.q, r: striker.r },
-    striker,
-    catalog,
-    aimHex,
-  )
-  const line = hexLine(origin, aimHex)
-  const capped =
-    line.length > maxRange + 1 ? line.slice(0, maxRange + 1) : line
-  if (capped.length < 2) {
+  if (pathHexes.length < 2) {
     return 1
   }
   const targetHex = closestHexOnTargetFootprint(striker, target, catalog)
   let bestIdx = 0
   let bestDist = Infinity
-  for (let i = 0; i < capped.length; i += 1) {
-    const d = hexDistance(capped[i]!, targetHex)
+  for (let i = 0; i < pathHexes.length; i += 1) {
+    const d = hexDistance(pathHexes[i]!, targetHex)
     if (d < bestDist) {
       bestDist = d
       bestIdx = i
     }
   }
-  return bestIdx / Math.max(1, capped.length - 1)
+  return bestIdx / Math.max(1, pathHexes.length - 1)
 }
 
 export function usesShapeVisual(
@@ -342,7 +330,7 @@ export function usesBeamLineFlight(
   return (
     row != null &&
     normalizeProjectileKind(row) === 'flight' &&
-    (attackShape === 'beam' || attackShape === 'line')
+    attackShape === 'beam'
   )
 }
 

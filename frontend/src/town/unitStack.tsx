@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { formatAmount } from '../hex/resources'
 import type { GameSession } from '../session/types'
 import {
-  townNameForUnit,
+  unitArtTownFolder,
   unitById,
   type ReferenceCatalog,
 } from './catalog'
@@ -43,12 +43,12 @@ export function stackView(
     empty: false,
     filename,
     qty: stack.qty,
-    townName: townNameForUnit(catalog, unit ?? null),
+    townName: unitArtTownFolder(catalog, unit ?? null),
     unitId: stack.unit_id,
   }
 }
 
-/** Static unit still with town-folder-first URL fallback (no flat-fallback warning). */
+/** Static unit still — `assets/units/{town}/` only. */
 export function UnitStaticArtImg({
   filename,
   townName,

@@ -100,6 +100,11 @@ import {
 } from './CombatBattleAnimLayer'
 import { setBattleAnimLogSink } from './battleAnimLogBridge'
 import {
+  armBattleStallWatch,
+  disarmBattleTurnWatch,
+  noteBattleMoving,
+} from './battleHangWatchdog'
+import {
   dieFallbackEffectNames,
   preloadDieFallbackEffects,
   resetDieFallbackSessionWarnings,
@@ -137,12 +142,13 @@ import { axialNeighborDirs } from '../hex/pathfinding'
 import { ARMY_STACK_SLOTS, type Hero } from '../session/types'
 import { getSession, subscribe, updateSession } from '../session/store'
 import {
+  combatAimCenterFrac,
   fetchCatalog,
   getCachedCatalog,
   subscribeCatalog,
   shapePulsesOnMove,
   unitAttackShape,
-  townNameForUnit,
+  unitArtTownFolder,
   unitById,
   unitIsStationary,
   unitTakesTurns,
@@ -157,7 +163,7 @@ import {
   effectiveCombatLogTimerSec,
 } from '../settings/playerSettings'
 import { setCombatKeyBridge } from '../input/combatKeyBridge'
-import { heroPortraitUrl, terrainArtUrl, unitPortraitUrl } from '../town/slotArt'
+import { heroPortraitUrl, unitPortraitUrl } from '../town/slotArt'
 import {
   tombFootprintCode,
   tombstoneAt,
@@ -203,6 +209,8 @@ import {
   resetBattleStackPaintOrderCache,
   resolveLivingStacksPaintOrder,
 } from './battleStackPaintOrder'
+import { CombatGroundEffectArt } from './CombatGroundEffectArt'
+import { groundEffectFootPoint, resetGroundEffectArtWarnings } from './groundEffectArt'
 import {
   canCombatStep,
   combatMovementReachable,
@@ -237,7 +245,6 @@ import { warRoomSiegeMult } from '../town/townUniques'
 import { errorMessage, logConfigOnce } from '../session/configLog'
 import {
   resolveAttack,
-  attackAimFromCommit,
   describeAttackResolveFailure,
   type AttackAnimPhase,
   attackAimForTargetAtStand,
@@ -291,7 +298,7 @@ import { applyUnitRegenAtTurnStart } from './unitRegen'
 import { visibleGroundEffects } from './groundEvasion'
 import { tryAutoSplitOnTurn } from './mudSplit'
 import {
-  attackCommitAim,
+  combatAttackAimFromIntent,
   canStrikeThisTurn,
   combatHover,
   confusedAttackIntent,
@@ -643,33 +650,6 @@ function CombatStackArt({
   )
 }
 
-function GroundEffectArt({
-  filename,
-  label,
-}: {
-  filename: string | null
-  label: string
-}) {
-  const [missing, setMissing] = useState(false)
-  useEffect(() => {
-    setMissing(false)
-  }, [filename])
-  // Damage-only zones (siege Moat) intentionally omit art — terrain paint is enough.
-  if (!filename) {
-    return null
-  }
-  if (!missing) {
-    return (
-      <img
-        className="combat-ground-effect-img"
-        src={terrainArtUrl(filename)}
-        alt=""
-        onError={() => setMissing(true)}
-      />
-    )
-  }
-  return <span className="combat-ground-effect-fallback">{label}</span>
-}
 
 function hexByOffset(
   grid: { forEach: (fn: (hex: Hex) => void) => void },
@@ -729,7 +709,10 @@ function stackViewFromCombat(
         : null
   let filename = siegeArt || unit?.image_path?.trim() || null
   let preferFilename = false
-  let stackTownName = townNameForUnit(catalog, unit)
+  let stackTownName: string | null = unitArtTownFolder(catalog, unit)
+  if (siegeArt && townName?.trim()) {
+    stackTownName = townName.trim()
+  }
   if (!siegeArt && catalog) {
     if (isPolymorphed(stack, catalog)) {
       const still = polymorphStandImagePath(catalog)
@@ -921,6 +904,7 @@ export function CombatScreen({
     Map<number, import('./battleProjectile').BattleProjectileArt | null>
   >(new Map())
   const knownTombsRef = useRef<Set<string>>(new Set())
+  const stackBattleVisualsRef = useRef<Record<string, StackBattleVisual>>({})
   const strikeReactionTargetsRef = useRef<Set<string>>(new Set())
   const wipeAnimGenRef = useRef(0)
   const unitBattleSheetsRef = useRef(unitBattleSheets)
@@ -973,6 +957,7 @@ export function CombatScreen({
   summaryRef.current = summary
   openingRef.current = opening
   movingRef.current = moving
+  stackBattleVisualsRef.current = stackBattleVisuals
   heroCastRef.current = heroCast
   combatHeroesRef.current = combatHeroes
   waypointPlanRef.current = waypointPlan
@@ -1004,19 +989,44 @@ export function CombatScreen({
     }
     const live = current.stacks.find((row) => row.id === stack.id) ?? stack
     const attackBlocked = isUnitAttackBlocked(live, catalog)
-    const fire =
-      (intent.fire || intent.afterMove === 'pulse') && !attackBlocked
+    const fire = intent.fire && !attackBlocked
     const allowFriendly = intent.allowFriendly === true
     const prefix = intent.logPrefix ?? []
-    const aim = attackAimFromCommit(
-      attackCommitAim(stack, intent, current, catalog),
+    const originStack = { ...live, q: live.q, r: live.r }
+    const aimAtIntent = combatAttackAimFromIntent(
+      originStack,
+      intent,
+      catalog,
+      field.tiles,
     )
-    if (intent.steps.length === 0 && fire) {
+    const attackStand = aimAtIntent.stand ?? {
+      q: originStack.q,
+      r: originStack.r,
+    }
+    const needsMoveFirst =
+      intent.steps.length > 0 ||
+      attackStand.q !== originStack.q ||
+      attackStand.r !== originStack.r
+    let walkSteps = intent.steps
+    if (needsMoveFirst && walkSteps.length === 0) {
+      const reachable = combatMovementReachable(
+        originStack,
+        current,
+        field.tiles,
+        catalog,
+      )
+      walkSteps = reachable.get(hexKey(attackStand.q, attackStand.r)) ?? []
+    }
+    if (needsMoveFirst && walkSteps.length === 0) {
+      setHoverTarget(null)
+      return false
+    }
+    if (!needsMoveFirst && fire) {
       const resolved = resolveAttack(
         current,
         stack.id,
         catalog,
-        aim,
+        aimAtIntent,
         field.tiles,
         combatHeroes,
         Math.random,
@@ -1030,7 +1040,7 @@ export function CombatScreen({
       presentAttackRef.current(resolved, prefix, false, current)
       return true
     }
-    if (intent.steps.length === 0) {
+    if (walkSteps.length === 0) {
       setHoverTarget(null)
       presentTurnEndRef.current(current, stack.id, [
         ...prefix,
@@ -1039,6 +1049,7 @@ export function CombatScreen({
       return true
     }
     const gen = (walkGenRef.current += 1)
+    noteBattleMoving(true, 'walk')
     setMoving(true)
     setHoverTarget(null)
     reachApiRef.current?.draw([])
@@ -1083,7 +1094,7 @@ export function CombatScreen({
         stack.side,
         pathStartQ,
         pathStartR,
-        intent.steps,
+        walkSteps,
       )
       const pathAnimSet = unitBattleSheetsRef.current.get(stack.unitId)
       const pathUseMoveSheet =
@@ -1113,7 +1124,7 @@ export function CombatScreen({
           setStackVisuals: setStackBattleVisuals,
         })
       let waypointIndex = 0
-      for (const step of intent.steps) {
+      for (const step of walkSteps) {
         if (walkGenRef.current !== gen) {
           await endPathVisual()
           return
@@ -1183,6 +1194,7 @@ export function CombatScreen({
             return
           }
           await endPathVisual()
+          noteBattleMoving(false, 'walk-wipe')
           setMoving(false)
           presentTurnEndRef.current(
             latest,
@@ -1206,6 +1218,7 @@ export function CombatScreen({
             return
           }
           await endPathVisual()
+          noteBattleMoving(false, 'walk-stun')
           setMoving(false)
           const stunId = stunConditionId(catalog)
           const name = unitById(catalog, walker.unitId)?.name ?? 'Unknown'
@@ -1231,6 +1244,7 @@ export function CombatScreen({
       if (walkGenRef.current !== gen) {
         return
       }
+      noteBattleMoving(false, 'walk-end')
       setMoving(false)
       const hazardLines = walkHazardLogLines(hazardAcc, unitName)
       // Tempest: Storm scatter only after an actual move (not in-place attacks).
@@ -1253,14 +1267,11 @@ export function CombatScreen({
         trapLines.push(...scatter.lines)
       }
       if (fire) {
-        const aimLive = attackAimFromCommit(
-          attackCommitAim(stack, intent, latest, catalog),
-        )
         const resolved = resolveAttack(
           latest,
           stack.id,
           catalog,
-          aimLive,
+          aimAtIntent,
           field.tiles,
           combatHeroes,
           Math.random,
@@ -1296,7 +1307,7 @@ export function CombatScreen({
                 latest,
                 stack.id,
                 catalog,
-                aimLive,
+                aimAtIntent,
                 field.tiles,
                 allowFriendly,
               ),
@@ -1531,7 +1542,6 @@ export function CombatScreen({
         const act =
           intent != null &&
           (intent.fire ||
-            intent.afterMove === 'pulse' ||
             intent.steps.length > 0 ||
             waypointPlan.steps.length > 0)
         if (act && intent) {
@@ -1558,10 +1568,7 @@ export function CombatScreen({
         combatHeroes,
       )
       const act =
-        intent != null &&
-        (intent.fire ||
-          intent.afterMove === 'pulse' ||
-          intent.steps.length > 0)
+        intent != null && (intent.fire || intent.steps.length > 0)
       if (act && intent) {
         setWaypointPlan(null)
         performCombatIntentRef.current(intent, stack, battle)
@@ -1922,7 +1929,9 @@ export function CombatScreen({
     if (finishCombat(current)) {
       return
     }
-    const hold = currentLog.holdTurn === true
+    const active = activeStack(current)
+    const hold =
+      currentLog.holdTurn === true && active?.hasActedThisRound !== true
     setLog(null)
     if (
       pendingSummaryAfterAnimsRef.current &&
@@ -1950,9 +1959,15 @@ export function CombatScreen({
       const skipPopup =
         pendingLog.lines.length === 0 ||
         effectiveCombatLogTimerSec() === 0
+      const pendingActive = battleRef.current
+        ? activeStack(battleRef.current)
+        : null
+      const pendingHolds =
+        pendingLog.holdTurn === true &&
+        pendingActive?.hasActedThisRound !== true
       if (!skipPopup) {
         setLog(pendingLog)
-      } else if (pendingLog.holdTurn !== true) {
+      } else if (!pendingHolds) {
         const current = battleRef.current
         const cat = catalogRef.current
         if (current && cat && !finishCombat(current)) {
@@ -1996,7 +2011,10 @@ export function CombatScreen({
       if (finishCombat(current)) {
         return
       }
-      if (payload.holdTurn !== true) {
+      const activeNow = activeStack(current)
+      const holds =
+        payload.holdTurn === true && activeNow?.hasActedThisRound !== true
+      if (!holds) {
         const advanced = advanceTurn(current, cat, Math.random, {
           tiles: fieldRef.current?.tiles,
           heroes: combatHeroesRef.current,
@@ -2131,6 +2149,7 @@ export function CombatScreen({
       resolved.preMoveBattle
     ) {
       const gen = (walkGenRef.current += 1)
+      noteBattleMoving(true, 'hero-teleport')
       setMoving(true)
       const moverId = aim.targetId
       const next = resolved.endsRound
@@ -2150,6 +2169,7 @@ export function CombatScreen({
       void (async () => {
         await sleep(resolved.moveDelayMs ?? 500)
         if (walkGenRef.current !== gen) {
+          noteBattleMoving(false, 'hero-teleport-cancel')
           movingRef.current = false
           setMoving(false)
           setTeleportVanishStackId(null)
@@ -2157,6 +2177,7 @@ export function CombatScreen({
           applyOutcomeIfOver(next)
           return
         }
+        noteBattleMoving(false, 'hero-teleport-end')
         movingRef.current = false
         setMoving(false)
         setTeleportVanishStackId(null)
@@ -2168,6 +2189,7 @@ export function CombatScreen({
     const beats = resolved.beats
     if (beats && beats.length > 0) {
       const gen = (walkGenRef.current += 1)
+      noteBattleMoving(true, 'hero-cast-beats')
       setMoving(true)
       const next = resolved.endsRound
         ? resolved.battle
@@ -2189,6 +2211,7 @@ export function CombatScreen({
           }
           await sleep(ABILITY_BEAT_MS)
         }
+        noteBattleMoving(false, 'hero-cast-beats-end')
         movingRef.current = false
         setMoving(false)
         applyOutcomeIfOver(next)
@@ -2300,6 +2323,7 @@ export function CombatScreen({
     let next = silenced.battle
     const actor = next.stacks.find((row) => row.id === stackId) ?? null
     const fervorLines: string[] = []
+    let grantedAnotherAction = false
     if (!wasteExtraTurn && actor && actor.qty > 0) {
       const fervor = tryFervorChain(actor)
       if (fervor.chancePct > 0) {
@@ -2310,6 +2334,7 @@ export function CombatScreen({
         )
         if (fervor.triggered) {
           next = grantFervorExtraTurn(next, stackId)
+          grantedAnotherAction = true
         } else if (actor.fervor) {
           next = clearFervorStreak(next, stackId)
         }
@@ -2333,11 +2358,12 @@ export function CombatScreen({
       ...fervorLines,
     ]
     setBattle(next)
+    battleRef.current = next
     applyOutcomeIfOver(next)
     if (lines.length > 0) {
       queueBattleLog({
         lines,
-        holdTurn: fervorLines.length > 0,
+        holdTurn: grantedAnotherAction,
       })
       return
     }
@@ -2415,8 +2441,10 @@ export function CombatScreen({
       ? next.stacks.find((row) => row.id === actor.id) ?? null
       : null
     const fervorLines: string[] = []
+    let grantedAnotherAction = false
     if (resolved.grantExtraTurn && liveActor && liveActor.qty > 0) {
       next = grantFervorExtraTurn(next, liveActor.id)
+      grantedAnotherAction = true
     } else if (cat && liveActor && liveActor.qty > 0) {
       const fervor = tryFervorChain(liveActor)
       if (fervor.chancePct > 0) {
@@ -2427,6 +2455,7 @@ export function CombatScreen({
         )
         if (fervor.triggered) {
           next = grantFervorExtraTurn(next, liveActor.id)
+          grantedAnotherAction = true
         } else if (liveActor.fervor) {
           next = clearFervorStreak(next, liveActor.id)
         }
@@ -2482,11 +2511,12 @@ export function CombatScreen({
       ...fervorLines,
     ]
     setBattle(next)
+    battleRef.current = next
     applyOutcomeIfOver(next)
     if (lines.length > 0) {
       queueBattleLog({
         lines,
-        holdTurn: fervorLines.length > 0 || resolved.grantExtraTurn === true,
+        holdTurn: grantedAnotherAction,
       })
       return
     }
@@ -2568,8 +2598,46 @@ export function CombatScreen({
     }
     const exchanges = buildAttackExchanges(phases, beforeStacks, fallbackExchange)
     const attackGen = walkGenRef.current
+    const logAfterStrike = extraLines
     void (async () => {
+      noteBattleMoving(true, 'attack-presentation')
       setMoving(true)
+      let presentationOpen = true
+      const describeTurnStall = (): string => {
+        const battleNow = battleRef.current
+        const active = battleNow ? activeStack(battleNow) : null
+        const catalogNow = catalogRef.current
+        const visuals = stackBattleVisualsRef.current
+        const fresh = (battleNow?.tombstones ?? []).flatMap((tomb) => {
+          const vis = visuals[tomb.id]
+          const notKnown = !knownTombsRef.current.has(tomb.id)
+          const notStrike = !strikeReactionTargetsRef.current.has(tomb.id)
+          const notDieVis = vis?.kind !== 'Die'
+          const noFx = !vis?.dieFallbackFx
+          if (!(notKnown && notStrike && notDieVis && noFx)) {
+            return []
+          }
+          const name =
+            catalogNow != null
+              ? (unitById(catalogNow, tomb.unitId)?.name ?? `unit ${tomb.unitId}`)
+              : tomb.id
+          return [
+            `${name} (${tomb.id}) why=id absent from knownTombs and strikeReactionTargets, visual=${vis?.kind ?? 'none'}, no dieFallbackFx, anchor=${tomb.q},${tomb.r}, footprint=${tomb.footprint ?? 'unset'}`,
+          ]
+        })
+        const open = logRef.current
+        const queued = pendingBattleLogPopupRef.current
+        return `movingRef=${movingRef.current}; newTombs=${
+          fresh.length > 0 ? fresh.join(' | ') : 'none'
+        }; active=${active?.id ?? 'none'} idx=${battleNow?.activeIndex ?? -1} acted=${active?.hasActedThisRound === true}; log=${
+          open ? `open hold=${open.holdTurn === true}` : 'closed'
+        }; queuedLog=${queued ? `hold=${queued.holdTurn === true}` : 'none'}`
+      }
+      armBattleStallWatch(
+        'presentation',
+        () => presentationOpen,
+        describeTurnStall,
+      )
       const displayStart = cloneBattleForAttackDisplay(baseBattle, beforeStacks)
       setAttackDisplayBattle(displayStart)
       const allTargetIds = new Set<string>()
@@ -2606,8 +2674,12 @@ export function CombatScreen({
             }
           },
           isCancelled: () => walkGenRef.current !== attackGen,
+          onWipeAnimated: (stackId) => {
+            knownTombsRef.current.add(stackId)
+          },
         })
       } finally {
+        presentationOpen = false
         setAttackDisplayBattle(null)
         const cancelled = walkGenRef.current !== attackGen
         if (!cancelled) {
@@ -2618,17 +2690,40 @@ export function CombatScreen({
               }
             }
           }
+          for (const phase of phases) {
+            for (const id of phase.targetStackIds) {
+              if (tombsAfterStrike.some((row) => row.id === id)) {
+                knownTombsRef.current.add(id)
+              }
+            }
+          }
         }
+        noteBattleMoving(false, 'attack-presentation-end')
         movingRef.current = false
         setMoving(false)
         syncPresentAttackStrike(resolved, { skipHitFlash: true })
         syncPresentAttackAfterStrike(
           resolved,
-          extraLines,
+          logAfterStrike,
           skipStandingHazards,
         )
         strikeReactionTargetsRef.current.clear()
         flushCombatPopupsAfterAnims()
+        const snap = battleRef.current
+        const snapId = snap ? (activeStack(snap)?.id ?? null) : null
+        const snapIndex = snap?.activeIndex ?? -1
+        armBattleStallWatch(
+          'turn',
+          () => {
+            const now = battleRef.current
+            if (!now) {
+              return false
+            }
+            const id = activeStack(now)?.id ?? null
+            return id === snapId && now.activeIndex === snapIndex
+          },
+          describeTurnStall,
+        )
       }
     })()
   }
@@ -2663,6 +2758,7 @@ export function CombatScreen({
     resetHeroMountBattleSheetCache()
     resetBattleUnitSoundWarnings()
     resetDieFallbackSessionWarnings()
+    resetGroundEffectArtWarnings()
     resetAdvancedBorrowSessionLog()
     resetUnitCorpsePictureSessionCache()
     resetCombatBattlefieldPropPaintLog()
@@ -3027,6 +3123,8 @@ export function CombatScreen({
     }
   })
 
+  useEffect(() => () => disarmBattleTurnWatch(), [])
+
   useEffect(() => {
     if (!battle || !catalog || moving) {
       return
@@ -3048,6 +3146,7 @@ export function CombatScreen({
     const settings = battleAnimSettings(catalog)
     const gen = ++wipeAnimGenRef.current
     void (async () => {
+      noteBattleMoving(true, 'tomb-wipe')
       setMoving(true)
       try {
         await runWipeDieAnimsForTombs({
@@ -3061,6 +3160,7 @@ export function CombatScreen({
         })
       } finally {
         if (wipeAnimGenRef.current === gen) {
+          noteBattleMoving(false, 'tomb-wipe-end')
           movingRef.current = false
           setMoving(false)
         }
@@ -3894,6 +3994,7 @@ export function CombatScreen({
           return
         }
         const gen = (walkGenRef.current += 1)
+        noteBattleMoving(true, 'forced-retreat')
         setMoving(true)
         void (async () => {
           let latest = cleared
@@ -4035,6 +4136,7 @@ export function CombatScreen({
                 return
               }
               await endPathVisual()
+              noteBattleMoving(false, 'forced-retreat-wipe')
               setMoving(false)
               presentTurnEndRef.current(
                 latest,
@@ -4058,6 +4160,7 @@ export function CombatScreen({
                 return
               }
               await endPathVisual()
+              noteBattleMoving(false, 'forced-retreat-stun')
               setMoving(false)
               const stunId = stunConditionId(catalog)
               presentTurnEndRef.current(
@@ -4082,6 +4185,7 @@ export function CombatScreen({
           if (walkGenRef.current !== gen) {
             return
           }
+          noteBattleMoving(false, 'forced-retreat-end')
           setMoving(false)
           presentTurnEndRef.current(
             latest,
@@ -4204,6 +4308,7 @@ export function CombatScreen({
           return
         }
         const gen = (walkGenRef.current += 1)
+        noteBattleMoving(true, 'fear-flee')
         setMoving(true)
         void (async () => {
           let latest = battle
@@ -4345,6 +4450,7 @@ export function CombatScreen({
                 return
               }
               await endPathVisual()
+              noteBattleMoving(false, 'fear-flee-wipe')
               setMoving(false)
               presentTurnEndRef.current(
                 applyConsumedCondition(latest, stack.id, fearId),
@@ -4368,6 +4474,7 @@ export function CombatScreen({
                 return
               }
               await endPathVisual()
+              noteBattleMoving(false, 'fear-flee-stun')
               setMoving(false)
               const stunId = stunConditionId(catalog)
               presentTurnEndRef.current(
@@ -4396,6 +4503,7 @@ export function CombatScreen({
           if (walkGenRef.current !== gen) {
             return
           }
+          noteBattleMoving(false, 'fear-flee-end')
           setMoving(false)
           presentTurnEndRef.current(
             applyConsumedCondition(latest, stack.id, fearId),
@@ -4478,6 +4586,7 @@ export function CombatScreen({
             stack,
             target,
             catalog,
+            field.tiles,
           ),
           field.tiles,
           combatHeroes,
@@ -5300,7 +5409,11 @@ export function CombatScreen({
         }
       })
 
-      const drawReach = (goldKeys: string[], redKeys: string[] = []) => {
+      const drawReach = (
+        goldKeys: string[],
+        redKeys: string[] = [],
+        faintRedKeys: string[] = [],
+      ) => {
         reach.clear()
         for (const key of goldKeys) {
           const hex = hexByKey.get(key)
@@ -5315,6 +5428,20 @@ export function CombatScreen({
           )
           reach.fill({ color: 0xffeb3b, alpha: 0.38 })
           reach.stroke({ width: 2, color: 0xfbc02d })
+        }
+        for (const key of faintRedKeys) {
+          const hex = hexByKey.get(key)
+          if (!hex) {
+            continue
+          }
+          reach.poly(
+            hex.corners.map((corner) => ({
+              x: corner.x + offsetX,
+              y: corner.y + offsetY,
+            })),
+          )
+          reach.fill({ color: 0xe53935, alpha: 0.14 })
+          reach.stroke({ width: 1, color: 0xc62828, alpha: 0.35 })
         }
         for (const key of redKeys) {
           const hex = hexByKey.get(key)
@@ -5462,6 +5589,7 @@ export function CombatScreen({
           local.x - offsetX - cx / n,
           local.y - offsetY - cy / n,
           COMBAT_HEX_SIZE,
+          combatAimCenterFrac(catalogRef.current),
         )
       }
       let lastHoverKey = ''
@@ -5744,6 +5872,7 @@ export function CombatScreen({
         drawReach(
           expandAnchorKeysForFootprint(goldAnchors, stack, currentCatalog),
           preview?.impactKeys ?? [],
+          preview?.beamPathKeys ?? [],
         )
         if (preview || plan) {
           onHoverRef.current(
@@ -6122,6 +6251,11 @@ export function CombatScreen({
                           if (!pos) {
                             return null
                           }
+                          const foot = groundEffectFootPoint(
+                            pos,
+                            field.hexPx,
+                            catalog,
+                          )
                           const layerClass =
                             layer === 'above_units'
                               ? ' combat-ground-effect-above'
@@ -6136,15 +6270,19 @@ export function CombatScreen({
                               data-ground-effect={zone.templateId}
                               title={zone.name}
                               style={{
-                                width: field.hexPx,
-                                height: field.hexPx,
-                                left: pos.x - field.hexPx / 2,
-                                top: pos.y - field.hexPx,
+                                left: foot.footX,
+                                top: foot.footY,
+                                width: 0,
+                                height: 0,
+                                overflow: 'visible',
                               }}
                             >
-                              <GroundEffectArt
-                                filename={zone.imagePath}
+                              <CombatGroundEffectArt
+                                imagePath={zone.imagePath}
                                 label={zone.name}
+                                hexPx={field.hexPx}
+                                catalog={catalog}
+                                paintNowMs={paintNow}
                               />
                             </div>
                           )

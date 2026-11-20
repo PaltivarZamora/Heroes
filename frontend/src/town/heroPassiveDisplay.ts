@@ -270,7 +270,7 @@ export function heroPassiveLiveLines(
       `Totems: all ${totems} behind army at battle start; +${spawn}/round if below max (INT ${intel}, floor(INT/${div}) min ${passiveStatNumber(stats, 'totem_min') ?? 1})`,
     )
     lines.push(
-      `Nature heal: ${Math.max(0, Math.floor(healBase * healMult))} (INT × ${healMult}) to most injured`,
+      `Earth heal: ${Math.max(0, Math.floor(healBase * healMult))} (INT × ${healMult}) to most injured`,
     )
   }
   if (

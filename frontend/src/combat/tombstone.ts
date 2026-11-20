@@ -23,6 +23,7 @@ import {
 } from './occupancy'
 import { combatCanLandOn, combatEnterCost, moveKindForUnit } from './movement'
 import { isCreatureArmyUnit } from './siege'
+import { unitLeavesCorpseOnWipe } from '../town/unitTags'
 
 export type { CombatTombstone }
 
@@ -35,7 +36,11 @@ export function canLeaveTombstone(
   if (isHeroStack(stack) || stack.indestructible) {
     return false
   }
-  return isCreatureArmyUnit(unitById(catalog, stack.unitId))
+  const unit = unitById(catalog, stack.unitId)
+  if (!isCreatureArmyUnit(unit)) {
+    return false
+  }
+  return unitLeavesCorpseOnWipe(catalog, unit)
 }
 
 export function makeTombstone(

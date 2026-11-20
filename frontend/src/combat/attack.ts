@@ -99,7 +99,14 @@ import {
   healAmtForAllyRepair,
   isHealAllyTarget,
 } from './factory'
-import { boardKeys, geometricHexes, hasLineOfSight, resolveShapeHits } from './shapes'
+import {
+  beamClippedPathFromCommit,
+  beamLineHexesFromCommit,
+  boardKeys,
+  geometricHexes,
+  hasLineOfSight,
+  resolveShapeHits,
+} from './shapes'
 import {
   isCreatureArmyUnit,
   isSiegeEngineUnit,
@@ -400,12 +407,31 @@ export type AttackCommitAim = {
   targetId: string | null
   wedgeZone?: number | null
   origin: { q: number; r: number }
+  /** Fixed beam line (origin→aim, max range); LoS re-clipped at resolve. */
+  beamLineHexes?: Axial[]
+}
+
+export function attachBeamLineToCommit(
+  commit: AttackCommitAim,
+  attacker: CombatStack,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+): AttackCommitAim {
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape !== 'beam') {
+    return commit
+  }
+  return {
+    ...commit,
+    beamLineHexes: beamLineHexesFromCommit(commit, attacker, catalog, tiles),
+  }
 }
 
 export function attackCommitFromAttackAim(
   attacker: CombatStack,
   aim: AttackAim,
   catalog: ReferenceCatalog,
+  tiles: CombatTile[],
 ): AttackCommitAim {
   const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
   const ghost = { ...attacker, q: stand.q, r: stand.r }
@@ -416,13 +442,18 @@ export function attackCommitFromAttackAim(
     aim.hex,
     aim.wedgeZone,
   )
-  return {
+  const base: AttackCommitAim = {
     stand,
     aimHex: aim.hex,
     targetId: aim.targetId,
     wedgeZone: aim.wedgeZone,
     origin,
+    beamLineHexes: aim.beamLineHexes,
   }
+  if (base.beamLineHexes != null && base.beamLineHexes.length > 0) {
+    return base
+  }
+  return attachBeamLineToCommit(base, ghost, catalog, tiles)
 }
 
 /** Range and LoS both origin → aimHex (1×1: origin = stand). */
@@ -499,23 +530,29 @@ export function attackCommitForTarget(
   attacker: CombatStack,
   target: CombatStack,
   catalog: ReferenceCatalog,
+  tiles: CombatTile[],
   wedgeZone?: number | null,
 ): AttackCommitAim {
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   const aimHex = closestTargetFootprintHex(stand, attacker, target, catalog)
-  return {
-    stand,
-    aimHex,
-    targetId: target.id,
-    wedgeZone,
-    origin: actionOriginFootprintHex(
+  return attachBeamLineToCommit(
+    {
       stand,
-      ghost,
-      catalog,
       aimHex,
+      targetId: target.id,
       wedgeZone,
-    ),
-  }
+      origin: actionOriginFootprintHex(
+        stand,
+        ghost,
+        catalog,
+        aimHex,
+        wedgeZone,
+      ),
+    },
+    ghost,
+    catalog,
+    tiles,
+  )
 }
 
 export function attackAimForTargetAtStand(
@@ -523,10 +560,11 @@ export function attackAimForTargetAtStand(
   attacker: CombatStack,
   target: CombatStack,
   catalog: ReferenceCatalog,
+  tiles: CombatTile[],
   wedgeZone?: number | null,
 ): AttackAim {
   return attackAimFromCommit(
-    attackCommitForTarget(stand, attacker, target, catalog, wedgeZone),
+    attackCommitForTarget(stand, attacker, target, catalog, tiles, wedgeZone),
   )
 }
 
@@ -577,6 +615,7 @@ export function attackCanHitTargetAtStand(
     attacker,
     target,
     catalog,
+    tiles,
     wedgeZone,
   )
   return attackDeliveryAtCommit(
@@ -624,6 +663,7 @@ export function attackAimFromCommit(commit: AttackCommitAim): AttackAim {
     hex: commit.aimHex,
     stand: commit.stand,
     wedgeZone: commit.wedgeZone,
+    beamLineHexes: commit.beamLineHexes?.map((hex) => ({ ...hex })),
   }
 }
 
@@ -1506,6 +1546,96 @@ export function computeStrikeDamage(
   }
 }
 
+/** Expected damage to all enemy stacks hit from a stand (shared commit / resolveShapeHits). */
+export function estimateUnitAttackDamage(
+  attacker: CombatStack,
+  primaryTarget: CombatStack,
+  aimHex: Axial,
+  stand: Axial,
+  wedgeZone: number | null | undefined,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  heroes: CombatHeroes,
+  random: () => number = () => 0.5,
+): number {
+  const ghost = { ...attacker, q: stand.q, r: stand.r }
+  let commit = attackCommitForTarget(
+    stand,
+    attacker,
+    primaryTarget,
+    catalog,
+    tiles,
+    wedgeZone ?? undefined,
+  )
+  commit = attachBeamLineToCommit({ ...commit, aimHex }, ghost, catalog, tiles)
+  const aim = attackAimFromCommit(commit)
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  const offensiveBeamClipped =
+    spec.shape === 'beam'
+      ? beamClippedPathFromCommit(
+          {
+            origin: commit.origin,
+            aimHex: commit.aimHex,
+            beamLineHexes: commit.beamLineHexes,
+          },
+          ghost,
+          battle,
+          catalog,
+          tiles,
+        )
+      : undefined
+  const hits = resolveShapeHits(
+    ghost,
+    aim.hex,
+    primaryTarget,
+    battle,
+    catalog,
+    tiles,
+    random,
+    null,
+    false,
+    {
+      wedgeZone: aim.wedgeZone,
+      standAnchor: stand,
+      beamClippedPath: offensiveBeamClipped,
+      beamPathOrigin: commit.origin,
+    },
+  )
+  const rangePenalty = minRangePenaltyApplies(ghost, battle.stacks, catalog)
+  const attackerHero = heroForSide(attacker.side, heroes)
+  let total = 0
+  const seen = new Set<string>()
+  for (const hit of hits) {
+    const victim = hit.stack
+    if (
+      !victim ||
+      victim.side === attacker.side ||
+      isHeroStack(victim) ||
+      victim.qty <= 0 ||
+      isUntargetableStack(victim, catalog)
+    ) {
+      continue
+    }
+    if (seen.has(victim.id)) {
+      continue
+    }
+    seen.add(victim.id)
+    const pct = hit.dmgPct > 0 ? hit.dmgPct : 100
+    total += computeStrikeDamage(
+      ghost,
+      victim,
+      catalog,
+      random,
+      pct,
+      rangePenalty,
+      heroForSide(victim.side, heroes),
+      attackerHero,
+    ).damage
+  }
+  return total
+}
+
 export function applyStrike(
   striker: CombatStack,
   target: CombatStack,
@@ -2150,6 +2280,7 @@ export type AttackAim = {
   stand?: { q: number; r: number }
   /** Directional wedge 0–5 (matches combat pointer). */
   wedgeZone?: number | null
+  beamLineHexes?: Axial[]
 }
 
 /** One-line combat log when resolveAttack returns null after a move. */
@@ -2172,7 +2303,7 @@ export function describeAttackResolveFailure(
   }
   const spec = unitAttackShape(unit)
   const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
-  const commit = attackCommitFromAttackAim(attacker, aim, catalog)
+  const commit = attackCommitFromAttackAim(attacker, aim, catalog, tiles)
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   if (
     !aimHexInAttackRange(
@@ -2209,7 +2340,7 @@ export function describeAttackResolveFailure(
     if (
       !attackTargetPolicyOk(ghost, aimed, catalog, allowFriendly)
     ) {
-      if (spec.shape === 'beam' || spec.shape === 'line') {
+      if (spec.shape === 'beam') {
         return `${name}: cannot attack that target after move.`
       }
       const dist = minFootprintHexDistance(stand, attacker, aimed, catalog)
@@ -2230,6 +2361,79 @@ export type AttackAnimPhase = {
   strikeTombstones: CombatTombstone[]
   /** Display-only: defender retaliation beat (no reach swoosh). */
   isRetaliation?: boolean
+  /** Resolved beam pierce path (for S13-62 visual end + pass timing). */
+  beamPathHexes?: Axial[]
+  /** Player aim stack id — impact_effect anchor. */
+  beamAimTargetId?: string | null
+}
+
+/** Victim ids / hit keys touched during one presentation beat (resolve order). */
+type AttackPhaseAnimVictimTracker = {
+  stackIds: string[]
+  hitKeys: string[]
+  noteStack: (stack: CombatStack | null | undefined) => void
+  noteStackId: (id: string, lookup: (id: string) => CombatStack | null) => void
+  noteHitKey: (key: string) => void
+}
+
+function createAttackPhaseAnimVictimTracker(): AttackPhaseAnimVictimTracker {
+  const stackIds: string[] = []
+  const stackIdSet = new Set<string>()
+  const hitKeys: string[] = []
+  const hitKeySet = new Set<string>()
+  const noteHitKey = (key: string) => {
+    if (!key || hitKeySet.has(key)) {
+      return
+    }
+    hitKeySet.add(key)
+    hitKeys.push(key)
+  }
+  const noteStack = (stack: CombatStack | null | undefined) => {
+    if (!stack) {
+      return
+    }
+    if (!stackIdSet.has(stack.id)) {
+      stackIdSet.add(stack.id)
+      stackIds.push(stack.id)
+    }
+    noteHitKey(occupancyKey(stack.q, stack.r))
+  }
+  const noteStackId = (
+    id: string,
+    lookup: (id: string) => CombatStack | null,
+  ) => {
+    if (!stackIdSet.has(id)) {
+      stackIdSet.add(id)
+      stackIds.push(id)
+    }
+    const row = lookup(id)
+    if (row) {
+      noteHitKey(occupancyKey(row.q, row.r))
+    }
+  }
+  return { stackIds, hitKeys, noteStack, noteStackId, noteHitKey }
+}
+
+function noteAnimVictimsFromHitKeys(
+  tracker: AttackPhaseAnimVictimTracker,
+  keys: string[],
+  stacks: CombatStack[],
+) {
+  for (const key of keys) {
+    tracker.noteHitKey(key)
+    const [qs, rs] = key.split(',')
+    const q = Number(qs)
+    const r = Number(rs)
+    if (!Number.isFinite(q) || !Number.isFinite(r)) {
+      continue
+    }
+    for (const stack of stacks) {
+      if (stack.q === q && stack.r === r) {
+        tracker.noteStack(stack)
+        break
+      }
+    }
+  }
 }
 
 export function resolveAttack(
@@ -2366,7 +2570,7 @@ export function resolveAttack(
         return null
       }
     } else {
-      const commit = attackCommitFromAttackAim(attacker, aim, catalog)
+      const commit = attackCommitFromAttackAim(attacker, aim, catalog, tiles)
       if (
         !attackDeliveryAtCommit(
           commit,
@@ -2565,6 +2769,22 @@ export function resolveAttack(
   }
   battle = battleAfterPull
 
+  const attackCommit = attackCommitFromAttackAim(attacker, aim, catalog, tiles)
+  const offensiveBeamClipped =
+    spec.shape === 'beam'
+      ? beamClippedPathFromCommit(
+          {
+            origin: attackCommit.origin,
+            aimHex: attackCommit.aimHex,
+            beamLineHexes: attackCommit.beamLineHexes,
+          },
+          attacker,
+          battleAfterPull,
+          catalog,
+          tiles,
+        )
+      : undefined
+
   const hits = resolveShapeHits(
     attacker,
     aim.hex,
@@ -2581,7 +2801,14 @@ export function resolveAttack(
       chargePathOrigin: shapeGeometry.chargeStandAnchor,
       wedgeZone: aim.wedgeZone,
       standAnchor,
+      beamClippedPath: offensiveBeamClipped,
+      beamPathOrigin: attackCommit.origin,
     },
+  ).filter(
+    (hit) =>
+      allowFriendly ||
+      hit.stack == null ||
+      hit.stack.side !== attacker.side,
   )
   // Attack-trail leave-behind (Fire, Shadow, Storm, …).
   const trailLines: string[] = []
@@ -2591,17 +2818,19 @@ export function resolveAttack(
         ? hits.map((hit) => hit.hex)
         : spec.shape === 'spiral'
           ? []
-          : geometricHexes(
-              spec,
-              actionOrigin,
-              aim.hex,
-              battleAfterPull,
-              boardKeys(tiles),
-              attacker.side,
-              tiles,
-              catalog,
-              shapeGeometry,
-            )
+          : spec.shape === 'beam' && offensiveBeamClipped
+            ? offensiveBeamClipped
+            : geometricHexes(
+                spec,
+                actionOrigin,
+                aim.hex,
+                battleAfterPull,
+                boardKeys(tiles),
+                attacker.side,
+                tiles,
+                catalog,
+                shapeGeometry,
+              )
     if (trail.length === 0 && hits.length > 0) {
       trail = hits.map((hit) => hit.hex)
     }
@@ -2627,19 +2856,21 @@ export function resolveAttack(
   // Tidal Caller: extinguish Fire (or other) along the line path.
   if (spec.clearsGroundEffectId != null && spec.clearsGroundEffectId > 0) {
     const clearHexes =
-      spec.shape === 'line' || spec.shape === 'charge_line'
-        ? geometricHexes(
-            spec,
-            actionOrigin,
-            aim.hex,
-            battle,
-            boardKeys(tiles),
-            attacker.side,
-            tiles,
-            catalog,
-            shapeGeometry,
-          ).map((hex) => occupancyKey(hex.q, hex.r))
-        : hits.map((hit) => occupancyKey(hit.hex.q, hit.hex.r))
+      spec.shape === 'beam' && offensiveBeamClipped
+        ? offensiveBeamClipped.map((hex) => occupancyKey(hex.q, hex.r))
+        : spec.shape === 'beam' || spec.shape === 'charge_line'
+          ? geometricHexes(
+              spec,
+              actionOrigin,
+              aim.hex,
+              battle,
+              boardKeys(tiles),
+              attacker.side,
+              tiles,
+              catalog,
+              shapeGeometry,
+            ).map((hex) => occupancyKey(hex.q, hex.r))
+          : hits.map((hit) => occupancyKey(hit.hex.q, hit.hex.r))
     const cleared = clearGroundEffectTemplateHexes(
       battle,
       clearHexes,
@@ -2709,9 +2940,17 @@ export function resolveAttack(
     ),
   ]
 
+  const offensiveBeamPathHexes = offensiveBeamClipped
+  const offensiveBeamAimTargetId =
+    spec.shape === 'beam'
+      ? (aim.targetId ?? aimedForHits?.id ?? null)
+      : undefined
+
   let didRetaliate = false
   let primaryRetaliatorId: string | null = null
   const animPhases: AttackAnimPhase[] = []
+  const offensiveAnimVictims = createAttackPhaseAnimVictimTracker()
+  let retaliationAnimVictims = createAttackPhaseAnimVictimTracker()
   const snapshotStrikeDisplay = (): {
     strikeStacks: CombatStack[]
     strikeTombstones: CombatTombstone[]
@@ -2778,7 +3017,7 @@ export function resolveAttack(
         return
       }
       const def = live(id)
-      if (!def || def.qty <= 0) {
+      if (!def || def.qty <= 0 || !atk || def.side === atk.side) {
         continue
       }
       if (def.skipRetaliationOnce) {
@@ -2927,6 +3166,8 @@ export function resolveAttack(
           if (
             monkReflect &&
             defLive.id === attackerId &&
+            atk != null &&
+            nextRetaliator.side !== atk.side &&
             !struck.spellRedirected &&
             struck.damage > 0 &&
             !struck.missed &&
@@ -2949,6 +3190,9 @@ export function resolveAttack(
             )
             hitKeys.push(occupancyKey(nextRetaliator.q, nextRetaliator.r))
             noteKill(nextRetaliator.unitId, applied.killed)
+            retaliationAnimVictims.noteStack(
+              applied.stack ?? nextRetaliator,
+            )
             stacks = writeCombatStack(
               stacks,
               nextRetaliator.id,
@@ -3003,6 +3247,7 @@ export function resolveAttack(
           }
           if (struck.damage > 0 && hitVictim) {
             hitKeys.push(occupancyKey(hitVictim.q, hitVictim.r))
+            retaliationAnimVictims.noteStack(hitVictim)
           }
           noteKill(pulseVictim.unitId, struck.killed)
           nextRetaliator = withRetaliationBudget(
@@ -3034,6 +3279,11 @@ export function resolveAttack(
             stacks = boom.stacks
             lines.push(...boom.lines)
             hitKeys.push(...boom.hitKeys)
+            noteAnimVictimsFromHitKeys(
+              retaliationAnimVictims,
+              boom.hitKeys,
+              boom.stacks,
+            )
             for (const [uid, n] of Object.entries(boom.unitDeaths)) {
               noteKill(Number(uid), n)
             }
@@ -3070,8 +3320,14 @@ export function resolveAttack(
               ? withRetaliationBudget(post.attacker)
               : nextRetaliator
             lines.push(...post.lines)
+            if (post.lines.length > 0) {
+              retaliationAnimVictims.noteStack(post.defender)
+            }
             if (post.reflectDamage > 0) {
               hitKeys.push(occupancyKey(nextRetaliator.q, nextRetaliator.r))
+              if (post.attacker) {
+                retaliationAnimVictims.noteStack(post.attacker)
+              }
             }
           }
         }
@@ -3397,6 +3653,7 @@ export function resolveAttack(
       }
       if (struck.damage > 0 && hitVictim) {
         hitKeys.push(occupancyKey(hitVictim.q, hitVictim.r))
+        offensiveAnimVictims.noteStack(hitVictim)
         // Tower Wizard/Sorcerer: offensive Magic damage only (this path never
         // runs for retaliation strikes).
         const waveKind =
@@ -3443,6 +3700,9 @@ export function resolveAttack(
           )
           stacks = writeStack(stacks, victimId, shredded.stack)
           lines.push(...shredded.lines)
+          if (shredded.lines.length > 0) {
+            offensiveAnimVictims.noteStack(shredded.stack)
+          }
         }
       }
       if (
@@ -3504,6 +3764,11 @@ export function resolveAttack(
         stacks = boom.stacks
         lines.push(...boom.lines)
         hitKeys.push(...boom.hitKeys)
+        noteAnimVictimsFromHitKeys(
+          offensiveAnimVictims,
+          boom.hitKeys,
+          boom.stacks,
+        )
         for (const [uid, n] of Object.entries(boom.unitDeaths)) {
           noteKill(Number(uid), n)
         }
@@ -3602,8 +3867,12 @@ export function resolveAttack(
           }
           stacks = writeStack(stacks, damagedId, defender)
           stacks = writeStack(stacks, attackerId, atk)
+          if (post.lines.length > 0) {
+            offensiveAnimVictims.noteStack(defender)
+          }
           if (post.reflectDamage > 0 && atk) {
             hitKeys.push(occupancyKey(atk.q, atk.r))
+            offensiveAnimVictims.noteStack(atk)
           }
         }
       }
@@ -3641,6 +3910,7 @@ export function resolveAttack(
     stacks = areaHeal.battle.stacks
     lines.push(...areaHeal.lines)
     healKeys.push(...areaHeal.healKeys)
+    noteAnimVictimsFromHitKeys(offensiveAnimVictims, areaHeal.healKeys, stacks)
     atk = live(attackerId)
   }
   if (atk && atk.qty > 0) {
@@ -3819,6 +4089,11 @@ export function resolveAttack(
         stacks = healed.stacks
         lines.push(...healed.lines)
         healKeys.push(...healed.healKeys)
+        noteAnimVictimsFromHitKeys(
+          offensiveAnimVictims,
+          healed.healKeys,
+          stacks,
+        )
       }
     }
     if (offensiveKills > 0 && unitHasSummonOnKill(spec)) {
@@ -3856,24 +4131,42 @@ export function resolveAttack(
   const offensiveHitKeys = [...hitKeys]
   {
     const display = snapshotStrikeDisplay()
+    const displayTargetIds =
+      uniqueHitIds.length > 0
+        ? [...uniqueHitIds]
+        : aim.targetId
+          ? [aim.targetId]
+          : []
+    const offVictims = offensiveAnimVictims.stackIds
+    const offKeys = offensiveAnimVictims.hitKeys
     animPhases.push({
       attackerId,
-      targetStackIds: [...uniqueHitIds],
-      hitKeys: offensiveHitKeys,
+      targetStackIds:
+        offVictims.length > 0 ? [...offVictims] : displayTargetIds,
+      hitKeys: offKeys.length > 0 ? [...offKeys] : offensiveHitKeys,
       strikeStacks: display.strikeStacks,
       strikeTombstones: display.strikeTombstones,
+      ...(offensiveBeamPathHexes != null && offensiveBeamPathHexes.length > 0
+        ? {
+            beamPathHexes: offensiveBeamPathHexes.map((hex) => ({ ...hex })),
+            beamAimTargetId: offensiveBeamAimTargetId,
+          }
+        : {}),
     })
   }
 
+  retaliationAnimVictims = createAttackPhaseAnimVictimTracker()
   tryRetaliate(false)
 
   if (didRetaliate && primaryRetaliatorId) {
     const retalHitKeys = hitKeys.filter((key) => !offensiveHitKeys.includes(key))
     const display = snapshotStrikeDisplay()
+    const retVictims = retaliationAnimVictims.stackIds
+    const retKeys = retaliationAnimVictims.hitKeys
     animPhases.push({
       attackerId: primaryRetaliatorId,
-      targetStackIds: [attackerId],
-      hitKeys: retalHitKeys,
+      targetStackIds: [...retVictims],
+      hitKeys: retKeys.length > 0 ? [...retKeys] : retalHitKeys,
       strikeStacks: display.strikeStacks,
       strikeTombstones: display.strikeTombstones,
       isRetaliation: true,

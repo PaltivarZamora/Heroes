@@ -194,16 +194,34 @@ export function isDisarmed(
   return id > 0 && conditionRemaining(stack, id) > 0
 }
 
-/** True when this stack cannot fire its unit attack because of Disarm. */
+function unitDealsMagicDamage(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): boolean {
+  const unit = unitById(catalog, stack.unitId)
+  return (unit?.dmg_type ?? '').trim().toLowerCase() === 'magic'
+}
+
+/**
+ * True when this stack cannot fire its unit attack because of Disarm.
+ * The Disarm condition and the Disarm debuff (min-damage mark) both block:
+ * Physical-only disarm blocks non-Magic attacks; a full disarm blocks every attack.
+ */
 export function isPhysicalAttackDisarmed(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): boolean {
-  if (!isDisarmed(stack, catalog)) {
+  if (isDisarmed(stack, catalog) && !unitDealsMagicDamage(stack, catalog)) {
+    return true
+  }
+  const debuff = stack.disarm
+  if (debuff == null || debuff.roundsLeft <= 0) {
     return false
   }
-  const unit = unitById(catalog, stack.unitId)
-  return (unit?.dmg_type ?? '').trim().toLowerCase() !== 'magic'
+  if (debuff.physicalOnly) {
+    return !unitDealsMagicDamage(stack, catalog)
+  }
+  return true
 }
 
 /** Unit attack blocked by Silence (magic) or Disarm (physical). */

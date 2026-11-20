@@ -14,7 +14,7 @@ import {
   scaleCost,
   subscribeCatalog,
   unitById,
-  townNameForUnit,
+  unitArtTownFolder,
   unitCost,
 } from './catalog'
 import { AbilityTip } from './AbilityTip'
@@ -146,7 +146,7 @@ export function WorldRecruits({
                   empty={false}
                   filename={unit.image_path?.trim() || null}
                   qty={stock}
-                  townName={townNameForUnit(catalog, unit)}
+                  townName={unitArtTownFolder(catalog, unit)}
                   unitId={unit.id}
                   catalog={catalog}
                 />

@@ -1,4 +1,8 @@
 import { Assets, Spritesheet, type Texture } from 'pixi.js'
+import {
+  isOptionalAssetNotFound,
+  optionalImageUrlReachable,
+} from '../assets/devAssetResponse'
 import type { ProjectileRow, ReferenceCatalog } from '../town/catalog'
 import { unitById } from '../town/catalog'
 import { basicPartnerForAdvanced } from '../town/unitUpgrade'
@@ -8,6 +12,7 @@ import {
   actionOriginFootprintHex,
   closestHexOnTargetFootprint,
 } from './actionOrigin'
+import type { Axial } from '../hex/hero'
 import type { CombatStack } from './battle'
 import { stackArtBoxFoot, stackArtBox } from './combatStackArtBox'
 import { combatStackFootprint } from './movement'
@@ -142,19 +147,35 @@ export function noteProjectileMotion(row: ProjectileRow): void {
   )
 }
 
-async function loadSheetFrames(
-  name: string,
-): Promise<{
-  frames: BattleUnitFrame[]
-  loop: boolean
-  restHeight: number
-  atlasUrl: string
-  animFps: number
-} | null> {
+type ProjectileSheetLoad =
+  | {
+      notFound: true
+    }
+  | {
+      notFound?: false
+      frames: BattleUnitFrame[]
+      loop: boolean
+      restHeight: number
+      atlasUrl: string
+      animFps: number
+    }
+  | null
+
+async function loadSheetFrames(name: string): Promise<ProjectileSheetLoad> {
   const jsonUrl = `${PROJECTILE_ASSET_DIR}/${name}.json`
   try {
     const response = await fetch(jsonUrl)
+    if (isOptionalAssetNotFound(response)) {
+      return { notFound: true }
+    }
     if (!response.ok) {
+      return response.status === 404 ? { notFound: true } : null
+    }
+    const contentType = response.headers.get('content-type') ?? ''
+    if (!contentType.toLowerCase().includes('json')) {
+      appendBattleAnimCombatLog(
+        `[Dev] Projectile sheet ${name}.json: unexpected content-type ${contentType.trim() || 'none'}`,
+      )
       return null
     }
     const data = (await response.json()) as {
@@ -163,6 +184,9 @@ async function loadSheetFrames(
     }
     const imageName = data.meta?.image?.trim() || `${name}.png`
     const atlasUrl = `${PROJECTILE_ASSET_DIR}/${imageName.replace(/^\/+/, '')}`
+    if (!(await optionalImageUrlReachable(atlasUrl))) {
+      return { notFound: true }
+    }
     const atlasTexture = await Assets.load<Texture>(atlasUrl)
     if (atlasTexture.width < 1) {
       return null
@@ -221,8 +245,10 @@ export async function loadBattleProjectileArt(
     const pngUrl = `${PROJECTILE_ASSET_DIR}/${row.name}.png`
     const kind = (row.kind ?? 'flight').trim().toLowerCase()
     const sheet = await loadSheetFrames(row.name)
+    const jsonMissing =
+      sheet != null && 'notFound' in sheet && sheet.notFound === true
     if (kind === 'shape') {
-      if (!sheet || sheet.frames.length === 0) {
+      if (jsonMissing || !sheet || !('frames' in sheet) || sheet.frames.length === 0) {
         appendBattleAnimCombatLog(
           `Shape projectile '${row.name}' requires ${row.name}.json animation.`,
         )
@@ -242,7 +268,7 @@ export async function loadBattleProjectileArt(
       return shapeArt
     }
     if (kind === 'reach') {
-      if (!sheet || sheet.frames.length === 0) {
+      if (jsonMissing || !sheet || !('frames' in sheet) || sheet.frames.length === 0) {
         appendBattleAnimCombatLog(
           `[Dev] Reach projectile '${row.name}' requires ${row.name}.json animation.`,
         )
@@ -261,7 +287,7 @@ export async function loadBattleProjectileArt(
       projectileArtById.set(row.id, reachArt)
       return reachArt
     }
-    if (sheet) {
+    if (sheet && 'frames' in sheet) {
       const art: BattleProjectileArt = {
         row,
         staticUrl: pngUrl,
@@ -273,11 +299,15 @@ export async function loadBattleProjectileArt(
       projectileArtById.set(row.id, art)
       return art
     }
+    if (!(await optionalImageUrlReachable(pngUrl))) {
+      projectileArtById.set(row.id, null)
+      return null
+    }
     try {
       const tex = await Assets.load<Texture>(pngUrl)
       if (tex.width < 1) {
         appendBattleAnimCombatLog(
-          `Projectile art missing: ${row.name}.png (unit projectile_id ${row.id})`,
+          `[Dev] Projectile '${row.name}': ${row.name}.png loaded but has no drawable pixels.`,
         )
         warnProjectileArtUnavailable(
           `projectile_id ${row.id}`,
@@ -299,7 +329,7 @@ export async function loadBattleProjectileArt(
       return art
     } catch {
       appendBattleAnimCombatLog(
-        `Projectile art missing: ${row.name}.png (unit projectile_id ${row.id})`,
+        `[Dev] Projectile '${row.name}': failed to decode ${row.name}.png (unit projectile_id ${row.id}).`,
       )
       projectileArtById.set(row.id, null)
       return null
@@ -330,7 +360,11 @@ export async function loadBattleImpactEffectArt(
   }
   const promise = (async (): Promise<BattleImpactEffectArt | null> => {
     const sheet = await loadSheetFrames(key)
-    if (!sheet || sheet.frames.length === 0) {
+    if (sheet && 'notFound' in sheet && sheet.notFound) {
+      impactArtByName.set(key, null)
+      return null
+    }
+    if (!sheet || !('frames' in sheet) || sheet.frames.length === 0) {
       appendBattleAnimCombatLog(`Impact effect missing: ${key}.png + .json`)
       impactArtByName.set(key, null)
       return null
@@ -467,6 +501,67 @@ export function computeProjectileFlightEndpoints(opts: {
   const toFootY = targetFoot?.footY ?? targetCenter.y
   const fromY = fromFootY + uy * startAlong - lift
   const toY = toFootY - uy * endAlong - lift
+  return { fromX, fromY, toX, toY }
+}
+
+/** Beam / line flight to the resolved path end hex (not the aim target footprint). */
+export function computeProjectileFlightToHex(opts: {
+  striker: CombatStack
+  endHex: Axial
+  catalog: ReferenceCatalog
+  anchors: HexAnchor[]
+  hexPx: number
+  footOffsetPct: number
+  row?: ProjectileRow | null
+  aimHex?: Axial
+  wedgeZone?: number | null
+}): { fromX: number; fromY: number; toX: number; toY: number } | null {
+  const aimForOrigin = opts.aimHex ?? opts.endHex
+  const stand = { q: opts.striker.q, r: opts.striker.r }
+  const originHex = actionOriginFootprintHex(
+    stand,
+    opts.striker,
+    opts.catalog,
+    aimForOrigin,
+    opts.wedgeZone,
+  )
+  const originCenter = hexCenter(opts.anchors, originHex.q, originHex.r)
+  const endCenter = hexCenter(opts.anchors, opts.endHex.q, opts.endHex.r)
+  if (!originCenter || !endCenter) {
+    return null
+  }
+  const strikerAnchor = opts.anchors.find(
+    (row) => row.q === opts.striker.q && row.r === opts.striker.r,
+  )
+  const strikerFoot = strikerAnchor
+    ? stackArtBoxFoot(
+        stackArtBox(
+          strikerAnchor,
+          opts.hexPx,
+          combatStackFootprint(opts.striker, opts.catalog),
+          opts.striker.side,
+        ),
+        opts.hexPx,
+        opts.footOffsetPct,
+      )
+    : null
+  const dx = endCenter.x - originCenter.x
+  const dy = endCenter.y - originCenter.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const half = opts.hexPx / 2
+  const row = opts.row
+  const startAlong =
+    row != null ? half + (row.start_offset_pct / 100) * opts.hexPx : 0
+  const endAlong =
+    row != null ? half - (row.end_offset_pct / 100) * opts.hexPx : 0
+  const lift = row != null ? (row.height_pct / 100) * opts.hexPx : 0
+  const fromFootY = strikerFoot?.footY ?? originCenter.y
+  const fromX = originCenter.x + ux * startAlong
+  const fromY = fromFootY + uy * startAlong - lift
+  const toX = endCenter.x - ux * endAlong
+  const toY = endCenter.y - uy * endAlong - lift
   return { fromX, fromY, toX, toY }
 }
 
