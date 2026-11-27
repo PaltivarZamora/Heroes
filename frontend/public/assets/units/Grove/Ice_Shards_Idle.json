@@ -1,0 +1,70 @@
+{
+  "frames": {
+    "Ice_Shards_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 296,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 296,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 296,
+        "h": 200
+      },
+      "anchor": {
+        "x": 0.5287,
+        "y": 1
+      },
+      "duration": 1000
+    },
+    "Ice_Shards_Idle_Stand": {
+      "frame": {
+        "x": 296,
+        "y": 0,
+        "w": 296,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 296,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 296,
+        "h": 200
+      },
+      "anchor": {
+        "x": 0.5287,
+        "y": 1
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "image": "Ice_Shards_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 592,
+      "h": 200
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.5287,
+      "y": 1
+    },
+    "rest_height": 200
+  }
+}

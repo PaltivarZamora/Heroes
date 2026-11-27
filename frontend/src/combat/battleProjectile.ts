@@ -423,21 +423,29 @@ function hexCenter(
   return anchors.find((row) => row.q === q && row.r === r) ?? null
 }
 
-export function computeProjectileFlightEndpoints(opts: {
+type FlightShotOpts = {
   striker: CombatStack
   target: CombatStack
   catalog: ReferenceCatalog
   anchors: HexAnchor[]
   hexPx: number
   footOffsetPct: number
-  row: ProjectileRow
   wedgeZone?: number | null
-}): {
-  fromX: number
-  fromY: number
-  toX: number
-  toY: number
-} | null {
+}
+
+type FlightShotGeometry = {
+  originCenter: { x: number; y: number }
+  targetCenter: { x: number; y: number }
+  ux: number
+  uy: number
+  strikerFootY: number
+  targetFootY: number
+  half: number
+}
+
+function buildFlightShotGeometry(
+  opts: FlightShotOpts,
+): FlightShotGeometry | null {
   const stand = { q: opts.striker.q, r: opts.striker.r }
   const aimHex = closestHexOnTargetFootprint(
     opts.striker,
@@ -489,19 +497,62 @@ export function computeProjectileFlightEndpoints(opts: {
   const dx = targetCenter.x - originCenter.x
   const dy = targetCenter.y - originCenter.y
   const len = Math.hypot(dx, dy) || 1
-  const ux = dx / len
-  const uy = dy / len
-  const half = opts.hexPx / 2
-  const startAlong = half + (opts.row.start_offset_pct / 100) * opts.hexPx
-  const endAlong = half - (opts.row.end_offset_pct / 100) * opts.hexPx
+  return {
+    originCenter,
+    targetCenter,
+    ux: dx / len,
+    uy: dy / len,
+    strikerFootY: strikerFoot?.footY ?? originCenter.y,
+    targetFootY: targetFoot?.footY ?? targetCenter.y,
+    half: opts.hexPx / 2,
+  }
+}
+
+function flightStartFromGeometry(
+  geom: FlightShotGeometry,
+  row: ProjectileRow,
+  hexPx: number,
+): { x: number; y: number } {
+  const startAlong = geom.half + (row.start_offset_pct / 100) * hexPx
+  const lift = (row.height_pct / 100) * hexPx
+  return {
+    x: geom.originCenter.x + geom.ux * startAlong,
+    y: geom.strikerFootY + geom.uy * startAlong - lift,
+  }
+}
+
+/** Flight and breath/cleave shape overlays share this mouth anchor. */
+export function computeProjectileFlightStart(
+  opts: FlightShotOpts & { row: ProjectileRow },
+): { x: number; y: number } | null {
+  const geom = buildFlightShotGeometry(opts)
+  if (!geom) {
+    return null
+  }
+  return flightStartFromGeometry(geom, opts.row, opts.hexPx)
+}
+
+export function computeProjectileFlightEndpoints(
+  opts: FlightShotOpts & { row: ProjectileRow },
+): {
+  fromX: number
+  fromY: number
+  toX: number
+  toY: number
+} | null {
+  const geom = buildFlightShotGeometry(opts)
+  if (!geom) {
+    return null
+  }
+  const start = flightStartFromGeometry(geom, opts.row, opts.hexPx)
+  const endAlong = geom.half - (opts.row.end_offset_pct / 100) * opts.hexPx
   const lift = (opts.row.height_pct / 100) * opts.hexPx
-  const fromX = originCenter.x + ux * startAlong
-  const toX = targetCenter.x - ux * endAlong
-  const fromFootY = strikerFoot?.footY ?? originCenter.y
-  const toFootY = targetFoot?.footY ?? targetCenter.y
-  const fromY = fromFootY + uy * startAlong - lift
-  const toY = toFootY - uy * endAlong - lift
-  return { fromX, fromY, toX, toY }
+  return {
+    fromX: start.x,
+    fromY: start.y,
+    toX: geom.targetCenter.x - geom.ux * endAlong,
+    toY: geom.targetFootY - geom.uy * endAlong - lift,
+  }
 }
 
 /** Beam / line flight to the resolved path end hex (not the aim target footprint). */

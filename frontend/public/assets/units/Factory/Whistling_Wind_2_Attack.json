@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Whistling_Wind_2_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_001": {
+      "frame": {
+        "x": 332,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_002": {
+      "frame": {
+        "x": 664,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_003": {
+      "frame": {
+        "x": 996,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_004": {
+      "frame": {
+        "x": 1328,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_005": {
+      "frame": {
+        "x": 1660,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_006": {
+      "frame": {
+        "x": 1992,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_008": {
+      "frame": {
+        "x": 332,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_009": {
+      "frame": {
+        "x": 664,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_010": {
+      "frame": {
+        "x": 996,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_011": {
+      "frame": {
+        "x": 1328,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_012": {
+      "frame": {
+        "x": 1660,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_013": {
+      "frame": {
+        "x": 1992,
+        "y": 217,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_015": {
+      "frame": {
+        "x": 332,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_016": {
+      "frame": {
+        "x": 664,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_017": {
+      "frame": {
+        "x": 996,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_018": {
+      "frame": {
+        "x": 1328,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_019": {
+      "frame": {
+        "x": 1660,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_020": {
+      "frame": {
+        "x": 1992,
+        "y": 434,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_022": {
+      "frame": {
+        "x": 332,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_023": {
+      "frame": {
+        "x": 664,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_024": {
+      "frame": {
+        "x": 996,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_025": {
+      "frame": {
+        "x": 1328,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_026": {
+      "frame": {
+        "x": 1660,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_027": {
+      "frame": {
+        "x": 1992,
+        "y": 651,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_029": {
+      "frame": {
+        "x": 332,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_030": {
+      "frame": {
+        "x": 664,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_031": {
+      "frame": {
+        "x": 996,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_032": {
+      "frame": {
+        "x": 1328,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_033": {
+      "frame": {
+        "x": 1660,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_034": {
+      "frame": {
+        "x": 1992,
+        "y": 868,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1085,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 67
+    },
+    "Whistling_Wind_2_Attack_Stand": {
+      "frame": {
+        "x": 332,
+        "y": 1085,
+        "w": 332,
+        "h": 217
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 332,
+        "h": 217
+      },
+      "sourceSize": {
+        "w": 332,
+        "h": 217
+      },
+      "anchor": {
+        "x": 0.2451,
+        "y": 0.9307
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Whistling_Wind_2_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2324,
+      "h": 1302
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.2451,
+      "y": 0.9307
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0.001
+  }
+}

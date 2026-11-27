@@ -34,7 +34,7 @@ export type BattleUnitFrame = {
 }
 
 export type BattleUnitAnimSheet = {
-  kind: BattleUnitAnimKind
+  kind: BattleUnitAnimKind | 'Appear'
   loop: boolean
   restHeight: number
   soundStartPct: number
@@ -45,10 +45,46 @@ export type BattleUnitAnimSheet = {
   borrowedGlow?: boolean
 }
 
+/**
+ * Catalog attack_strike_pct (0–100) → fraction into Attack clip for the display
+ * strike moment, or null → caller should use Attack sheet sound_start_pct.
+ * Advanced: own row; else basic partner only when Attack sheet is borrowed.
+ */
+export function unitAttackStrikeFraction(
+  catalog: ReferenceCatalog,
+  unit: UnitRow | null | undefined,
+  attackSheet: BattleUnitAnimSheet | null | undefined,
+): number | null {
+  if (!unit) {
+    return null
+  }
+  const fracFromPct = (pct: number | null | undefined): number | null => {
+    if (pct == null) {
+      return null
+    }
+    const n = Number(pct)
+    if (!Number.isFinite(n)) {
+      return null
+    }
+    return Math.min(1, Math.max(0, n / 100))
+  }
+  const own = fracFromPct(unit.attack_strike_pct)
+  if (own != null) {
+    return own
+  }
+  const partner = basicPartnerForAdvanced(catalog, unit)
+  if (partner && attackSheet?.borrowedGlow === true) {
+    return fracFromPct(partner.attack_strike_pct)
+  }
+  return null
+}
+
 export type BattleUnitSheetSet = {
   stem: string
   townFolder: string
   sheets: Partial<Record<BattleUnitAnimKind, BattleUnitAnimSheet>>
+  /** Optional one-shot appear clip (`{stem}_Appear`). */
+  appearSheet?: BattleUnitAnimSheet
   /** True when at least one anim sheet loaded (not just static portrait). */
   animated: boolean
   hasDie: boolean
@@ -110,11 +146,15 @@ export function battleUnitSpritesDir(townFolder: string): string {
   return battleUnitTownDir(townFolder)
 }
 
-function standFrameName(stem: string, kind: BattleUnitAnimKind): string {
+function standFrameName(stem: string, kind: BattleUnitAnimKind | 'Appear'): string {
   return `${stem}_${kind}_Stand`
 }
 
-function textureKeyMatchesStand(name: string, stem: string, kind: BattleUnitAnimKind): boolean {
+function textureKeyMatchesStand(
+  name: string,
+  stem: string,
+  kind: BattleUnitAnimKind | 'Appear',
+): boolean {
   const standName = standFrameName(stem, kind)
   return name === standName || name.endsWith(`/${standName}`)
 }
@@ -135,7 +175,7 @@ function readAnchor(raw: RawFrame): { x: number; y: number } {
 
 function buildAnimSheet(
   stem: string,
-  kind: BattleUnitAnimKind,
+  kind: BattleUnitAnimKind | 'Appear',
   textures: Record<string, Texture>,
   framesData: Record<string, RawFrame> | undefined,
   meta: Record<string, unknown>,
@@ -228,7 +268,7 @@ function buildAnimSheet(
 async function loadOneAnimSheet(
   dir: string,
   stem: string,
-  kind: BattleUnitAnimKind,
+  kind: BattleUnitAnimKind | 'Appear',
 ): Promise<{ sheet: BattleUnitAnimSheet | null; fail?: { url: string; reason: string } }> {
   const sheetStem = `${stem}_${kind}`
   const jsonUrl = `${dir}/${sheetStem}.json`
@@ -412,10 +452,25 @@ export async function loadBattleUnitSheetSet(
       flushAdvancedBorrowDevLog(catalog, unit)
       return null
     }
+    let appearSheet: BattleUnitAnimSheet | undefined
+    let appearResult = await loadOneAnimSheet(dir, stem, 'Appear')
+    if (!appearResult.sheet && partnerStem) {
+      const borrowed = await loadOneAnimSheet(dir, partnerStem, 'Appear')
+      if (borrowed.sheet) {
+        appearResult = {
+          sheet: { ...borrowed.sheet, borrowedGlow: true },
+        }
+      }
+    }
+    if (appearResult.sheet) {
+      appearSheet = appearResult.sheet
+    }
+
     const set: BattleUnitSheetSet = {
       stem,
       townFolder,
       sheets,
+      appearSheet,
       animated: true,
       hasDie: sheets.Die != null,
       partnerSoundStem: partnerStem,

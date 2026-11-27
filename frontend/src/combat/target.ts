@@ -22,10 +22,18 @@ import {
   attackAimFromCommit,
   type AttackIconKind,
   attachBeamLineToCommit,
+  attachChargeLineToCommit,
   type AttackCommitAim,
   type AttackAim,
   type CombatHeroes,
 } from './attack'
+import {
+  buildChargeLinePlanForAttack,
+  chargeGhostFootprintKeys,
+  chargeLineCanHitAtStand,
+  chargePathPreviewKeys,
+  chargeVictimImpactKeys,
+} from './chargeLinePlan'
 import type { CombatBattle, CombatStack, CombatTile } from './battle'
 import { stackMoveSpeed } from './battle'
 import {
@@ -100,6 +108,10 @@ export type CombatHover = {
   impactKeys: string[]
   /** Full clipped beam path (faint preview). */
   beamPathKeys?: string[]
+  /** charge_line: yellow roll path hexes. */
+  chargePathKeys?: string[]
+  /** charge_line: ghost body at end anchor. */
+  chargeGhostKeys?: string[]
   /** Enemy hex this attack aims at. Defaults to `q,r` when omitted. */
   aimHex?: Axial
   /** Outward arrow toward the chosen neighbor. */
@@ -172,9 +184,10 @@ export function combatAttackAimFromIntent(
   >,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
+  battle?: CombatBattle,
 ): AttackAim {
   return attackAimFromCommit(
-    attackCommitAim(attackerAtOrigin, intent, tiles, catalog),
+    attackCommitAim(attackerAtOrigin, intent, tiles, catalog, battle),
   )
 }
 
@@ -194,9 +207,10 @@ export function attackCommitAim(
   >,
   tiles: CombatTile[],
   catalog: ReferenceCatalog,
+  battle?: CombatBattle,
 ): AttackCommitAim {
-  const stand = actingStand({ q: attacker.q, r: attacker.r }, intent.steps)
   const atkShape = unitAttackShape(unitById(catalog, attacker.unitId))
+  const stand = actingStand({ q: attacker.q, r: attacker.r }, intent.steps)
   const aimHex =
     atkShape.shape === 'pulse' && intent.fire
       ? stand
@@ -206,7 +220,7 @@ export function attackCommitAim(
       ? (((intent.arrowDeg / 60) % 6) + 6) % 6
       : undefined
   const ghost = { ...attacker, q: stand.q, r: stand.r }
-  return attachBeamLineToCommit(
+  let commit = attachBeamLineToCommit(
     {
       stand,
       aimHex,
@@ -224,6 +238,16 @@ export function attackCommitAim(
     catalog,
     tiles,
   )
+  if (battle) {
+    commit = attachChargeLineToCommit(
+      commit,
+      ghost,
+      battle,
+      catalog,
+      tiles,
+    )
+  }
+  return commit
 }
 
 function deliveryOkFromStand(
@@ -234,6 +258,7 @@ function deliveryOkFromStand(
   tiles: CombatTile[],
   stacks: CombatStack[],
   wedgeZone?: number | null,
+  battle?: CombatBattle,
 ): boolean {
   return attackDeliveryOkFromStand(
     from,
@@ -243,6 +268,7 @@ function deliveryOkFromStand(
     tiles,
     stacks,
     wedgeZone,
+    battle,
   )
 }
 
@@ -307,7 +333,12 @@ function impactPreview(
     targetId?: string | null
     allowFriendly?: boolean
   },
-): { impactKeys: string[]; beamPathKeys: string[] } {
+): {
+  impactKeys: string[]
+  beamPathKeys: string[]
+  chargePathKeys?: string[]
+  chargeGhostKeys?: string[]
+} {
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   if (spec.shape === 'beam') {
@@ -343,14 +374,27 @@ function impactPreview(
     }
   }
   if (spec.shape === 'charge_line') {
+    const plan =
+      buildChargeLinePlanForAttack(
+        stand,
+        aim,
+        ghost,
+        battle,
+        catalog,
+        tiles,
+        extra?.wedgeZone,
+      ) ?? null
+  const clipped =
+      plan != null
+        ? plan.lineHexes
+        : []
     return {
-      impactKeys: previewImpactKeys(attacker, aim, battle, catalog, tiles, {
-        standAnchor: stand,
-        attacker: ghost,
-        chargeStandAnchor:
-          extra?.chargeStandAnchor ?? { q: attacker.q, r: attacker.r },
-      }),
-      beamPathKeys: [],
+      impactKeys: plan ? chargeVictimImpactKeys(plan) : [],
+      beamPathKeys: clipped.map((hex) => occupancyKey(hex.q, hex.r)),
+      chargePathKeys: plan ? chargePathPreviewKeys(plan) : [],
+      chargeGhostKeys: plan
+        ? chargeGhostFootprintKeys(plan, ghost, catalog)
+        : [],
     }
   }
   const geometry: ShapeGeometryOpts = {
@@ -397,6 +441,89 @@ function bestRangeStand(
   return best
 }
 
+export type ChargeLineStandPick = {
+  stand: Axial
+  steps: Axial[]
+}
+
+/** Reachable stand with a charge_line plan that hits `target` (fewest steps, most hits, longest roll). */
+export function pickChargeLineAttackStand(
+  attacker: CombatStack,
+  target: CombatStack,
+  reachable: Map<string, Axial[]>,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  battle: CombatBattle,
+  allowFriendly: boolean,
+  wedgeZone?: number | null,
+): ChargeLineStandPick | null {
+  const wallTarget = isSiegeEngineWallTarget(target, catalog)
+  let best: ChargeLineStandPick | null = null
+  let bestSteps = Infinity
+  let bestHits = -1
+  let bestRoll = -1
+
+  const tryStand = (stand: Axial, steps: Axial[]) => {
+    if (
+      wallTarget &&
+      !isValidSiegeWallAttackStand(stand, tiles, battle.stacks, catalog)
+    ) {
+      return
+    }
+    const ghost = { ...attacker, q: stand.q, r: stand.r }
+    if (!attackTargetPolicyOk(ghost, target, catalog, allowFriendly)) {
+      return
+    }
+    const aimHex = closestTargetFootprintHex(stand, attacker, target, catalog)
+    if (
+      !chargeLineCanHitAtStand(
+        stand,
+        aimHex,
+        attacker,
+        battle,
+        catalog,
+        tiles,
+        target.id,
+        wedgeZone,
+      )
+    ) {
+      return
+    }
+    const plan = buildChargeLinePlanForAttack(
+      stand,
+      aimHex,
+      attacker,
+      battle,
+      catalog,
+      tiles,
+      wedgeZone,
+    )
+    if (!plan) {
+      return
+    }
+    const rollLen = Math.max(0, plan.waypoints.length - 1)
+    const hitCount = plan.hits.length
+    const stepsLen = steps.length
+    const better =
+      stepsLen < bestSteps ||
+      (stepsLen === bestSteps && hitCount > bestHits) ||
+      (stepsLen === bestSteps && hitCount === bestHits && rollLen > bestRoll)
+    if (better) {
+      best = { stand: { ...stand }, steps: [...steps] }
+      bestSteps = stepsLen
+      bestHits = hitCount
+      bestRoll = rollLen
+    }
+  }
+
+  tryStand({ q: attacker.q, r: attacker.r }, [])
+  for (const [key, steps] of reachable) {
+    const [qs, rs] = key.split(',')
+    tryStand({ q: Number(qs), r: Number(rs) }, steps)
+  }
+  return best
+}
+
 /** Fewest-steps hex this stack can stand on and still be in attack range. */
 export function bestAttackStand(
   attacker: CombatStack,
@@ -406,7 +533,25 @@ export function bestAttackStand(
   tiles: CombatTile[],
   stacks: CombatStack[],
   allowFriendly = false,
+  battle?: CombatBattle,
 ): Axial | null {
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape === 'charge_line') {
+    if (!battle) {
+      return null
+    }
+    return (
+      pickChargeLineAttackStand(
+        attacker,
+        target,
+        reachable,
+        catalog,
+        tiles,
+        battle,
+        allowFriendly,
+      )?.stand ?? null
+    )
+  }
   if (attacker.id === target.id) {
     return null
   }
@@ -435,6 +580,8 @@ export function bestAttackStand(
         tiles,
         stacks,
         allowFriendly,
+        undefined,
+        battle,
       )
     ) {
       return
@@ -628,6 +775,8 @@ export function canStrikeThisTurn(
         catalog,
         tiles,
         battle.stacks,
+        false,
+        battle,
       ) != null,
   )
 }
@@ -690,6 +839,8 @@ function attackHover(
     afterMove: null,
     impactKeys: impact.impactKeys,
     beamPathKeys: impact.beamPathKeys,
+    chargePathKeys: impact.chargePathKeys,
+    chargeGhostKeys: impact.chargeGhostKeys,
     aimHex: aim,
   }
 }
@@ -845,6 +996,7 @@ function playerStandCanHit(
   allowFriendly: boolean,
   shape: UnitCombatAbilities,
   pointerWedge: number,
+  battle?: CombatBattle,
 ): boolean {
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   if (!attackTargetPolicyOk(ghost, target, catalog, allowFriendly)) {
@@ -863,6 +1015,22 @@ function playerStandCanHit(
   ) {
     return false
   }
+  if (shape.shape === 'charge_line') {
+    if (!battle) {
+      return false
+    }
+    return attackCanHitTargetAtStand(
+      stand,
+      attacker,
+      target,
+      catalog,
+      tiles,
+      stacks,
+      allowFriendly,
+      pointerWedge,
+      battle,
+    )
+  }
   return attackDeliveryOkFromStand(
     stand,
     aimHex,
@@ -871,6 +1039,7 @@ function playerStandCanHit(
     tiles,
     stacks,
     pointerWedge,
+    battle,
   )
 }
 
@@ -888,10 +1057,38 @@ export function pickPlayerAttackStand(
   tiles: CombatTile[],
   stacks: CombatStack[],
   allowFriendly: boolean,
+  battle?: CombatBattle,
 ): { stand: Axial; steps: Axial[]; wedgeZone?: number } | null {
   const unit = unitById(catalog, attacker.unitId)
   const shape = unitAttackShape(unit)
   const minR = unit?.min_range ?? 0
+  if (shape.shape === 'charge_line') {
+    if (!battle) {
+      return null
+    }
+    const wedge =
+      zone === 'center'
+        ? undefined
+        : (zone as number)
+    const picked = pickChargeLineAttackStand(
+      attacker,
+      target,
+      reachable,
+      catalog,
+      tiles,
+      battle,
+      allowFriendly,
+      wedge,
+    )
+    if (!picked) {
+      return null
+    }
+    return {
+      stand: picked.stand,
+      steps: picked.steps,
+      wedgeZone: wedge,
+    }
+  }
 
   const shortestStand = (): {
     stand: Axial
@@ -909,6 +1106,7 @@ export function pickPlayerAttackStand(
             tiles,
             stacks,
             allowFriendly,
+            battle,
           )
     if (!stand) {
       return null
@@ -953,6 +1151,7 @@ export function pickPlayerAttackStand(
         allowFriendly,
         shape,
         wedge,
+        battle,
       )
     ) {
       return
@@ -987,6 +1186,7 @@ export function enumeratePlayerAttackStands(
   tiles: CombatTile[],
   stacks: CombatStack[],
   allowFriendly: boolean,
+  battle?: CombatBattle,
 ): { stand: Axial; steps: Axial[]; wedgeZone?: number }[] {
   const seen = new Set<string>()
   const out: { stand: Axial; steps: Axial[]; wedgeZone?: number }[] = []
@@ -1001,6 +1201,7 @@ export function enumeratePlayerAttackStands(
       tiles,
       stacks,
       allowFriendly,
+      battle,
     )
     if (!pick) {
       continue
@@ -1382,6 +1583,7 @@ export function combatHover(
       tiles,
       battle.stacks,
       healAlly != null,
+      battle,
     )
     if (picked) {
       return {
@@ -1398,6 +1600,9 @@ export function combatHover(
           picked.wedgeZone,
         ),
       }
+    }
+    if (!picked && shape.shape === 'charge_line') {
+      return null
     }
     if (enemy && isSiegeEngineWallTarget(enemy, catalog)) {
       return {
@@ -1445,6 +1650,8 @@ export function combatHover(
                 tiles,
                 battle.stacks,
                 healAlly != null,
+                undefined,
+                battle,
               )
         if (inRange) {
           return combatStrikeIntentFromStand(
@@ -1524,6 +1731,7 @@ export function confusedAttackIntent(
     tiles,
     battle.stacks,
     true,
+    battle,
   )
   if (!stand) {
     return null
@@ -1676,7 +1884,15 @@ function planRandomEnemyAutoTurn(
   }
 
   const inRange = pool.filter((row) =>
-    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
+    isValidAttackTarget(
+      attacker,
+      row,
+      catalog,
+      tiles,
+      battle.stacks,
+      false,
+      battle,
+    ),
   )
   const now = autoActRandomPick(inRange, random)
   if (now) {
@@ -1696,6 +1912,8 @@ function planRandomEnemyAutoTurn(
       catalog,
       tiles,
       battle.stacks,
+      false,
+      battle,
     ),
   )
   const moveAttackTarget = autoActRandomPick(canHitAfterMove, random)
@@ -1707,6 +1925,8 @@ function planRandomEnemyAutoTurn(
       catalog,
       tiles,
       battle.stacks,
+      false,
+      battle,
     )
     if (stand) {
       const steps = reachable.get(hexKey(stand.q, stand.r)) ?? []

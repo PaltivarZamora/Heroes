@@ -339,6 +339,7 @@ function bestAiAttackIntentForEnemy(
     tiles,
     battle.stacks,
     false,
+    battle,
   )
   let best: { intent: CombatHover; damage: number; steps: number } | null = null
   for (const pick of candidates) {
@@ -492,7 +493,17 @@ export function decideCombatAction(
     const label = `${stack.qty} ${stackName(catalog, stack)}`
     const bait = `${taunter.qty} ${stackName(catalog, taunter)}`
     const tauntReach = reachableOf(stack, battle, tiles, catalog, heroes)
-    if (isValidAttackTarget(stack, taunter, catalog, tiles, battle.stacks)) {
+    if (
+      isValidAttackTarget(
+        stack,
+        taunter,
+        catalog,
+        tiles,
+        battle.stacks,
+        false,
+        battle,
+      )
+    ) {
       const intent = bestAiAttackIntentForEnemy(
         stack,
         taunter,
@@ -555,7 +566,15 @@ export function decideCombatAction(
   const inRange = enemies.filter((row) =>
     atkSpec.pullTarget
       ? isValidPullAttackTarget(stack, row, catalog, tiles, battle.stacks)
-      : isValidAttackTarget(stack, row, catalog, tiles, battle.stacks),
+      : isValidAttackTarget(
+          stack,
+          row,
+          catalog,
+          tiles,
+          battle.stacks,
+          false,
+          battle,
+        ),
   )
 
   const options: ScoredOption<CombatCandidate>[] = []

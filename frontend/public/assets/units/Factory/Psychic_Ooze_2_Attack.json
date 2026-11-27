@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Psychic_Ooze_2_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_001": {
+      "frame": {
+        "x": 488,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_002": {
+      "frame": {
+        "x": 976,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_003": {
+      "frame": {
+        "x": 1464,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_004": {
+      "frame": {
+        "x": 1952,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_005": {
+      "frame": {
+        "x": 2440,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_006": {
+      "frame": {
+        "x": 2928,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_008": {
+      "frame": {
+        "x": 488,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_009": {
+      "frame": {
+        "x": 976,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_010": {
+      "frame": {
+        "x": 1464,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_011": {
+      "frame": {
+        "x": 1952,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_012": {
+      "frame": {
+        "x": 2440,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_013": {
+      "frame": {
+        "x": 2928,
+        "y": 240,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_015": {
+      "frame": {
+        "x": 488,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_016": {
+      "frame": {
+        "x": 976,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_017": {
+      "frame": {
+        "x": 1464,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_018": {
+      "frame": {
+        "x": 1952,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_019": {
+      "frame": {
+        "x": 2440,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_020": {
+      "frame": {
+        "x": 2928,
+        "y": 480,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_022": {
+      "frame": {
+        "x": 488,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_023": {
+      "frame": {
+        "x": 976,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_024": {
+      "frame": {
+        "x": 1464,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_025": {
+      "frame": {
+        "x": 1952,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_026": {
+      "frame": {
+        "x": 2440,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_027": {
+      "frame": {
+        "x": 2928,
+        "y": 720,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_029": {
+      "frame": {
+        "x": 488,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_030": {
+      "frame": {
+        "x": 976,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_031": {
+      "frame": {
+        "x": 1464,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_032": {
+      "frame": {
+        "x": 1952,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_033": {
+      "frame": {
+        "x": 2440,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_034": {
+      "frame": {
+        "x": 2928,
+        "y": 960,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1200,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 66
+    },
+    "Psychic_Ooze_2_Attack_Stand": {
+      "frame": {
+        "x": 488,
+        "y": 1200,
+        "w": 488,
+        "h": 240
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 488,
+        "h": 240
+      },
+      "sourceSize": {
+        "w": 488,
+        "h": 240
+      },
+      "anchor": {
+        "x": 0.4596,
+        "y": 0.9909
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Psychic_Ooze_2_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 3416,
+      "h": 1440
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.4596,
+      "y": 0.9909
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0
+  }
+}

@@ -98,6 +98,7 @@ import {
   isSummonStats,
   placeBlockerAtHex,
 } from './summon'
+import { type MidBattleAppearSlot } from './battleAppear'
 import { applyEvokerSpellBonus } from './heroArmyPassives'
 import { scatterShadowSeeds } from './shadow'
 import {
@@ -148,6 +149,8 @@ export type AbilityFlash = {
 export type AbilityBeat = {
   lines: string[]
   flashes: AbilityFlash[]
+  /** Stacks that should begin appear on this beat (display only). */
+  appearStackIds?: string[]
 }
 
 export type AbilityResolve = {
@@ -156,6 +159,8 @@ export type AbilityResolve = {
   flashes: AbilityFlash[]
   /** When set, CombatScreen plays these ~0.5s apart instead of applying all at once. */
   beats?: AbilityBeat[]
+  /** Mid-battle stack ids that need appear presentation (display only). */
+  appears?: import('./battleAppear').MidBattleAppearSlot[]
   applySession?: (session: GameSession) => GameSession
   /** When true, the cast should not spend resource/cooldown/turn. */
   noOp?: boolean
@@ -2158,6 +2163,7 @@ function applyOneEffect(
   lines: string[]
   beats?: AbilityBeat[]
   tiles?: CombatTile[]
+  appears?: MidBattleAppearSlot[]
 } {
   let stacks = battle.stacks
   let tombstones = [...(battle.tombstones ?? [])]
@@ -2165,19 +2171,31 @@ function applyOneEffect(
   const lines: string[] = []
   const flashes: AbilityFlash[] = []
   const beats: AbilityBeat[] = []
+  const appears: MidBattleAppearSlot[] = []
   let workingTiles = tiles
   const liveTargets = () =>
     targets
       .map((row) => stacks.find((s) => s.id === row.id))
       .filter((row): row is CombatStack => row != null && row.qty > 0)
 
-  const snapshotBeat = (beatLines: string[], beatFlashes: AbilityFlash[]) => {
-    if (beatLines.length === 0 && beatFlashes.length === 0) {
+  const snapshotBeat = (
+    beatLines: string[],
+    beatFlashes: AbilityFlash[],
+    beatAppearStackIds: string[],
+  ) => {
+    if (
+      beatLines.length === 0 &&
+      beatFlashes.length === 0 &&
+      beatAppearStackIds.length === 0
+    ) {
       return
     }
     beats.push({
       lines: beatLines,
       flashes: beatFlashes,
+      ...(beatAppearStackIds.length > 0
+        ? { appearStackIds: [...beatAppearStackIds] }
+        : {}),
     })
   }
 
@@ -2709,6 +2727,7 @@ const hitOne = (target: CombatStack, raw: number) => {
       for (let i = 0; i < bolts; i += 1) {
         const beatLines: string[] = []
         const beatFlashes: AbilityFlash[] = []
+        const beatAppearStackIds: string[] = []
         let pick: CombatStack | null = null
         let spikeHex: { q: number; r: number } | null = null
         if (targetHexes) {
@@ -2745,6 +2764,12 @@ const hitOne = (target: CombatStack, raw: number) => {
             const placed = tryPlaceSpike(spikeHex)
             if (placed) {
               beatFlashes.push(...placed.flashes)
+              if (placed.appears) {
+                appears.push(...placed.appears)
+                beatAppearStackIds.push(
+                  ...placed.appears.map((row) => row.stackId),
+                )
+              }
               if (!paceMultiHits) {
                 flashes.push(...placed.flashes)
               }
@@ -2779,7 +2804,7 @@ const hitOne = (target: CombatStack, raw: number) => {
               }
             }
             if (paceMultiHits) {
-              snapshotBeat(beatLines, beatFlashes)
+              snapshotBeat(beatLines, beatFlashes, beatAppearStackIds)
             }
             continue
           }
@@ -2838,6 +2863,12 @@ const hitOne = (target: CombatStack, raw: number) => {
           const placed = tryPlaceSpike(spikeHex)
           if (placed) {
             beatFlashes.push(...placed.flashes)
+            if (placed.appears) {
+              appears.push(...placed.appears)
+              beatAppearStackIds.push(
+                ...placed.appears.map((row) => row.stackId),
+              )
+            }
             if (!paceMultiHits) {
               flashes.push(...placed.flashes)
             }
@@ -2871,7 +2902,7 @@ const hitOne = (target: CombatStack, raw: number) => {
           }
         }
         if (paceMultiHits) {
-          snapshotBeat(beatLines, beatFlashes)
+          snapshotBeat(beatLines, beatFlashes, beatAppearStackIds)
         }
       }
     } else if (shape === 'chain') {
@@ -3804,6 +3835,9 @@ const hitOne = (target: CombatStack, raw: number) => {
       stacks = shards.battle.stacks
       lines.push(...shards.lines)
       flashes.push(...shards.flashes)
+      if (shards.appears) {
+        appears.push(...shards.appears)
+      }
     }
   }
 
@@ -3823,6 +3857,9 @@ const hitOne = (target: CombatStack, raw: number) => {
     stacks = spikes.battle.stacks
     lines.push(...spikes.lines)
     flashes.push(...spikes.flashes)
+    if (spikes.appears) {
+      appears.push(...spikes.appears)
+    }
   }
 
   return {
@@ -3835,6 +3872,7 @@ const hitOne = (target: CombatStack, raw: number) => {
     flashes,
     lines,
     ...(beats.length > 0 ? { beats } : {}),
+    ...(appears.length > 0 ? { appears } : {}),
     ...(workingTiles !== tiles ? { tiles: workingTiles } : {}),
   }
 }
@@ -4184,6 +4222,9 @@ export function resolveAbility(
             : [`${ability.name} had no effect.`],
       },
       flashes: mirrored.flashes,
+      ...(mirrored.appears && mirrored.appears.length > 0
+        ? { appears: mirrored.appears }
+        : {}),
     }
   }
   if (isSummonStats(stats)) {
@@ -4206,6 +4247,9 @@ export function resolveAbility(
       battle: summoned.battle,
       log: { lines },
       flashes: summoned.flashes,
+      ...(summoned.appears && summoned.appears.length > 0
+        ? { appears: summoned.appears }
+        : {}),
     }
   }
   const parsed = parseTarget(catalog, ability)
@@ -4214,6 +4258,7 @@ export function resolveAbility(
   const lines: string[] = []
   const flashes: AbilityFlash[] = []
   const beats: AbilityBeat[] = []
+  const appears: MidBattleAppearSlot[] = []
   let next = battle
   let dealt = 0
   let nextTiles: CombatTile[] | undefined
@@ -4253,6 +4298,9 @@ export function resolveAbility(
       if (result.beats) {
         beats.push(...result.beats)
       }
+      if (result.appears) {
+        appears.push(...result.appears)
+      }
       if (result.tiles) {
         nextTiles = result.tiles
       }
@@ -4289,6 +4337,9 @@ export function resolveAbility(
       flashes.push(...result.flashes)
       if (result.beats) {
         beats.push(...result.beats)
+      }
+      if (result.appears) {
+        appears.push(...result.appears)
       }
       if (result.tiles) {
         nextTiles = result.tiles
@@ -4327,6 +4378,9 @@ export function resolveAbility(
     if (result.beats) {
       beats.push(...result.beats)
     }
+    if (result.appears) {
+      appears.push(...result.appears)
+    }
     if (result.tiles) {
       nextTiles = result.tiles
     }
@@ -4363,6 +4417,7 @@ export function resolveAbility(
     log: { lines },
     flashes,
     ...(beats.length > 0 ? { beats } : {}),
+    ...(appears.length > 0 ? { appears } : {}),
     ...(nextTiles ? { tiles: nextTiles } : {}),
     noOp: ability.ability_type_id !== 1 && lines.length === 0 ? true : undefined,
   }

@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Tortoise_1_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_001": {
+      "frame": {
+        "x": 334,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_002": {
+      "frame": {
+        "x": 668,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_003": {
+      "frame": {
+        "x": 1002,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_004": {
+      "frame": {
+        "x": 1336,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_005": {
+      "frame": {
+        "x": 1670,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_006": {
+      "frame": {
+        "x": 2004,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_008": {
+      "frame": {
+        "x": 334,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_009": {
+      "frame": {
+        "x": 668,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_010": {
+      "frame": {
+        "x": 1002,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_011": {
+      "frame": {
+        "x": 1336,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_012": {
+      "frame": {
+        "x": 1670,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_013": {
+      "frame": {
+        "x": 2004,
+        "y": 215,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_015": {
+      "frame": {
+        "x": 334,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_016": {
+      "frame": {
+        "x": 668,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_017": {
+      "frame": {
+        "x": 1002,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_018": {
+      "frame": {
+        "x": 1336,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_019": {
+      "frame": {
+        "x": 1670,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_020": {
+      "frame": {
+        "x": 2004,
+        "y": 430,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_022": {
+      "frame": {
+        "x": 334,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_023": {
+      "frame": {
+        "x": 668,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_024": {
+      "frame": {
+        "x": 1002,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_025": {
+      "frame": {
+        "x": 1336,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_026": {
+      "frame": {
+        "x": 1670,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_027": {
+      "frame": {
+        "x": 2004,
+        "y": 645,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_029": {
+      "frame": {
+        "x": 334,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_030": {
+      "frame": {
+        "x": 668,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_031": {
+      "frame": {
+        "x": 1002,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_032": {
+      "frame": {
+        "x": 1336,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_033": {
+      "frame": {
+        "x": 1670,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_034": {
+      "frame": {
+        "x": 2004,
+        "y": 860,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1075,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 61
+    },
+    "Tortoise_1_Attack_Stand": {
+      "frame": {
+        "x": 334,
+        "y": 1075,
+        "w": 334,
+        "h": 215
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 334,
+        "h": 215
+      },
+      "sourceSize": {
+        "w": 334,
+        "h": 215
+      },
+      "anchor": {
+        "x": 0.4268,
+        "y": 0.99
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Tortoise_1_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2338,
+      "h": 1290
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.4268,
+      "y": 0.99
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0.144
+  }
+}

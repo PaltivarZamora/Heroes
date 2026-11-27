@@ -33,10 +33,13 @@ export type BattleAnimSettings = {
   projectileHexPerSec: number
 }
 
-/** battle_idle_fps: Idle only; battle_move_fps: Move, Attack, Hit, Die, and effects. */
+/** battle_idle_fps: Idle only; battle_move_fps: Move, Attack, Hit, Die, Appear, and effects. */
 export function battleUnitSheetFps(
   settings: BattleAnimSettings,
-  kind: import('./battleUnitSheet').BattleUnitAnimKind | 'idle',
+  kind:
+    | import('./battleUnitSheet').BattleUnitAnimKind
+    | 'Appear'
+    | 'idle',
 ): number {
   if (kind === 'Idle' || kind === 'idle') {
     return settings.idleFps

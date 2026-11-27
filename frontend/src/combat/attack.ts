@@ -74,6 +74,8 @@ import {
   isUnitAttackBlocked,
   liveResistance,
   tryInflictCondition,
+  applyConsumedCondition,
+  stunConditionId,
 } from './condition'
 import {
   minFootprintHexDistance,
@@ -108,6 +110,16 @@ import {
   resolveShapeHits,
 } from './shapes'
 import {
+  applyChargeLineMovement,
+  buildChargeLinePlan,
+  buildChargeLinePlanForAttack,
+  chargeLineCanHitAtStand,
+  chargeLineOriginHex,
+  logChargeLineResolveReject,
+  targetReachableOnChargePlan,
+  type ChargeLinePlan,
+} from './chargeLinePlan'
+import {
   isCreatureArmyUnit,
   isSiegeEngineUnit,
   isSiegeEngineWallTarget,
@@ -119,6 +131,7 @@ import {
   applySummonOnKillFromAttack,
   unitHasSummonOnKill,
 } from './summonOnKill'
+import type { MidBattleAppearSlot } from './battleAppear'
 import { applyExtraTurnChanceAfterAttack } from './extraTurnChance'
 import { siegePhysBonusPct } from './siegeBonus'
 import { tryApplyAllyBuffFromHit, tryApplySelfBuffFromHit } from './statBuff'
@@ -394,8 +407,7 @@ export function aimHexInAttackRange(
   catalog: ReferenceCatalog,
 ): boolean {
   const unit = unitById(catalog, attacker.unitId)
-  const shape = unitAttackShape(unit).shape
-  const maxRange = shape === 'charge_line' ? 1 : stackMaxRange(attacker, catalog)
+  const maxRange = stackMaxRange(attacker, catalog)
   const needMin = attackMinRangeNeed(unit)
   const dist = hexDistance(from, aim)
   return dist >= needMin && dist <= maxRange
@@ -409,6 +421,8 @@ export type AttackCommitAim = {
   origin: { q: number; r: number }
   /** Fixed beam line (origin→aim, max range); LoS re-clipped at resolve. */
   beamLineHexes?: Axial[]
+  /** charge_line: frozen roll plan from commit. */
+  chargeLinePlan?: ChargeLinePlan | null
 }
 
 export function attachBeamLineToCommit(
@@ -427,6 +441,37 @@ export function attachBeamLineToCommit(
   }
 }
 
+export function attachChargeLineToCommit(
+  commit: AttackCommitAim,
+  attacker: CombatStack,
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+): AttackCommitAim {
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape !== 'charge_line') {
+    return commit
+  }
+  const ghost = { ...attacker, q: commit.stand.q, r: commit.stand.r }
+  const origin = chargeLineOriginHex(
+    commit.stand,
+    attacker,
+    catalog,
+    commit.aimHex,
+    commit.wedgeZone,
+  )
+  const plan = buildChargeLinePlan(
+    commit.stand,
+    origin,
+    commit.aimHex,
+    ghost,
+    battle,
+    catalog,
+    tiles,
+  )
+  return { ...commit, origin, chargeLinePlan: plan }
+}
+
 export function attackCommitFromAttackAim(
   attacker: CombatStack,
   aim: AttackAim,
@@ -435,13 +480,17 @@ export function attackCommitFromAttackAim(
 ): AttackCommitAim {
   const stand = aim.stand ?? { q: attacker.q, r: attacker.r }
   const ghost = { ...attacker, q: stand.q, r: stand.r }
-  const origin = actionOriginFootprintHex(
-    stand,
-    ghost,
-    catalog,
-    aim.hex,
-    aim.wedgeZone,
-  )
+  const atkShape = unitAttackShape(unitById(catalog, attacker.unitId)).shape
+  const origin =
+    atkShape === 'charge_line'
+      ? chargeLineOriginHex(stand, attacker, catalog, aim.hex, aim.wedgeZone)
+      : actionOriginFootprintHex(
+          stand,
+          ghost,
+          catalog,
+          aim.hex,
+          aim.wedgeZone,
+        )
   const base: AttackCommitAim = {
     stand,
     aimHex: aim.hex,
@@ -449,6 +498,10 @@ export function attackCommitFromAttackAim(
     wedgeZone: aim.wedgeZone,
     origin,
     beamLineHexes: aim.beamLineHexes,
+    chargeLinePlan: aim.chargeLinePlan,
+  }
+  if (base.beamLineHexes != null && base.beamLineHexes.length > 0) {
+    return base
   }
   if (base.beamLineHexes != null && base.beamLineHexes.length > 0) {
     return base
@@ -463,18 +516,45 @@ export function attackDeliveryAtCommit(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   stacks: CombatStack[],
+  battle?: CombatBattle,
 ): boolean {
   const ghost = { ...attacker, q: commit.stand.q, r: commit.stand.r }
+  const spec = unitAttackShape(unitById(catalog, attacker.unitId))
+  if (spec.shape === 'charge_line') {
+    if (battle) {
+      return chargeLineCanHitAtStand(
+        commit.stand,
+        commit.aimHex,
+        ghost,
+        battle,
+        catalog,
+        tiles,
+        commit.targetId,
+        commit.wedgeZone,
+      )
+    }
+    const plan = commit.chargeLinePlan
+    return (
+      plan != null &&
+      plan.hits.length > 0 &&
+      targetReachableOnChargePlan(plan, commit.targetId)
+    )
+  }
   if (!aimHexInAttackRange(commit.origin, commit.aimHex, ghost, catalog)) {
     return false
   }
-  return hasLineOfSight(
-    commit.origin,
-    commit.aimHex,
-    tiles,
-    stacks,
-    catalog,
-  )
+  if (
+    !hasLineOfSight(
+      commit.origin,
+      commit.aimHex,
+      tiles,
+      stacks,
+      catalog,
+    )
+  ) {
+    return false
+  }
+  return true
 }
 
 /** Side / untargetable / auto-target rules without range or LoS. */
@@ -532,27 +612,43 @@ export function attackCommitForTarget(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   wedgeZone?: number | null,
+  battle?: CombatBattle,
 ): AttackCommitAim {
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   const aimHex = closestTargetFootprintHex(stand, attacker, target, catalog)
-  return attachBeamLineToCommit(
+  const atkShape = unitAttackShape(unitById(catalog, attacker.unitId)).shape
+  const origin =
+    atkShape === 'charge_line'
+      ? chargeLineOriginHex(stand, attacker, catalog, aimHex, wedgeZone)
+      : actionOriginFootprintHex(
+          stand,
+          ghost,
+          catalog,
+          aimHex,
+          wedgeZone,
+        )
+  let commit = attachBeamLineToCommit(
     {
       stand,
       aimHex,
       targetId: target.id,
       wedgeZone,
-      origin: actionOriginFootprintHex(
-        stand,
-        ghost,
-        catalog,
-        aimHex,
-        wedgeZone,
-      ),
+      origin,
     },
     ghost,
     catalog,
     tiles,
   )
+  if (battle) {
+    commit = attachChargeLineToCommit(
+      commit,
+      ghost,
+      battle,
+      catalog,
+      tiles,
+    )
+  }
+  return commit
 }
 
 export function attackAimForTargetAtStand(
@@ -576,6 +672,7 @@ export function attackDeliveryOkFromStand(
   tiles: CombatTile[],
   stacks: CombatStack[],
   wedgeZone?: number | null,
+  battle?: CombatBattle,
 ): boolean {
   const ghost = { ...attacker, q: from.q, r: from.r }
   const origin = actionOriginFootprintHex(
@@ -592,7 +689,14 @@ export function attackDeliveryOkFromStand(
     wedgeZone,
     origin,
   }
-  return attackDeliveryAtCommit(commit, attacker, catalog, tiles, stacks)
+  return attackDeliveryAtCommit(
+    commit,
+    attacker,
+    catalog,
+    tiles,
+    stacks,
+    battle,
+  )
 }
 
 /** Policy, origin→aim range, and LoS from a stand hex. */
@@ -605,6 +709,7 @@ export function attackCanHitTargetAtStand(
   stacks: CombatStack[],
   allowFriendly = false,
   wedgeZone?: number | null,
+  battle?: CombatBattle,
 ): boolean {
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   if (!attackTargetPolicyOk(ghost, target, catalog, allowFriendly)) {
@@ -617,6 +722,7 @@ export function attackCanHitTargetAtStand(
     catalog,
     tiles,
     wedgeZone,
+    battle,
   )
   return attackDeliveryAtCommit(
     commit,
@@ -624,6 +730,7 @@ export function attackCanHitTargetAtStand(
     catalog,
     tiles,
     stacks,
+    battle,
   )
 }
 
@@ -664,6 +771,7 @@ export function attackAimFromCommit(commit: AttackCommitAim): AttackAim {
     stand: commit.stand,
     wedgeZone: commit.wedgeZone,
     beamLineHexes: commit.beamLineHexes?.map((hex) => ({ ...hex })),
+    chargeLinePlan: commit.chargeLinePlan ?? undefined,
   }
 }
 
@@ -750,6 +858,7 @@ export function isValidAttackTarget(
   tiles: CombatTile[],
   stacks: CombatStack[],
   allowFriendly = false,
+  battle?: CombatBattle,
 ): boolean {
   const stand = { q: attacker.q, r: attacker.r }
   return attackCanHitTargetAtStand(
@@ -760,6 +869,8 @@ export function isValidAttackTarget(
     tiles,
     stacks,
     allowFriendly,
+    undefined,
+    battle,
   )
 }
 
@@ -770,7 +881,15 @@ function pickMostInjuredAllyTarget(
   tiles: CombatTile[],
 ): CombatStack | null {
   const pool = battle.stacks.filter((row) =>
-    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
+    isValidAttackTarget(
+      attacker,
+      row,
+      catalog,
+      tiles,
+      battle.stacks,
+      false,
+      battle,
+    ),
   )
   if (pool.length === 0) {
     return null
@@ -799,7 +918,15 @@ export function pickAutoAttackTarget(
     return pickMostInjuredAllyTarget(attacker, battle, catalog, tiles)
   }
   const pool = battle.stacks.filter((row) =>
-    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks),
+    isValidAttackTarget(
+      attacker,
+      row,
+      catalog,
+      tiles,
+      battle.stacks,
+      false,
+      battle,
+    ),
   )
   if (pool.length === 0) {
     return null
@@ -819,7 +946,15 @@ export function canAttackAnyone(
   }
   const spec = unitAttackShape(unitById(catalog, attacker.unitId))
   return battle.stacks.some((row) =>
-    isValidAttackTarget(attacker, row, catalog, tiles, battle.stacks) ||
+    isValidAttackTarget(
+      attacker,
+      row,
+      catalog,
+      tiles,
+      battle.stacks,
+      false,
+      battle,
+    ) ||
     (spec.pullTarget &&
       isValidPullAttackTarget(
         attacker,
@@ -1567,6 +1702,7 @@ export function estimateUnitAttackDamage(
     catalog,
     tiles,
     wedgeZone ?? undefined,
+    battle,
   )
   commit = attachBeamLineToCommit({ ...commit, aimHex }, ghost, catalog, tiles)
   const aim = attackAimFromCommit(commit)
@@ -1600,6 +1736,7 @@ export function estimateUnitAttackDamage(
       standAnchor: stand,
       beamClippedPath: offensiveBeamClipped,
       beamPathOrigin: commit.origin,
+      chargeLinePlan: commit.chargeLinePlan,
     },
   )
   const rangePenalty = minRangePenaltyApplies(ghost, battle.stacks, catalog)
@@ -2281,6 +2418,7 @@ export type AttackAim = {
   /** Directional wedge 0–5 (matches combat pointer). */
   wedgeZone?: number | null
   beamLineHexes?: Axial[]
+  chargeLinePlan?: ChargeLinePlan
 }
 
 /** One-line combat log when resolveAttack returns null after a move. */
@@ -2306,6 +2444,7 @@ export function describeAttackResolveFailure(
   const commit = attackCommitFromAttackAim(attacker, aim, catalog, tiles)
   const ghost = { ...attacker, q: stand.q, r: stand.r }
   if (
+    spec.shape !== 'charge_line' &&
     !aimHexInAttackRange(
       commit.origin,
       commit.aimHex,
@@ -2325,8 +2464,27 @@ export function describeAttackResolveFailure(
       catalog,
       tiles,
       battle.stacks,
+      battle,
     )
   ) {
+    if (spec.shape === 'charge_line') {
+      const plan = buildChargeLinePlanForAttack(
+        stand,
+        commit.aimHex,
+        ghost,
+        battle,
+        catalog,
+        tiles,
+        commit.wedgeZone,
+      )
+      if (!plan || plan.hits.length === 0) {
+        return `${name}: no valid charge line after move (no victims on corridor).`
+      }
+      if (!targetReachableOnChargePlan(plan, aim.targetId)) {
+        return `${name}: charge after move does not reach the hovered target.`
+      }
+      return `${name}: charge blocked after move (terrain, ally, or landing).`
+    }
     return `${name}: cannot attack that hex after move.`
   }
   if (spec.shape !== 'aoe') {
@@ -2340,7 +2498,7 @@ export function describeAttackResolveFailure(
     if (
       !attackTargetPolicyOk(ghost, aimed, catalog, allowFriendly)
     ) {
-      if (spec.shape === 'beam') {
+      if (spec.shape === 'beam' || spec.shape === 'charge_line') {
         return `${name}: cannot attack that target after move.`
       }
       const dist = minFootprintHexDistance(stand, attacker, aimed, catalog)
@@ -2365,6 +2523,11 @@ export type AttackAnimPhase = {
   beamPathHexes?: Axial[]
   /** Player aim stack id — impact_effect anchor. */
   beamAimTargetId?: string | null
+  /** charge_line: slide path + pause at each victim. */
+  chargeWaypoints?: Axial[]
+  chargeHitStackIds?: string[]
+  /** charge_line: 1-based slide leg per victim (parallel to chargeHitStackIds). */
+  chargeHitPauseLegs?: number[]
 }
 
 /** Victim ids / hit keys touched during one presentation beat (resolve order). */
@@ -2457,6 +2620,7 @@ export function resolveAttack(
   /** Inquisitor Grand: extra turn after a kill (when triggered). */
   grantExtraTurn?: boolean
   animPhases?: AttackAnimPhase[]
+  midBattleAppears?: MidBattleAppearSlot[]
 } | null {
   const before = battle.stacks.find((row) => row.id === attackerId)
   if (!before || before.qty <= 0) {
@@ -2471,16 +2635,17 @@ export function resolveAttack(
   if (!attacker || attacker.qty <= 0) {
     return null
   }
-  attacker = {
+  const attackerAfterWindUp = {
     ...clearVanishOnAttack(attacker, catalog),
     attackedThisTurn: true,
   }
   battle = {
     ...battle,
     stacks: battle.stacks.map((row) =>
-      row.id === attackerId ? attacker : row,
+      row.id === attackerId ? attackerAfterWindUp : row,
     ),
   }
+  attacker = attackerAfterWindUp
   const battleForTombstones = battle
   const rushMods = strikeModsFromCharge(
     attacker,
@@ -2517,8 +2682,9 @@ export function resolveAttack(
     attacker,
     wedgeZone: aim.wedgeZone,
     chargeStandAnchor:
-      strikeMods?.chargePathOrigin ??
-      (spec.shape === 'charge_line' ? { q: before.q, r: before.r } : null),
+      spec.shape === 'charge_line'
+        ? standAnchor
+        : (strikeMods?.chargePathOrigin ?? null),
   }
   const actionOrigin = shapeActionOrigin(shapeGeometry, catalog, aim.hex)
   if (placingTrap) {
@@ -2578,8 +2744,29 @@ export function resolveAttack(
           catalog,
           tiles,
           battle.stacks,
+          battle,
         )
       ) {
+        if (spec.shape === 'charge_line') {
+          const plan = buildChargeLinePlanForAttack(
+            commit.stand,
+            commit.aimHex,
+            attacker,
+            battle,
+            catalog,
+            tiles,
+            commit.wedgeZone,
+          )
+          logChargeLineResolveReject({
+            unitName: stackName(catalog, attacker.unitId),
+            stand: commit.stand,
+            origin: commit.origin,
+            aim: commit.aimHex,
+            targetId: commit.targetId,
+            plan,
+            reason: 'pre-strike delivery',
+          })
+        }
         return null
       }
       if (spec.shape !== 'aoe') {
@@ -2785,6 +2972,89 @@ export function resolveAttack(
         )
       : undefined
 
+  const chargePlan: ChargeLinePlan | null =
+    spec.shape === 'charge_line'
+      ? buildChargeLinePlanForAttack(
+          standAnchor,
+          aim.hex,
+          attacker,
+          battleAfterPull,
+          catalog,
+          tiles,
+          aim.wedgeZone,
+        )
+      : null
+
+  if (spec.shape === 'charge_line') {
+    if (
+      !chargePlan ||
+      !targetReachableOnChargePlan(chargePlan, aim.targetId)
+    ) {
+      const unitName = stackName(catalog, attacker.unitId)
+      const reason = !chargePlan
+        ? 'no plan'
+        : chargePlan.hits.length === 0
+          ? 'no hits'
+          : 'target not in plan.hits'
+      logChargeLineResolveReject({
+        unitName,
+        stand: standAnchor,
+        origin: attackCommit.origin,
+        aim: aim.hex,
+        targetId: aim.targetId,
+        plan: chargePlan,
+        reason,
+      })
+      return null
+    }
+  }
+
+  const chargeLog: string[] = []
+  if (spec.shape === 'charge_line' && chargePlan) {
+    const rolled = applyChargeLineMovement(
+      battleAfterPull,
+      attackerId,
+      chargePlan,
+      catalog,
+      tiles,
+      heroes,
+      random,
+    )
+    battleAfterPull = rolled.battle
+    battle = battleAfterPull
+    chargeLog.push(...rolled.lines)
+    attacker =
+      battleAfterPull.stacks.find((row) => row.id === attackerId) ?? attacker
+    if (!attacker || attacker.qty <= 0) {
+      return {
+        battle: battleAfterPull,
+        log: { lines: [...pullLog, ...chargeLog] },
+        hitKeys: [...rolled.hitKeys],
+        healKeys: [],
+        hitColor: 'yellow',
+      }
+    }
+    if (isStunned(attacker, catalog)) {
+      return {
+        battle: applyConsumedCondition(
+          battleAfterPull,
+          attackerId,
+          stunConditionId(catalog),
+        ),
+        log: {
+          lines: [
+            ...pullLog,
+            ...chargeLog,
+            `${stackName(catalog, attacker.unitId)} are stunned and stop the charge.`,
+          ],
+        },
+        hitKeys: [...rolled.hitKeys],
+        healKeys: [],
+        hitColor: 'yellow',
+      }
+    }
+  }
+
   const hits = resolveShapeHits(
     attacker,
     aim.hex,
@@ -2803,6 +3073,7 @@ export function resolveAttack(
       standAnchor,
       beamClippedPath: offensiveBeamClipped,
       beamPathOrigin: attackCommit.origin,
+      chargeLinePlan: chargePlan,
     },
   ).filter(
     (hit) =>
@@ -2831,6 +3102,13 @@ export function resolveAttack(
                 catalog,
                 shapeGeometry,
               )
+    if (
+      spec.shape === 'charge_line' &&
+      chargePlan &&
+      chargePlan.lineHexes.length > 0
+    ) {
+      trail = chargePlan.lineHexes
+    }
     if (trail.length === 0 && hits.length > 0) {
       trail = hits.map((hit) => hit.hex)
     }
@@ -2896,9 +3174,10 @@ export function resolveAttack(
   const blockedByAttacker = unitBlocksEnemyRetaliation(atkUnit)
   let stacks = battle.stacks
   let atk: CombatStack | null = attacker
-  const lines: string[] = [...pullLog, ...trailLines]
+  const lines: string[] = [...pullLog, ...chargeLog, ...trailLines]
   const hitKeys: string[] = []
   const healKeys: string[] = []
+  const midBattleAppears: MidBattleAppearSlot[] = []
   let unitDeaths = { ...(battle.unitDeaths ?? {}) }
   let roundUnitDeaths = { ...(battle.roundUnitDeaths ?? {}) }
   const noteKill = (unitId: number, killed: number) => {
@@ -2944,6 +3223,18 @@ export function resolveAttack(
   const offensiveBeamAimTargetId =
     spec.shape === 'beam'
       ? (aim.targetId ?? aimedForHits?.id ?? null)
+      : undefined
+  const offensiveChargeWaypoints =
+    spec.shape === 'charge_line' && chargePlan
+      ? chargePlan.waypoints.map((hex) => ({ ...hex }))
+      : undefined
+  const offensiveChargeHitIds =
+    spec.shape === 'charge_line' && chargePlan
+      ? chargePlan.hits.map((row) => row.stack.id)
+      : undefined
+  const offensiveChargeHitPauseLegs =
+    spec.shape === 'charge_line' && chargePlan
+      ? chargePlan.hits.map((row) => row.slidePauseAfterLeg)
       : undefined
 
   let didRetaliate = false
@@ -4111,6 +4402,9 @@ export function resolveAttack(
         )
         stacks = raised.battle.stacks
         lines.push(...raised.lines)
+        if (raised.appears) {
+          midBattleAppears.push(...raised.appears)
+        }
       }
     }
     atk = live(attackerId)
@@ -4150,6 +4444,13 @@ export function resolveAttack(
         ? {
             beamPathHexes: offensiveBeamPathHexes.map((hex) => ({ ...hex })),
             beamAimTargetId: offensiveBeamAimTargetId,
+          }
+        : {}),
+      ...(offensiveChargeWaypoints != null && offensiveChargeWaypoints.length > 1
+        ? {
+            chargeWaypoints: offensiveChargeWaypoints,
+            chargeHitStackIds: offensiveChargeHitIds,
+            chargeHitPauseLegs: offensiveChargeHitPauseLegs,
           }
         : {}),
     })
@@ -4414,5 +4715,6 @@ export function resolveAttack(
     ...(heroesChanged ? { heroes: heroState } : {}),
     ...(grantExtraTurn ? { grantExtraTurn: true } : {}),
     ...(animPhases.length > 0 ? { animPhases } : {}),
+    ...(midBattleAppears.length > 0 ? { midBattleAppears } : {}),
   }
 }

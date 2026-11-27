@@ -22,6 +22,7 @@ import { sameUpgradeBranch } from '../town/unitUpgrade'
 import { heroForSide, type CombatHeroes } from './attack'
 import type { CombatBattle, CombatSide, CombatStack, CombatTile } from './battle'
 import { insertIntoRemainingInitiative, isHeroStack } from './battle'
+import { registerMidBattleAppear, type MidBattleAppearSlot } from './battleAppear'
 import { combatCanLandOn, combatEnterCost, moveKindForUnit } from './movement'
 import { footprintFits, footprintAlong, occupiedHexes } from './occupancy'
 import { tombstoneOccupancyBodies } from './tombstone'
@@ -208,6 +209,7 @@ function spawnSummonOnKillStack(
     retaliationsLeft: retaliationCharges(unit),
     fromSummonOnKill: true,
     spawnedRound: battle.round,
+    autoSplitBornRound: battle.round,
     startHex: { q: hex.q, r: hex.r },
   }
   let order = battle.order
@@ -328,7 +330,7 @@ export function applySummonOnKillFromAttack(
   killsThisAttack: number,
   killHexes: Axial[],
   heroes: CombatHeroes | undefined,
-): { battle: CombatBattle; lines: string[] } {
+): { battle: CombatBattle; lines: string[]; appears?: MidBattleAppearSlot[] } {
   if (!unitHasSummonOnKill(spec) || killsThisAttack <= 0) {
     return { battle, lines: [] }
   }
@@ -397,8 +399,25 @@ export function applySummonOnKillFromAttack(
     qty,
     hex,
   )
+  if (next === battle) {
+    return { battle: next, lines: [] }
+  }
+  const id =
+    next.stacks.find(
+      (row) =>
+        row.side === summoner.side &&
+        row.unitId === summonedUnit.id &&
+        row.q === hex.q &&
+        row.r === hex.r &&
+        row.fromSummonOnKill === true,
+    )?.id ?? null
+  const appears: MidBattleAppearSlot[] = []
+  if (id) {
+    registerMidBattleAppear(appears, id, summonedUnit.id)
+  }
   return {
     battle: next,
-    lines: next === battle ? [] : [logLine],
+    lines: [logLine],
+    appears: appears.length > 0 ? appears : undefined,
   }
 }

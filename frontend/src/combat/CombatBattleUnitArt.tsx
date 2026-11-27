@@ -16,6 +16,7 @@ export function CombatBattleUnitArt({
   transformOrigin,
   screenSpaceMotion,
   borrowGlow,
+  clipPath,
 }: {
   frame: BattleUnitFrame
   scale: number
@@ -27,6 +28,7 @@ export function CombatBattleUnitArt({
   /** Motion applied after facing flip (screen-space knockback, lift, tilt). */
   screenSpaceMotion?: boolean
   borrowGlow?: { color: string; px: number } | null
+  clipPath?: string
 }) {
   const frameW = frame.w * scale
   const frameH = frame.h * scale
@@ -64,6 +66,7 @@ export function CombatBattleUnitArt({
           pointerEvents: 'none',
           transform: motionTransform,
           transformOrigin: transformOrigin ?? footOrigin,
+          clipPath,
         }}
       >
         <div className="combat-battle-unit-sprite" style={spriteStyle} />
@@ -89,6 +92,7 @@ export function CombatBattleUnitArt({
         pointerEvents: 'none',
         transform: parts.length > 0 ? parts.join(' ') : undefined,
         transformOrigin: transformOrigin ?? footOrigin,
+        clipPath,
         backgroundImage: spriteStyle.backgroundImage,
         backgroundRepeat: spriteStyle.backgroundRepeat,
         backgroundSize: spriteStyle.backgroundSize,

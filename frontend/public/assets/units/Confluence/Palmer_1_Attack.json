@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Palmer_1_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_001": {
+      "frame": {
+        "x": 425,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_002": {
+      "frame": {
+        "x": 850,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_003": {
+      "frame": {
+        "x": 1275,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_004": {
+      "frame": {
+        "x": 1700,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_005": {
+      "frame": {
+        "x": 2125,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_006": {
+      "frame": {
+        "x": 2550,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_008": {
+      "frame": {
+        "x": 425,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_009": {
+      "frame": {
+        "x": 850,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_010": {
+      "frame": {
+        "x": 1275,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_011": {
+      "frame": {
+        "x": 1700,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_012": {
+      "frame": {
+        "x": 2125,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_013": {
+      "frame": {
+        "x": 2550,
+        "y": 219,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_015": {
+      "frame": {
+        "x": 425,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_016": {
+      "frame": {
+        "x": 850,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_017": {
+      "frame": {
+        "x": 1275,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_018": {
+      "frame": {
+        "x": 1700,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_019": {
+      "frame": {
+        "x": 2125,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_020": {
+      "frame": {
+        "x": 2550,
+        "y": 438,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_022": {
+      "frame": {
+        "x": 425,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_023": {
+      "frame": {
+        "x": 850,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_024": {
+      "frame": {
+        "x": 1275,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_025": {
+      "frame": {
+        "x": 1700,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_026": {
+      "frame": {
+        "x": 2125,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_027": {
+      "frame": {
+        "x": 2550,
+        "y": 657,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_029": {
+      "frame": {
+        "x": 425,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_030": {
+      "frame": {
+        "x": 850,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_031": {
+      "frame": {
+        "x": 1275,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_032": {
+      "frame": {
+        "x": 1700,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_033": {
+      "frame": {
+        "x": 2125,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_034": {
+      "frame": {
+        "x": 2550,
+        "y": 876,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1095,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 74
+    },
+    "Palmer_1_Attack_Stand": {
+      "frame": {
+        "x": 425,
+        "y": 1095,
+        "w": 425,
+        "h": 219
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 425,
+        "h": 219
+      },
+      "sourceSize": {
+        "w": 425,
+        "h": 219
+      },
+      "anchor": {
+        "x": 0.4407,
+        "y": 0.9904
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Palmer_1_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2975,
+      "h": 1314
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.4407,
+      "y": 0.9904
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0
+  }
+}

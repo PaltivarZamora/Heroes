@@ -61,6 +61,7 @@ export function combatBattleUnitSpriteScale(
   standRestHeight: number,
   standFrameWidth: number,
   settings: BattleAnimSettings,
+  unitDrawScalePct = 100,
 ): number {
   if (standRestHeight < 1) {
     return 1
@@ -80,7 +81,7 @@ export function combatBattleUnitSpriteScale(
       scale *= maxW / scaledW
     }
   }
-  return scale
+  return scale * (unitDrawScalePct / 100)
 }
 
 /** One battle scale per unit from its Stand pose (all anim sheets + corpse). */
@@ -90,6 +91,7 @@ export function combatBattleUnitScaleForSheetSet(
   side: CombatSide,
   set: BattleUnitSheetSet,
   settings: BattleAnimSettings,
+  unitDrawScalePct = 100,
 ): number {
   const ref = battleUnitStandScaleReference(set)
   if (!ref) {
@@ -102,6 +104,7 @@ export function combatBattleUnitScaleForSheetSet(
     ref.restHeight,
     ref.frameWidth,
     settings,
+    unitDrawScalePct,
   )
 }
 
@@ -111,6 +114,7 @@ export function combatCorpseBodySpriteScale(
   code: FootprintCode,
   side: CombatSide,
   settings: BattleAnimSettings,
+  unitDrawScalePct = 100,
 ): number {
   const box = stackArtBox({ x: 0, y: hexPx }, hexPx, code, side)
   const targetRest = combatBattleUnitTargetRestHeight(
@@ -118,5 +122,5 @@ export function combatCorpseBodySpriteScale(
     hexPx,
     settings.spriteScalePct,
   )
-  return targetRest / CORPSE_BODY_REST_HEIGHT_PX
+  return (targetRest / CORPSE_BODY_REST_HEIGHT_PX) * (unitDrawScalePct / 100)
 }

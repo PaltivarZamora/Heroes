@@ -105,6 +105,29 @@ import {
   noteBattleMoving,
 } from './battleHangWatchdog'
 import {
+  stackHiddenBeforeAppear,
+  stackInAppearMotion,
+} from './battleAppear'
+import {
+  appearRiseBodyHeightPx,
+  appearRiseFootClipStyle,
+  resolveAppearPaintTransform,
+} from './combatAppearPaint'
+import {
+  preloadUnitRainStills,
+  resetUnitRainStillSessionCache,
+  unitHasRainStill,
+  unitRainStaticFilename,
+} from './battleUnitRainStill'
+import {
+  beatAppearStackIds,
+  buildBeatStartTimes,
+  filterFlashesForHiddenAppears,
+  runMidBattleAppearPresentation,
+  stacksHiddenForAppearPaint,
+  type MidBattleAppearPaint,
+} from './battleAppearPresentation'
+import {
   dieFallbackEffectNames,
   preloadDieFallbackEffects,
   resetDieFallbackSessionWarnings,
@@ -150,6 +173,7 @@ import {
   unitAttackShape,
   unitArtTownFolder,
   unitById,
+  unitSpriteScalePct,
   unitIsStationary,
   unitTakesTurns,
   unitAutoTarget,
@@ -637,8 +661,24 @@ function CombatStackArt({
   view: UnitStackView
   catalog: ReturnType<typeof getCachedCatalog>
 }) {
+  const unit =
+    view.unitId != null ? unitById(catalog, view.unitId) : null
+  const drawScale =
+    view.preferFilename || !unit
+      ? 1
+      : unitSpriteScalePct(unit) / 100
   return (
-    <div className="combat-stack-static-art">
+    <div
+      className="combat-stack-static-art"
+      style={
+        drawScale === 1
+          ? undefined
+          : {
+              transform: `scale(${drawScale})`,
+              transformOrigin: '50% 100%',
+            }
+      }
+    >
       <UnitStaticArtImg
         filename={view.filename}
         townName={view.townName}
@@ -795,6 +835,8 @@ export function CombatScreen({
   const movingRef = useRef(false)
   const walkGenRef = useRef(0)
   const fieldRef = useRef<FieldView | null>(null)
+  /** Same field object must not write the opening log twice (effect re-run). */
+  const battleSetupFieldRef = useRef<FieldView | null>(null)
   const aiTurnLockedRef = useRef(false)
   const waypointPlanRef = useRef<WaypointPlan | null>(null)
   const presentAttackRef = useRef<
@@ -899,6 +941,8 @@ export function CombatScreen({
     CombatProjectileVisual[]
   >([])
   const [battleImpacts, setBattleImpacts] = useState<CombatImpactVisual[]>([])
+  const [midBattleAppearPaint, setMidBattleAppearPaint] =
+    useState<MidBattleAppearPaint | null>(null)
   const [battleShapes, setBattleShapes] = useState<CombatShapeVisual[]>([])
   const projectileArtByRowIdRef = useRef<
     Map<number, import('./battleProjectile').BattleProjectileArt | null>
@@ -989,7 +1033,9 @@ export function CombatScreen({
     }
     const live = current.stacks.find((row) => row.id === stack.id) ?? stack
     const attackBlocked = isUnitAttackBlocked(live, catalog)
-    const fire = intent.fire && !attackBlocked
+    const atkUnit = unitById(catalog, live.unitId)
+    const atkShape = unitAttackShape(atkUnit)
+    let fire = intent.fire && !attackBlocked
     const allowFriendly = intent.allowFriendly === true
     const prefix = intent.logPrefix ?? []
     const originStack = { ...live, q: live.q, r: live.r }
@@ -998,6 +1044,7 @@ export function CombatScreen({
       intent,
       catalog,
       field.tiles,
+      current,
     )
     const attackStand = aimAtIntent.stand ?? {
       q: originStack.q,
@@ -1267,18 +1314,42 @@ export function CombatScreen({
         trapLines.push(...scatter.lines)
       }
       if (fire) {
+        const walker = latest.stacks.find((row) => row.id === stack.id)
+        const aimForResolve =
+          walker != null
+            ? combatAttackAimFromIntent(
+                walker,
+                {
+                  attackTargetId: intent.attackTargetId,
+                  aimHex: intent.aimHex,
+                  q: intent.q,
+                  r: intent.r,
+                  arrowDeg: intent.arrowDeg,
+                  steps: [],
+                  afterMove: intent.afterMove,
+                  fire: true,
+                },
+                catalog,
+                field.tiles,
+                latest,
+              )
+            : aimAtIntent
+        const walkStrikeMods =
+          atkShape.shape === 'charge_line'
+            ? undefined
+            : {
+                chargeHexes: stepsDone,
+                chargePathOrigin: { q: stack.q, r: stack.r },
+              }
         const resolved = resolveAttack(
           latest,
           stack.id,
           catalog,
-          aimAtIntent,
+          aimForResolve,
           field.tiles,
           combatHeroes,
           Math.random,
-          {
-            chargeHexes: stepsDone,
-            chargePathOrigin: { q: stack.q, r: stack.r },
-          },
+          walkStrikeMods,
           allowFriendly,
         )
         if (resolved) {
@@ -1307,7 +1378,7 @@ export function CombatScreen({
                 latest,
                 stack.id,
                 catalog,
-                aimAtIntent,
+                aimForResolve,
                 field.tiles,
                 allowFriendly,
               ),
@@ -2187,6 +2258,7 @@ export function CombatScreen({
       return true
     }
     const beats = resolved.beats
+    const appearSlots = resolved.appears ?? []
     if (beats && beats.length > 0) {
       const gen = (walkGenRef.current += 1)
       noteBattleMoving(true, 'hero-cast-beats')
@@ -2202,15 +2274,56 @@ export function CombatScreen({
         field.tiles.splice(0, field.tiles.length, ...resolved.tiles)
       }
       void (async () => {
-        for (const beat of beats) {
+        const originMs = performance.now()
+        const beatStarts = buildBeatStartTimes(
+          originMs,
+          beats.length,
+          ABILITY_BEAT_MS,
+        )
+        const appearPromise =
+          appearSlots.length > 0 && catalog && field
+            ? runMidBattleAppearPresentation({
+                catalog,
+                battle: next,
+                slots: appearSlots,
+                originMs,
+                beatStartMs: beatStarts,
+                beatStackIds: beatAppearStackIds(beats),
+                sheets: unitBattleSheetsRef.current,
+                hexPx: field.hexPx,
+                fieldHeight: field.height,
+                setPaint: setMidBattleAppearPaint,
+                onRevealFlash: (groups) =>
+                  setHitFlash({ n: Date.now(), groups }),
+                anchors: field.anchors,
+                setImpacts: setBattleImpacts,
+                isCancelled: () => walkGenRef.current !== gen,
+              })
+            : Promise.resolve()
+        for (let i = 0; i < beats.length; i += 1) {
           if (walkGenRef.current !== gen) {
             break
           }
-          if (beat.flashes.length > 0) {
-            setHitFlash({ n: Date.now(), groups: beat.flashes })
+          if (i > 0) {
+            await sleep(ABILITY_BEAT_MS)
           }
-          await sleep(ABILITY_BEAT_MS)
+          const beat = beats[i]!
+          if (beat.flashes.length > 0) {
+            const hidden = stacksHiddenForAppearPaint(
+              midBattleAppearPaint,
+              performance.now(),
+            )
+            const groups = filterFlashesForHiddenAppears(
+              beat.flashes,
+              next,
+              hidden,
+            )
+            if (groups.length > 0) {
+              setHitFlash({ n: Date.now(), groups })
+            }
+          }
         }
+        await appearPromise
         noteBattleMoving(false, 'hero-cast-beats-end')
         movingRef.current = false
         setMoving(false)
@@ -2228,6 +2341,50 @@ export function CombatScreen({
         prev ? { ...prev, tiles: resolved.tiles! } : prev,
       )
       field.tiles.splice(0, field.tiles.length, ...resolved.tiles)
+    }
+    if (appearSlots.length > 0 && catalog && field) {
+      const gen = (walkGenRef.current += 1)
+      noteBattleMoving(true, 'mid-battle-appear')
+      setMoving(true)
+      void (async () => {
+        const originMs = performance.now()
+        await runMidBattleAppearPresentation({
+          catalog,
+          battle: next,
+          slots: appearSlots,
+          originMs,
+          beatStartMs: [],
+          beatStackIds: [],
+          sheets: unitBattleSheetsRef.current,
+          hexPx: field.hexPx,
+          fieldHeight: field.height,
+          setPaint: setMidBattleAppearPaint,
+          onRevealFlash: (groups) => setHitFlash({ n: Date.now(), groups }),
+          anchors: field.anchors,
+          setImpacts: setBattleImpacts,
+          isCancelled: () => walkGenRef.current !== gen,
+        })
+        if (resolved.flashes.length > 0) {
+          const hidden = stacksHiddenForAppearPaint(
+            midBattleAppearPaint,
+            performance.now(),
+          )
+          const groups = filterFlashesForHiddenAppears(
+            resolved.flashes,
+            next,
+            hidden,
+          )
+          if (groups.length > 0) {
+            setHitFlash({ n: Date.now(), groups })
+          }
+        }
+        noteBattleMoving(false, 'mid-battle-appear-end')
+        movingRef.current = false
+        setMoving(false)
+        applyOutcomeIfOver(next)
+        queueBattleLog(holdUnitTurn ? { ...resolved.log, holdTurn: true } : resolved.log)
+      })()
+      return true
     }
     applyOutcomeIfOver(next)
     if (resolved.flashes.length > 0) {
@@ -2510,23 +2667,58 @@ export function CombatScreen({
       ...(silenced.line ? [silenced.line] : []),
       ...fervorLines,
     ]
-    setBattle(next)
-    battleRef.current = next
-    applyOutcomeIfOver(next)
-    if (lines.length > 0) {
-      queueBattleLog({
-        lines,
-        holdTurn: grantedAnotherAction,
-      })
+    const appearSlots = resolved.midBattleAppears ?? []
+    const finishAfterAttack = () => {
+      setBattle(next)
+      battleRef.current = next
+      applyOutcomeIfOver(next)
+      if (lines.length > 0) {
+        queueBattleLog({
+          lines,
+          holdTurn: grantedAnotherAction,
+        })
+        return
+      }
+      if (cat) {
+        const advanced = advanceTurn(next, cat, Math.random, {
+          tiles: fieldRef.current?.tiles,
+          heroes: combatHeroesRef.current,
+        })
+        presentRoundAdvance(advanced)
+      }
+    }
+    if (appearSlots.length > 0 && cat && field) {
+      setBattle(next)
+      battleRef.current = next
+      const gen = walkGenRef.current
+      noteBattleMoving(true, 'mid-battle-appear-attack')
+      movingRef.current = true
+      setMoving(true)
+      void (async () => {
+        await runMidBattleAppearPresentation({
+          catalog: cat,
+          battle: next,
+          slots: appearSlots,
+          originMs: performance.now(),
+          beatStartMs: [],
+          beatStackIds: [],
+          sheets: unitBattleSheetsRef.current,
+          hexPx: field.hexPx,
+          fieldHeight: field.height,
+          setPaint: setMidBattleAppearPaint,
+          onRevealFlash: (groups) => setHitFlash({ n: Date.now(), groups }),
+          anchors: field.anchors,
+          setImpacts: setBattleImpacts,
+          isCancelled: () => walkGenRef.current !== gen,
+        })
+        noteBattleMoving(false, 'mid-battle-appear-attack-end')
+        movingRef.current = false
+        setMoving(false)
+        finishAfterAttack()
+      })()
       return
     }
-    if (cat) {
-      const advanced = advanceTurn(next, cat, Math.random, {
-        tiles: fieldRef.current?.tiles,
-        heroes: combatHeroesRef.current,
-      })
-      presentRoundAdvance(advanced)
-    }
+    finishAfterAttack()
   }
 
   presentAttackRef.current = (
@@ -2764,6 +2956,7 @@ export function CombatScreen({
     resetCombatBattlefieldPropPaintLog()
     resetPolymorphBattleArtWarnings()
     resetPolymorphDevDiagnostics()
+    resetUnitRainStillSessionCache()
     setPolymorphBattleSheet(null)
     setDieFallbackEffects(new Map())
     setHeroMountBattleArt(new Map())
@@ -2834,6 +3027,7 @@ export function CombatScreen({
           ),
           loadPolymorphBattleArt(catalog),
         ])
+      await preloadUnitRainStills(catalog, unitIds)
       const { sheets, finishRemaining } = opening
       if (cancelled) {
         return
@@ -3407,6 +3601,11 @@ export function CombatScreen({
       fieldRef.current = field
       return
     }
+    if (battleSetupFieldRef.current === field) {
+      fieldRef.current = field
+      return
+    }
+    battleSetupFieldRef.current = field
     fieldRef.current = field
     cutMountMoveSound()
     const session = getSession()
@@ -3430,6 +3629,7 @@ export function CombatScreen({
         moatMult,
       )
     }
+    const transcriptAtStart = combatTranscriptRef.current.length
     const placement = applyBattleStartPlacement(created, catalog, field.tiles, {
       siege: Boolean(field.siege),
       attackerCol: field.deployCols.attackerCol,
@@ -3488,7 +3688,11 @@ export function CombatScreen({
         used_abilities_this_battle: [],
       })),
     }))
-    combatTranscriptRef.current = [...combatRoundMarkerLines(created.round)]
+    const setupDevLines = combatTranscriptRef.current.slice(transcriptAtStart)
+    combatTranscriptRef.current = [
+      ...combatRoundMarkerLines(created.round),
+      ...setupDevLines,
+    ]
     escapeMetaRef.current = null
     onLiveLogLines?.([...combatTranscriptRef.current])
     setBattle(created)
@@ -3901,6 +4105,34 @@ export function CombatScreen({
     setBattle(split.battle)
     if (split.lines.length > 0) {
       queueBattleLog({ lines: split.lines, holdTurn: true })
+    }
+    const appearSlots = split.appears ?? []
+    if (appearSlots.length > 0 && catalog && field) {
+      const gen = walkGenRef.current
+      noteBattleMoving(true, 'mid-battle-appear-split')
+      movingRef.current = true
+      setMoving(true)
+      void (async () => {
+        await runMidBattleAppearPresentation({
+          catalog,
+          battle: split.battle,
+          slots: appearSlots,
+          originMs: performance.now(),
+          beatStartMs: [],
+          beatStackIds: [],
+          sheets: unitBattleSheetsRef.current,
+          hexPx: field.hexPx,
+          fieldHeight: field.height,
+          setPaint: setMidBattleAppearPaint,
+          onRevealFlash: (groups) => setHitFlash({ n: Date.now(), groups }),
+          anchors: field.anchors,
+          setImpacts: setBattleImpacts,
+          isCancelled: () => walkGenRef.current !== gen,
+        })
+        noteBattleMoving(false, 'mid-battle-appear-split-end')
+        movingRef.current = false
+        setMoving(false)
+      })()
     }
   }, [
     battle,
@@ -5867,6 +6099,8 @@ export function CombatScreen({
           ...(preview?.steps ?? hoverSteps).map((step) =>
             hexKey(step.q, step.r),
           ),
+          ...(preview?.chargePathKeys ?? []),
+          ...(preview?.chargeGhostKeys ?? []),
           ...(preview?.pullLandingKeys ?? []),
         ]
         drawReach(
@@ -6444,13 +6678,86 @@ export function CombatScreen({
                       catalog,
                       polymorphBattleSheet,
                     )
+                  const appearScheduled = midBattleAppearPaint?.scheduled ?? []
+                  const hiddenForAppear =
+                    appearScheduled.length > 0 &&
+                    stackHiddenBeforeAppear(
+                      stack.id,
+                      paintNow,
+                      appearScheduled,
+                    )
                   const showStackStatic =
+                    !hiddenForAppear &&
                     !useBattleAnim &&
                     !hideFootprintBox &&
                     (!polymorphStaticStill || view?.preferFilename)
-                  return (
+                  const appearMotion =
+                    appearScheduled.length > 0 &&
+                    catalog &&
+                    stackInAppearMotion(stack.id, paintNow, appearScheduled)
+                      ? (() => {
+                          const row = appearScheduled.find(
+                            (entry) => entry.stackId === stack.id,
+                          )
+                          if (!row) {
+                            return null
+                          }
+                          const settings = battleAnimSettings(catalog)
+                          const set = unitBattleSheets.get(stack.unitId)
+                          const appearFp = combatStackFootprint(stack, catalog)
+                          const riseBody = appearRiseBodyHeightPx(
+                            field.hexPx,
+                            appearFp,
+                            stack.side,
+                            set,
+                            settings,
+                            unit,
+                          )
+                          return resolveAppearPaintTransform(
+                            row,
+                            appearScheduled,
+                            paintNow,
+                            field.hexPx,
+                            field.height,
+                            riseBody,
+                            set,
+                            settings,
+                          )
+                        })()
+                      : null
+                  if (hiddenForAppear) {
+                    return null
+                  }
+                  const appearRow = appearScheduled.find(
+                    (entry) => entry.stackId === stack.id,
+                  )
+                  const riseFootClip =
+                    appearRow?.kind === 'rise' &&
+                    appearMotion &&
+                    moveSettings
+                      ? appearRiseFootClipStyle(
+                          combatUnitDrawFootPosition(
+                            pos,
+                            field.hexPx,
+                            moveSettings.footOffsetPct,
+                            catalog
+                              ? combatStackFootprint(stack, catalog)
+                              : '1x1',
+                            stack.side,
+                            stackVisual,
+                            paintNow,
+                          ).footY,
+                        )
+                      : null
+                  const appearStyle: React.CSSProperties | undefined =
+                    appearMotion
+                      ? {
+                          transform: `translateY(${appearMotion.offsetY}px)`,
+                        }
+                      : undefined
+                  const stackNode = (
                     <div
-                      key={stack.id}
+                      key={riseFootClip ? undefined : stack.id}
                       className={
                         fixture
                           ? 'combat-stack combat-stack-on-hex combat-stack-fixture'
@@ -6473,6 +6780,7 @@ export function CombatScreen({
                         height: box.height,
                         left: box.left,
                         top: box.top,
+                        ...appearStyle,
                       }}
                     >
                       {heroShowsMount ? (
@@ -6496,7 +6804,29 @@ export function CombatScreen({
                       ) : (
                         <>
                           {showStackStatic ? (
-                            <CombatStackArt view={view!} catalog={catalog} />
+                            <CombatStackArt
+                              view={(() => {
+                                const row = appearScheduled.find(
+                                  (entry) => entry.stackId === stack.id,
+                                )
+                                const unitRow = unitById(catalog, stack.unitId)
+                                const rainName = unitRainStaticFilename(
+                                  unitRow
+                                    ? unitBattleSpriteStem(unitRow)
+                                    : null,
+                                )
+                                if (
+                                  row?.kind === 'rain' &&
+                                  appearMotion &&
+                                  rainName &&
+                                  unitHasRainStill(stack.unitId)
+                                ) {
+                                  return { ...view!, filename: rainName }
+                                }
+                                return view!
+                              })()}
+                              catalog={catalog}
+                            />
                           ) : null}
                           <span className="combat-stack-qty">
                             {formatAmount(view!.qty)}
@@ -6504,6 +6834,17 @@ export function CombatScreen({
                         </>
                       )}
                     </div>
+                  )
+                  return riseFootClip ? (
+                    <div
+                      key={stack.id}
+                      className="combat-appear-rise-foot-clip"
+                      style={riseFootClip}
+                    >
+                      {stackNode}
+                    </div>
+                  ) : (
+                    stackNode
                   )
                       })}
                       {catalog ? (
@@ -6519,6 +6860,7 @@ export function CombatScreen({
                           impacts={battleImpacts}
                           shapes={battleShapes}
                           paintNowMs={paintNow}
+                          appearPaint={midBattleAppearPaint}
                         />
                       ) : null}
                       {catalog ? (
@@ -6602,7 +6944,11 @@ export function CombatScreen({
                     >
                       <CombatTargetIcon
                         kind={hoverTarget.icon}
-                        arrowDeg={hoverTarget.arrowDeg}
+                        arrowDeg={
+                          hoverTarget.arrowDeg != null
+                            ? (hoverTarget.arrowDeg + 180) % 360
+                            : null
+                        }
                       />
                       {hoverTarget.label ? (
                         <span className="combat-target-label">

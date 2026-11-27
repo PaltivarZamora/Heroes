@@ -16,19 +16,11 @@ import {
 } from './battle'
 import { COMBAT_COLUMNS } from './battlefield'
 import {
-  combatCanLandOn,
-  combatEnterCost,
-  groundEffectMovementBlockKeys,
-  moveKindForUnit,
-  type MoveKind,
-} from './movement'
-import {
-  footprintAlong,
-  footprintFits,
-  occupiedHexes,
-  combatBodyFootprint,
-} from './occupancy'
-import { tombstoneOccupancyBodies } from './tombstone'
+  battleStartHeroStandsAt,
+  battleStartStackStandFailReason,
+  battleStartStackStandsAt,
+  logBattleStartFitFailure,
+} from './battleStartFit'
 
 function stackLabel(
   stack: CombatStack,
@@ -39,16 +31,6 @@ function stackLabel(
     return sessionHeroName?.(stack.heroId)?.trim() || 'Hero'
   }
   return unitById(catalog, stack.unitId)?.name ?? 'Unit'
-}
-
-function moveKindForStack(
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-): MoveKind {
-  if (isHeroStack(stack)) {
-    return 'ground'
-  }
-  return moveKindForUnit(unitById(catalog, stack.unitId), catalog)
 }
 
 /** Half-board ownership for deploy repair (left = atk, right = def). */
@@ -86,35 +68,19 @@ function tileOnOwnSide(
   return tile.col > mid
 }
 
-function stackCanOccupy(
+function stackStandsHere(
   stack: CombatStack,
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   battle: CombatBattle,
   at: Axial,
 ): boolean {
-  const kind = moveKindForStack(stack, catalog)
-  const blockKeys = groundEffectMovementBlockKeys(battle)
-  const occupied = occupiedHexes(
-    battle.stacks,
-    catalog,
-    stack.id,
-    tombstoneOccupancyBodies(battle.tombstones, catalog),
-  )
-  const enterCost = (q: number, r: number) => {
-    const tile = tiles.find((row) => row.q === q && row.r === r)
-    if (!combatCanLandOn(tile, kind, undefined, blockKeys)) {
-      return null
-    }
-    return combatEnterCost(tile, kind, undefined, blockKeys)
+  if (isHeroStack(stack)) {
+    return battleStartHeroStandsAt(stack, at, battle, tiles, catalog)
   }
-  return footprintFits(
-    at,
-    combatBodyFootprint(stack, catalog),
-    footprintAlong(stack.side),
-    occupied,
-    enterCost,
-  )
+  return battleStartStackStandsAt(stack, at, battle, tiles, catalog, {
+    exceptStackId: stack.id,
+  })
 }
 
 function nearestValidOnOwnSide(
@@ -139,11 +105,10 @@ function nearestValidOnOwnSide(
     })
   for (const tile of ranked) {
     const at = { q: tile.q, r: tile.r }
-    if (stackCanOccupy(stack, catalog, tiles, battle, at)) {
+    if (stackStandsHere(stack, catalog, tiles, battle, at)) {
       return at
     }
   }
-  // Last resort: any landable hex on the board.
   const any = [...tiles].sort((a, b) => {
     const da = hexDistance(origin, a)
     const db = hexDistance(origin, b)
@@ -151,7 +116,7 @@ function nearestValidOnOwnSide(
   })
   for (const tile of any) {
     const at = { q: tile.q, r: tile.r }
-    if (stackCanOccupy(stack, catalog, tiles, battle, at)) {
+    if (stackStandsHere(stack, catalog, tiles, battle, at)) {
       return at
     }
   }
@@ -160,7 +125,7 @@ function nearestValidOnOwnSide(
 
 /**
  * Move stacks/heroes that start on illegal hexes to the nearest valid hex
- * on their own side. Updates `startHex`. Returns combat-log lines.
+ * on their own side. Uses the same stand rule as battle-start placement.
  */
 export function ensureValidDeployments(
   battle: CombatBattle,
@@ -170,10 +135,9 @@ export function ensureValidDeployments(
 ): { battle: CombatBattle; lines: string[] } {
   const lines: string[] = []
   let next = battle
-  // Stable order: heroes first, then by side/slot so later stacks see prior moves.
   const ordered = [...next.stacks].sort((a, b) => {
-    const ha = isHeroStack(a) ? 0 : 1
-    const hb = isHeroStack(b) ? 0 : 1
+    const ha = isHeroStack(a) ? 1 : 0
+    const hb = isHeroStack(b) ? 1 : 0
     if (ha !== hb) {
       return ha - hb
     }
@@ -191,13 +155,30 @@ export function ensureValidDeployments(
       continue
     }
     const here = { q: live.q, r: live.r }
-    if (stackCanOccupy(live, catalog, tiles, next, here)) {
+    if (stackStandsHere(live, catalog, tiles, next, here)) {
       continue
     }
+    const reason =
+      battleStartStackStandFailReason(
+        live,
+        here,
+        next,
+        tiles,
+        catalog,
+        isHeroStack(live) ? {} : { exceptStackId: live.id },
+      ) ?? 'unknown'
     const dest = nearestValidOnOwnSide(live, catalog, tiles, next)
     if (!dest || (dest.q === live.q && dest.r === live.r)) {
       continue
     }
+    logBattleStartFitFailure(
+      'Deploy',
+      live,
+      catalog,
+      here,
+      reason,
+      sessionHeroName,
+    )
     if (isHeroStack(live)) {
       next = {
         ...next,

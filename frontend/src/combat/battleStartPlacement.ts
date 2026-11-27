@@ -23,25 +23,19 @@ import {
   isSiegeExteriorCol,
   siegeWallColForRow,
 } from './battlefield'
-import {
-  combatCanLandOn,
-  combatEnterCost,
-  groundEffectMovementBlockKeys,
-  moveKindForUnit,
-  type MoveKind,
-} from './movement'
-import {
-  footprintBlockingHexes,
-  footprintExtent,
-} from './footprint'
+import { footprintBlockingCode, footprintBlockingHexes, footprintExtent } from './footprint'
+import { appendBattleAnimCombatLog } from './battleAnimLogBridge'
 import {
   combatBodyFootprint,
   footprintAlong,
-  footprintFits,
-  occupiedHexes,
   stackBlockingFootprint,
 } from './occupancy'
 import { tombstoneOccupancyBodies } from './tombstone'
+import {
+  battleStartStackStandFailReason,
+  battleStartStackStandsAt,
+  logBattleStartFitFailure,
+} from './battleStartFit'
 
 export type PlacementLayoutMode = 'column' | 'column-squeezed' | 'per-slot'
 
@@ -114,16 +108,6 @@ function isFixedStartStack(stack: CombatStack): boolean {
     return true
   }
   return false
-}
-
-function moveKindForStack(
-  stack: CombatStack,
-  catalog: ReferenceCatalog,
-): MoveKind {
-  if (isHeroStack(stack)) {
-    return 'ground'
-  }
-  return moveKindForUnit(unitById(catalog, stack.unitId), catalog)
 }
 
 function tileByHex(tiles: CombatTile[]): Map<string, CombatTile> {
@@ -315,6 +299,33 @@ function backEdgeScanTiles(
   return ordered
 }
 
+function heroFixedHexKeys(battle: CombatBattle): Set<string> {
+  const keys = new Set<string>()
+  for (const stack of battle.stacks) {
+    if (stack.qty > 0 && isHeroStack(stack)) {
+      keys.add(`${stack.q},${stack.r}`)
+    }
+  }
+  return keys
+}
+
+function coversHeroFixedHex(
+  origin: Axial,
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  heroKeys: ReadonlySet<string>,
+): boolean {
+  if (heroKeys.size === 0) {
+    return false
+  }
+  for (const hex of blockingFootprintAt(origin, stack, catalog)) {
+    if (heroKeys.has(`${hex.q},${hex.r}`)) {
+      return true
+    }
+  }
+  return false
+}
+
 function pickOverflowAnchor(
   stack: CombatStack,
   catalog: ReferenceCatalog,
@@ -324,8 +335,15 @@ function pickOverflowAnchor(
   placedIds: ReadonlySet<string>,
   scanScope: 'ownSide' | 'fullField' = 'ownSide',
 ): Axial | null {
+  const heroKeys = heroFixedHexKeys(battle)
   for (const tile of backEdgeScanTiles(tiles, stack.side, scanScope)) {
     const origin = { q: tile.q, r: tile.r }
+    if (!isPlayableTile(tile)) {
+      continue
+    }
+    if (coversHeroFixedHex(origin, stack, catalog, heroKeys)) {
+      continue
+    }
     if (!zoneFilter(origin)) {
       continue
     }
@@ -336,15 +354,17 @@ function pickOverflowAnchor(
   return null
 }
 
-function stacksForPlacementOccupancy(
+function armyIdsForPlacement(
   battle: CombatBattle,
   placedIds: ReadonlySet<string>,
-): CombatStack[] {
-  return battle.stacks.filter(
-    (stack) =>
-      stack.qty > 0 &&
-      (isFixedStartStack(stack) || placedIds.has(stack.id)),
-  )
+): Set<string> {
+  const ids = new Set(placedIds)
+  for (const stack of battle.stacks) {
+    if (stack.qty > 0 && isFixedStartStack(stack) && !isHeroStack(stack)) {
+      ids.add(stack.id)
+    }
+  }
+  return ids
 }
 
 function stackFitsAt(
@@ -355,28 +375,9 @@ function stackFitsAt(
   at: Axial,
   placedIds: ReadonlySet<string>,
 ): boolean {
-  const kind = moveKindForStack(stack, catalog)
-  const blockKeys = groundEffectMovementBlockKeys(battle)
-  const occupied = occupiedHexes(
-    stacksForPlacementOccupancy(battle, placedIds),
-    catalog,
-    stack.id,
-    tombstoneOccupancyBodies(battle.tombstones, catalog),
-  )
-  const enterCost = (q: number, r: number) => {
-    const tile = tiles.find((row) => row.q === q && row.r === r)
-    if (!combatCanLandOn(tile, kind, undefined, blockKeys)) {
-      return null
-    }
-    return combatEnterCost(tile, kind, undefined, blockKeys)
-  }
-  return footprintFits(
-    at,
-    combatBodyFootprint(stack, catalog),
-    footprintAlong(stack.side),
-    occupied,
-    enterCost,
-  )
+  return battleStartStackStandsAt(stack, at, battle, tiles, catalog, {
+    armyIdsForOccupancy: armyIdsForPlacement(battle, placedIds),
+  })
 }
 
 type BodyGridBounds = {
@@ -425,7 +426,7 @@ function fixedStackBlockKeys(
 ): Set<string> {
   const keys = new Set<string>()
   for (const stack of battle.stacks) {
-    if (!isFixedStartStack(stack) || stack.qty <= 0) {
+    if (!isFixedStartStack(stack) || stack.qty <= 0 || isHeroStack(stack)) {
       continue
     }
     for (const hex of stackBlockingFootprint(stack, catalog)) {
@@ -514,27 +515,16 @@ function stackFitsAtColumnTrial(
   blockedKeys: ReadonlySet<string>,
   tileMap: Map<string, CombatTile>,
   opts: BattleStartPlacementOpts,
+  anchorByStackId?: ReadonlyMap<string, Axial>,
 ): boolean {
   if (!columnLayoutZoneAnchor(at, stack, catalog, tileMap, tiles, opts)) {
     return false
   }
-  const kind = moveKindForStack(stack, catalog)
-  const blockKeys = groundEffectMovementBlockKeys(battle)
-  const occupied = new Set(blockedKeys)
-  const enterCost = (q: number, r: number) => {
-    const tile = tiles.find((row) => row.q === q && row.r === r)
-    if (!combatCanLandOn(tile, kind, undefined, blockKeys)) {
-      return null
-    }
-    return combatEnterCost(tile, kind, undefined, blockKeys)
-  }
-  return footprintFits(
-    at,
-    combatBodyFootprint(stack, catalog),
-    footprintAlong(stack.side),
-    occupied,
-    enterCost,
-  )
+  return battleStartStackStandsAt(stack, at, battle, tiles, catalog, {
+    occupiedKeys: blockedKeys,
+    armyIdsForOccupancy: new Set(),
+    anchorByStackId,
+  })
 }
 
 function maxPlayableBodyRow(tiles: CombatTile[]): number {
@@ -547,14 +537,33 @@ function maxPlayableBodyRow(tiles: CombatTile[]): number {
   return max
 }
 
-function stackFootprintRowSpan(
+/** Blocking body rows (the head row of a tall shape is not part of the body). */
+function stackBodyRowSpan(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+): number {
+  return footprintExtent(
+    footprintBlockingCode(combatBodyFootprint(stack, catalog)),
+  ).rows
+}
+
+function stackFullRowSpan(
   stack: CombatStack,
   catalog: ReferenceCatalog,
 ): number {
   return footprintExtent(combatBodyFootprint(stack, catalog)).rows
 }
 
-/** Blank playable rows between stack i feet and stack i+1 head; gaps length = stacks - 1. */
+/** Tall: a non-blocking head row sits above the body. */
+function stackIsTall(stack: CombatStack, catalog: ReferenceCatalog): boolean {
+  return stackFullRowSpan(stack, catalog) > stackBodyRowSpan(stack, catalog)
+}
+
+/**
+ * One blank row between consecutive bodies.
+ * foot[i+1] = foot[i] + blank + body rows of i+1.
+ * The top stack's body starts on the first playable row; its head may sit in the frame.
+ */
 function buildFootRowsForStacks(
   stacks: CombatStack[],
   catalog: ReferenceCatalog,
@@ -562,14 +571,13 @@ function buildFootRowsForStacks(
   footAdjust: number[],
 ): number[] {
   const footRows: number[] = []
-  let foot = HERO_ROW + (footAdjust[0] ?? 0)
+  const body0 = stacks.length > 0 ? stackBodyRowSpan(stacks[0]!, catalog) : 1
+  let foot = HERO_ROW + (body0 - 1) + (footAdjust[0] ?? 0)
   for (let i = 0; i < stacks.length; i += 1) {
     if (i > 0) {
       const blank = blankGaps[i - 1] ?? 1
-      const span = stackFootprintRowSpan(stacks[i]!, catalog)
-      foot =
-        footRows[i - 1]! + blank + span
-      foot += footAdjust[i] ?? 0
+      const span = stackBodyRowSpan(stacks[i]!, catalog)
+      foot = footRows[i - 1]! + blank + span + (footAdjust[i] ?? 0)
     }
     footRows.push(foot)
   }
@@ -583,29 +591,122 @@ function columnFootRowsFit(
   maxRow: number,
 ): boolean {
   for (let i = 0; i < stacks.length; i += 1) {
-    const span = stackFootprintRowSpan(stacks[i]!, catalog)
+    const span = stackBodyRowSpan(stacks[i]!, catalog)
     const foot = footRows[i]!
-    const top = foot - (span - 1)
-    if (foot > maxRow || top < 0) {
-      return false
-    }
-    if (foot < HERO_ROW) {
-      return false
-    }
-    if (i === 0) {
-      continue
-    }
-    if (top < HERO_ROW) {
+    const bodyTop = foot - (span - 1)
+    if (foot > maxRow || foot < HERO_ROW || bodyTop < HERO_ROW) {
       return false
     }
   }
   return true
 }
 
+type ColumnPlaceFailReason = string
+
 type ColumnPlaceResult = {
   anchors: Map<string, Axial>
   /** Index of first stack not placed; stacks.length when all placed. */
   failedFrom: number
+  failReason?: ColumnPlaceFailReason
+}
+
+function diagnoseColumnStackFailure(
+  battle: CombatBattle,
+  catalog: ReferenceCatalog,
+  tiles: CombatTile[],
+  tileMap: Map<string, CombatTile>,
+  opts: BattleStartPlacementOpts,
+  stack: CombatStack,
+  footRow: number,
+  maxRow: number,
+  colStart: number,
+  origin: Axial | null,
+  blocked: ReadonlySet<string>,
+  anchors: ReadonlyMap<string, Axial>,
+): ColumnPlaceFailReason {
+  if (!stackFootRowsInBounds(stack, catalog, footRow, maxRow)) {
+    const span = stackBodyRowSpan(stack, catalog)
+    const bodyTop = footRow - (span - 1)
+    const head = footRow - (stackFullRowSpan(stack, catalog) - 1)
+    return `row bounds (foot row ${footRow}, body top ${bodyTop}, head ${head}, max ${maxRow})`
+  }
+  if (!origin) {
+    return `no playable tile at col ${colStart} row ${footRow}`
+  }
+  if (!footAnchorAlignedToBackCol(origin, stack, catalog, tileMap, colStart)) {
+    return `not aligned to deploy col ${colStart} (origin q=${origin.q} r=${origin.r})`
+  }
+  if (
+    !columnLayoutZoneAnchor(origin, stack, catalog, tileMap, tiles, opts)
+  ) {
+    for (const hex of blockingFootprintAt(origin, stack, catalog)) {
+      const tile = tileMap.get(`${hex.q},${hex.r}`)
+      if (!tile || !isPlayableTile(tile)) {
+        return `zone: non-playable (q=${hex.q} r=${hex.r})`
+      }
+      if ((tile.row ?? 0) < HERO_ROW) {
+        return `zone: above army row (row ${tile.row})`
+      }
+      if (!tileOnOwnSide(tile, stack.side, tiles)) {
+        return `zone: wrong side (col ${tile.col} row ${tile.row})`
+      }
+      if (opts.siege && stack.side === 'def') {
+        const col = tile.col ?? 0
+        const row = tile.row ?? 0
+        if (col < siegeWallColForRow(row)) {
+          return `zone: inside siege wall (col ${col} row ${row})`
+        }
+      }
+      if (opts.siege && stack.side === 'atk') {
+        if (!isSiegeExteriorCol(tile.col ?? 0, tile.row ?? 0)) {
+          return `zone: siege interior (col ${tile.col} row ${tile.row})`
+        }
+      }
+    }
+    return 'zone: unknown'
+  }
+  return (
+    battleStartStackStandFailReason(stack, origin, battle, tiles, catalog, {
+      occupiedKeys: blocked,
+      armyIdsForOccupancy: new Set(),
+      anchorByStackId: anchors,
+    }) ?? 'unknown'
+  )
+}
+
+function logPlacementNote(message: string): void {
+  appendBattleAnimCombatLog(`[Placement] ${message}`)
+}
+
+function logPlacementColumnFailure(
+  stack: CombatStack,
+  catalog: ReferenceCatalog,
+  origin: Axial | null,
+  reason: ColumnPlaceFailReason,
+  opts: BattleStartPlacementOpts,
+): void {
+  if (!origin) {
+    logPlacementNote(`"${stackLabel(stack, catalog, opts.sessionHeroName)}" — ${reason}`)
+    return
+  }
+  logBattleStartFitFailure(
+    'Placement',
+    stack,
+    catalog,
+    origin,
+    reason,
+    opts.sessionHeroName,
+  )
+}
+
+function shiftColumnDownFrom(
+  fromIndex: number,
+  footAdjust: number[],
+  delta = 1,
+): void {
+  for (let j = fromIndex; j < footAdjust.length; j += 1) {
+    footAdjust[j]! += delta
+  }
 }
 
 function footAnchorAlignedToBackCol(
@@ -633,17 +734,14 @@ function stackFootRowsInBounds(
   catalog: ReferenceCatalog,
   footRow: number,
   maxRow: number,
-  stackIndex: number,
 ): boolean {
-  const span = stackFootprintRowSpan(stack, catalog)
-  const top = footRow - (span - 1)
-  if (footRow > maxRow || top < 0 || footRow < HERO_ROW) {
+  const span = stackBodyRowSpan(stack, catalog)
+  const bodyTop = footRow - (span - 1)
+  if (footRow > maxRow || footRow < HERO_ROW || bodyTop < HERO_ROW) {
     return false
   }
-  if (stackIndex === 0) {
-    return true
-  }
-  return top >= HERO_ROW
+  const head = footRow - (stackFullRowSpan(stack, catalog) - 1)
+  return head >= 0
 }
 
 function tryPlaceColumnAtFootRows(
@@ -655,7 +753,7 @@ function tryPlaceColumnAtFootRows(
   side: CombatSide,
   stacks: CombatStack[],
   footRowsIn: number[],
-): ColumnPlaceResult | null {
+): ColumnPlaceResult {
   const colStart = backDeployCol(side, opts)
   const maxRow = maxPlayableBodyRow(tiles)
   const anchors = new Map<string, Axial>()
@@ -663,19 +761,13 @@ function tryPlaceColumnAtFootRows(
   for (let i = 0; i < stacks.length; i += 1) {
     const stack = stacks[i]!
     const footRow = footRowsIn[i]!
-    if (!stackFootRowsInBounds(stack, catalog, footRow, maxRow, i)) {
-      return i === 0 ? null : { anchors, failedFrom: i }
-    }
     const origin = anchorAtColRow(tiles, colStart, footRow)
-    if (!origin) {
-      return i === 0 ? null : { anchors, failedFrom: i }
-    }
-    if (!footAnchorAlignedToBackCol(origin, stack, catalog, tileMap, colStart)) {
-      return i === 0 ? null : { anchors, failedFrom: i }
-    }
     const blocked = trialBlockKeysFromAnchors(battle, catalog, anchors, stack.id)
-    if (
-      !stackFitsAtColumnTrial(
+    const fits =
+      stackFootRowsInBounds(stack, catalog, footRow, maxRow) &&
+      origin != null &&
+      footAnchorAlignedToBackCol(origin, stack, catalog, tileMap, colStart) &&
+      stackFitsAtColumnTrial(
         stack,
         catalog,
         battle,
@@ -684,11 +776,26 @@ function tryPlaceColumnAtFootRows(
         blocked,
         tileMap,
         opts,
+        anchors,
       )
-    ) {
-      return { anchors, failedFrom: i }
+    if (!fits) {
+      const reason = diagnoseColumnStackFailure(
+        battle,
+        catalog,
+        tiles,
+        tileMap,
+        opts,
+        stack,
+        footRow,
+        maxRow,
+        colStart,
+        origin,
+        blocked,
+        anchors,
+      )
+      return { anchors, failedFrom: i, failReason: reason }
     }
-    anchors.set(stack.id, origin)
+    anchors.set(stack.id, origin!)
   }
   return { anchors, failedFrom: stacks.length }
 }
@@ -721,7 +828,7 @@ function tryColumnLayout(
     if (!columnFootRowsFit(stacks, catalog, footRows, maxRow)) {
       return 'no-rows'
     }
-    const placed = tryPlaceColumnAtFootRows(
+    return tryPlaceColumnAtFootRows(
       battle,
       catalog,
       tiles,
@@ -731,65 +838,156 @@ function tryColumnLayout(
       stacks,
       footRows,
     )
-    return placed ?? { anchors: new Map(), failedFrom: 0 }
+  }
+
+  let loggedFail = false
+  let loggedRows = false
+  let shiftDownAttempts = 0
+  const maxShiftDownAttempts = stacks.length * (maxRow - HERO_ROW + 2)
+  const headPulled = Array(stacks.length).fill(false)
+
+  const rowsNow = (): boolean =>
+    columnFootRowsFit(
+      stacks,
+      catalog,
+      buildFootRowsForStacks(stacks, catalog, blankGaps, footAdjust),
+      maxRow,
+    )
+
+  const logRowsShortfall = (): void => {
+    if (loggedRows) {
+      return
+    }
+    loggedRows = true
+    const footRows = buildFootRowsForStacks(
+      stacks,
+      catalog,
+      blankGaps,
+      footAdjust,
+    )
+    const lastFoot = footRows[footRows.length - 1] ?? HERO_ROW
+    const needed = Math.max(0, lastFoot - HERO_ROW + 1)
+    const available = Math.max(0, maxRow - HERO_ROW + 1)
+    const who = side === 'atk' ? 'attackers' : 'defenders'
+    logPlacementNote(
+      `${who} column does not fit: rows needed ${needed}, available ${available}`,
+    )
+  }
+
+  // Squeeze 1: one tall stack, top down. Head covers the stack above; keep the step.
+  const squeezeHeadOnce = (): boolean => {
+    for (let i = 1; i < stacks.length; i += 1) {
+      if (headPulled[i] || !stackIsTall(stacks[i]!, catalog)) {
+        continue
+      }
+      const gapIdx = i - 1
+      if ((blankGaps[gapIdx] ?? 0) <= 0) {
+        headPulled[i] = true
+        continue
+      }
+      blankGaps[gapIdx]! -= 1
+      headPulled[i] = true
+      squeezeSteps += 1
+      return true
+    }
+    return false
+  }
+
+  // Squeeze 2: drop one blank between bodies, top down. Keep the step.
+  const squeezeBlankOnce = (): boolean => {
+    for (let i = 0; i < gapCount; i += 1) {
+      if ((blankGaps[i] ?? 0) <= 0) {
+        continue
+      }
+      blankGaps[i]! -= 1
+      squeezeSteps += 1
+      return true
+    }
+    return false
+  }
+
+  const squeezeOneKeptStep = (): boolean =>
+    squeezeHeadOnce() || squeezeBlankOnce()
+
+  if (!rowsNow()) {
+    while (squeezeHeadOnce()) {
+      if (rowsNow()) {
+        break
+      }
+    }
+  }
+  if (!rowsNow()) {
+    while (squeezeBlankOnce()) {
+      if (rowsNow()) {
+        break
+      }
+    }
+  }
+  if (!rowsNow()) {
+    logRowsShortfall()
+    return null
   }
 
   while (true) {
     const placed = tryPlaceAtLayout()
-    if (placed !== 'no-rows') {
-      if (placed.failedFrom === stacks.length) {
-        return { anchors: placed.anchors, squeezeSteps }
+    if (placed === 'no-rows') {
+      if (!squeezeOneKeptStep()) {
+        logRowsShortfall()
+        return null
       }
+      continue
+    }
+    if (placed.failedFrom === stacks.length) {
+      return { anchors: placed.anchors, squeezeSteps }
+    }
+
+    const failStack = stacks[placed.failedFrom]!
+    const colStart = backDeployCol(side, opts)
+    const footRows = buildFootRowsForStacks(
+      stacks,
+      catalog,
+      blankGaps,
+      footAdjust,
+    )
+    const footRow = footRows[placed.failedFrom] ?? HERO_ROW
+    const origin = anchorAtColRow(tiles, colStart, footRow)
+    if (!loggedFail) {
+      logPlacementColumnFailure(
+        failStack,
+        catalog,
+        origin,
+        placed.failReason ?? 'unknown',
+        opts,
+      )
+      loggedFail = true
+    }
+
+    if (shiftDownAttempts >= maxShiftDownAttempts) {
       if (placed.anchors.size > 0) {
         return { anchors: placed.anchors, squeezeSteps }
       }
+      logRowsShortfall()
       return null
     }
 
-    let stepped = false
-    for (let i = 0; i < stacks.length; i += 1) {
-      footAdjust[i]! -= 1
-      const footRows = buildFootRowsForStacks(
-        stacks,
-        catalog,
-        blankGaps,
-        footAdjust,
-      )
-      if (!columnFootRowsFit(stacks, catalog, footRows, maxRow)) {
-        footAdjust[i]! += 1
-        continue
+    shiftDownAttempts += 1
+    shiftColumnDownFrom(placed.failedFrom, footAdjust, 1)
+    const shiftedRows = buildFootRowsForStacks(
+      stacks,
+      catalog,
+      blankGaps,
+      footAdjust,
+    )
+    if (!columnFootRowsFit(stacks, catalog, shiftedRows, maxRow)) {
+      shiftColumnDownFrom(placed.failedFrom, footAdjust, -1)
+      if (!squeezeOneKeptStep()) {
+        if (placed.anchors.size > 0) {
+          return { anchors: placed.anchors, squeezeSteps }
+        }
+        logRowsShortfall()
+        return null
       }
-      squeezeSteps += 1
-      stepped = true
-      break
     }
-    if (stepped) {
-      continue
-    }
-
-    for (let i = 0; i < gapCount; i += 1) {
-      if (blankGaps[i]! <= 0) {
-        continue
-      }
-      blankGaps[i]! -= 1
-      const footRows = buildFootRowsForStacks(
-        stacks,
-        catalog,
-        blankGaps,
-        footAdjust,
-      )
-      if (!columnFootRowsFit(stacks, catalog, footRows, maxRow)) {
-        blankGaps[i]! += 1
-        continue
-      }
-      squeezeSteps += 1
-      stepped = true
-      break
-    }
-    if (stepped) {
-      continue
-    }
-    return null
   }
 }
 
@@ -871,6 +1069,9 @@ function applyPerSlotFallback(
     const anchor = pickAnchor(live, catalog, next, tiles, tileMap, opts, placedIds)
     if (!anchor) {
       const label = stackLabel(live, catalog, opts.sessionHeroName)
+      logPlacementNote(
+        `"${label}" — no legal fallback hex (placed bodies, hero hex, and non-playable excluded)`,
+      )
       lines.push(`${label} could not be placed — no room on the battlefield`)
       continue
     }

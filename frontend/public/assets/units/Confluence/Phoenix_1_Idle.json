@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Phoenix_1_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_001": {
+      "frame": {
+        "x": 258,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_002": {
+      "frame": {
+        "x": 516,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_003": {
+      "frame": {
+        "x": 774,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_004": {
+      "frame": {
+        "x": 1032,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_005": {
+      "frame": {
+        "x": 1290,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_006": {
+      "frame": {
+        "x": 1548,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_007": {
+      "frame": {
+        "x": 0,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_008": {
+      "frame": {
+        "x": 258,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_009": {
+      "frame": {
+        "x": 516,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_010": {
+      "frame": {
+        "x": 774,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_011": {
+      "frame": {
+        "x": 1032,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_012": {
+      "frame": {
+        "x": 1290,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_013": {
+      "frame": {
+        "x": 1548,
+        "y": 209,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_014": {
+      "frame": {
+        "x": 0,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_015": {
+      "frame": {
+        "x": 258,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_016": {
+      "frame": {
+        "x": 516,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_017": {
+      "frame": {
+        "x": 774,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_018": {
+      "frame": {
+        "x": 1032,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_019": {
+      "frame": {
+        "x": 1290,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_020": {
+      "frame": {
+        "x": 1548,
+        "y": 418,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_021": {
+      "frame": {
+        "x": 0,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_022": {
+      "frame": {
+        "x": 258,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_023": {
+      "frame": {
+        "x": 516,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_024": {
+      "frame": {
+        "x": 774,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_025": {
+      "frame": {
+        "x": 1032,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_026": {
+      "frame": {
+        "x": 1290,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_027": {
+      "frame": {
+        "x": 1548,
+        "y": 627,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_028": {
+      "frame": {
+        "x": 0,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_029": {
+      "frame": {
+        "x": 258,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_030": {
+      "frame": {
+        "x": 516,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_031": {
+      "frame": {
+        "x": 774,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_032": {
+      "frame": {
+        "x": 1032,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_033": {
+      "frame": {
+        "x": 1290,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_034": {
+      "frame": {
+        "x": 1548,
+        "y": 836,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_035": {
+      "frame": {
+        "x": 0,
+        "y": 1045,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 78
+    },
+    "Phoenix_1_Idle_Stand": {
+      "frame": {
+        "x": 258,
+        "y": 1045,
+        "w": 258,
+        "h": 209
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 258,
+        "h": 209
+      },
+      "sourceSize": {
+        "w": 258,
+        "h": 209
+      },
+      "anchor": {
+        "x": 0.6631,
+        "y": 0.9905
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Phoenix_1_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1806,
+      "h": 1254
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.6631,
+      "y": 0.9905
+    },
+    "rest_height": 200
+  }
+}

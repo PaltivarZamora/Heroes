@@ -1,0 +1,947 @@
+{
+  "frames": {
+    "Vines_1_Attack_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_001": {
+      "frame": {
+        "x": 427,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_002": {
+      "frame": {
+        "x": 854,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_003": {
+      "frame": {
+        "x": 1281,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_004": {
+      "frame": {
+        "x": 1708,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_005": {
+      "frame": {
+        "x": 2135,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_006": {
+      "frame": {
+        "x": 2562,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_007": {
+      "frame": {
+        "x": 0,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_008": {
+      "frame": {
+        "x": 427,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_009": {
+      "frame": {
+        "x": 854,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_010": {
+      "frame": {
+        "x": 1281,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_011": {
+      "frame": {
+        "x": 1708,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_012": {
+      "frame": {
+        "x": 2135,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_013": {
+      "frame": {
+        "x": 2562,
+        "y": 207,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_014": {
+      "frame": {
+        "x": 0,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_015": {
+      "frame": {
+        "x": 427,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_016": {
+      "frame": {
+        "x": 854,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_017": {
+      "frame": {
+        "x": 1281,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_018": {
+      "frame": {
+        "x": 1708,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_019": {
+      "frame": {
+        "x": 2135,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_020": {
+      "frame": {
+        "x": 2562,
+        "y": 414,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_021": {
+      "frame": {
+        "x": 0,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_022": {
+      "frame": {
+        "x": 427,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_023": {
+      "frame": {
+        "x": 854,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_024": {
+      "frame": {
+        "x": 1281,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_025": {
+      "frame": {
+        "x": 1708,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_026": {
+      "frame": {
+        "x": 2135,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_027": {
+      "frame": {
+        "x": 2562,
+        "y": 621,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_028": {
+      "frame": {
+        "x": 0,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_029": {
+      "frame": {
+        "x": 427,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_030": {
+      "frame": {
+        "x": 854,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_031": {
+      "frame": {
+        "x": 1281,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_032": {
+      "frame": {
+        "x": 1708,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_033": {
+      "frame": {
+        "x": 2135,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_034": {
+      "frame": {
+        "x": 2562,
+        "y": 828,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_035": {
+      "frame": {
+        "x": 0,
+        "y": 1035,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 72
+    },
+    "Vines_1_Attack_Stand": {
+      "frame": {
+        "x": 427,
+        "y": 1035,
+        "w": 427,
+        "h": 207
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 427,
+        "h": 207
+      },
+      "sourceSize": {
+        "w": 427,
+        "h": 207
+      },
+      "anchor": {
+        "x": 0.2553,
+        "y": 0.9797
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Vines_1_Attack.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 2989,
+      "h": 1242
+    },
+    "scale": "1",
+    "anim": "Attack",
+    "loop": false,
+    "foot": {
+      "x": 0.2553,
+      "y": 0.9797
+    },
+    "rest_height": 200,
+    "sound_start_pct": 0.169
+  }
+}

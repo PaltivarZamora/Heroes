@@ -155,7 +155,7 @@ import {
   mobUnitQty,
 } from '../session/mobs'
 import { HERO_ID, type Mob } from '../session/types'
-import { featureRenderScale, fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, isHeroTypeOffered, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, unitById, visionRange } from '../town/catalog'
+import { featureRenderScale, fetchCatalog, featureForResource, flightSpeed, getCachedCatalog, heroMovementPoints, isHeroTypeOffered, mapShowHexesWorld, mapUseTerrainImages, ownerTint, subscribeCatalog, unitById, unitSpriteScalePct, visionRange } from '../town/catalog'
 import {
   applyPixiAdvBorrowGlow,
   flushAdvancedBorrowDevLog,
@@ -3351,7 +3351,9 @@ export function HexMap({
             const hex = grid.getHex(mob.position) ?? grid.createHex(mob.position)
             const originCenter = hexCenter(hex, offsetX, offsetY)
             if (fp === '1x1') {
-              const targetH = worldSpriteTargetHeight(hexSize, catalog)
+              const targetH =
+                worldSpriteTargetHeight(hexSize, catalog) *
+                (unitSpriteScalePct(leadUnit) / 100)
               applyWorldSpriteScale(
                 entry.sprite,
                 texture,
@@ -3368,11 +3370,12 @@ export function HexMap({
                 hexSize,
                 fp,
               )
-              const targetH = worldMobSpriteTargetHeight(
-                hexSize,
-                layout.boxHeight,
-                catalog,
-              )
+              const targetH =
+                worldMobSpriteTargetHeight(
+                  hexSize,
+                  layout.boxHeight,
+                  catalog,
+                ) * (unitSpriteScalePct(leadUnit) / 100)
               applyWorldMobSpriteScale(
                 entry.sprite,
                 texture,

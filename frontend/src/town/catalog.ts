@@ -123,6 +123,19 @@ export type UnitRow = {
   projectile_id: number | null
   /** Battle move slide seconds per hex; null = anim_config.battle_move_sec_per_hex. */
   move_sec_per_hex: number | null
+  /** Battle/world sprite scale vs global anim_config; null = 100. Advanced uses its own row. */
+  sprite_scale_pct: number | null
+  /** Attack sheet loop range [start, end] (0-based) for charge_line spin during travel. */
+  charge_loop_frames: readonly [number, number] | null
+  /**
+   * When set (0–100), display strike moment = Attack clip × pct/100 (not sound).
+   * NULL → sheet sound_start_pct; advanced may inherit basic when Attack sheet is borrowed.
+   */
+  attack_strike_pct: number | null
+  /** Mid-battle appear motion when no Appear sheet: rise | rain | null. */
+  appear_style: 'rise' | 'rain' | null
+  /** Optional impact sheet name under assets/projectiles. */
+  appear_effect: string | null
 }
 
 export type ProjectileRow = {
@@ -202,7 +215,7 @@ export type UnitCombatAbilities = {
   conditionDuration: number
   /** Mud Golem: split qty before acting (after first turn). */
   autoSplitOnTurn: boolean
-  /** With autoSplitOnTurn: do not split on the turn a stack was created (summon or split). */
+  /** Legacy catalog flag; auto-split deferral uses stack autoSplitBornRound (G14-25). */
   skipFirstTurn: boolean
   /** Finger of Death / Assassin: overflow kills an extra creature. */
   killOnOverflow: boolean
@@ -4911,6 +4924,11 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       town_id?: unknown
       projectile_id?: unknown
       move_sec_per_hex?: unknown
+      sprite_scale_pct?: unknown
+      charge_loop_frames?: unknown
+      attack_strike_pct?: unknown
+      appear_style?: unknown
+      appear_effect?: unknown
     }
     const image = typeof row.image_path === 'string' ? row.image_path.trim() : ''
     const imageAlt =
@@ -4939,6 +4957,45 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       }
       const n = Number(moveSecRaw)
       return Number.isFinite(n) && n > 0 ? n : null
+    })()
+    const spriteScaleRaw = extra.sprite_scale_pct
+    const spriteScalePct = (() => {
+      if (spriteScaleRaw == null || spriteScaleRaw === '') {
+        return null
+      }
+      const n = Number(spriteScaleRaw)
+      return Number.isFinite(n) && n > 0 ? n : null
+    })()
+    const chargeLoopFrames = (() => {
+      const raw = extra.charge_loop_frames
+      if (raw == null) {
+        return null
+      }
+      if (!Array.isArray(raw) || raw.length < 2) {
+        return null
+      }
+      const a = Number(raw[0])
+      const b = Number(raw[1])
+      if (!Number.isFinite(a) || !Number.isFinite(b)) {
+        return null
+      }
+      const loopStart = Math.floor(a)
+      const loopEnd = Math.floor(b)
+      if (loopStart < 0 || loopEnd < loopStart) {
+        return null
+      }
+      return [loopStart, loopEnd] as const
+    })()
+    const attackStrikePct = (() => {
+      const raw = extra.attack_strike_pct
+      if (raw == null || raw === '') {
+        return null
+      }
+      const n = Number(raw)
+      if (!Number.isFinite(n)) {
+        return null
+      }
+      return Math.min(100, Math.max(0, n))
     })()
     return {
       ...row,
@@ -4981,6 +5038,26 @@ export async function fetchCatalog(): Promise<ReferenceCatalog> {
       projectile_id:
         projectileId != null && projectileId > 0 ? projectileId : null,
       move_sec_per_hex: moveSecPerHex,
+      sprite_scale_pct: spriteScalePct,
+      charge_loop_frames: chargeLoopFrames,
+      attack_strike_pct: attackStrikePct,
+      appear_style: (() => {
+        const raw =
+          typeof extra.appear_style === 'string'
+            ? extra.appear_style.trim().toLowerCase()
+            : ''
+        if (raw === 'rise' || raw === 'rain') {
+          return raw
+        }
+        return null
+      })(),
+      appear_effect: (() => {
+        const raw =
+          typeof extra.appear_effect === 'string'
+            ? extra.appear_effect.trim()
+            : ''
+        return raw.length > 0 ? raw : null
+      })(),
     }
   })
   const projectile: ProjectileRow[] = (
@@ -5398,6 +5475,16 @@ export function unitFootprint(
 }
 
 /** @deprecated Prefer unitFootprint — returns hex count for legacy callers. */
+/** Per-unit battle/world draw scale (this row only; NULL → 100). */
+export function unitSpriteScalePct(unit: UnitRow | null | undefined): number {
+  const raw = unit?.sprite_scale_pct
+  if (raw == null) {
+    return 100
+  }
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : 100
+}
+
 export function unitHexFootprint(unit: UnitRow | null | undefined): number {
   const code = unitFootprint(unit)
   if (code === '1x1') return 1

@@ -7,6 +7,7 @@ import type { FootprintCode } from './footprint'
 import { stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
 import type { BattleUnitAnimKind, BattleUnitSheetSet } from './battleUnitSheet'
 import { frameAtProgress } from './battleUnitSheet'
+import { chargeAttackFrameIndex } from './chargeAttackPlayback'
 import type { ProceduralHitMotion } from './proceduralBattleHit'
 import type { DieFallbackFxSchedule } from './battleDieFallbackEffect'
 import { battleUnitHasHitSheet, pickProceduralHitFrame } from './proceduralBattleHit'
@@ -64,6 +65,8 @@ export type StackBattleVisual = {
   dieFxAnchor?: DieFxAnchor
   /** Static _Dead.png corpse after die fallback (or tomb without Die sheet). */
   corpseBody?: boolean
+  /** charge_line: wind-up / loop / recover Attack frame phases (display only). */
+  chargeAttack?: import('./chargeAttackPlayback').ChargeAttackVisual
 }
 
 export type CombatProjectileVisual = {
@@ -336,6 +339,27 @@ export function pickVisualFrame(
   if (!sheet) {
     return null
   }
+  if (
+    kind === 'Attack' &&
+    visual.chargeAttack &&
+    set.sheets.Attack
+  ) {
+    const attackSheet = set.sheets.Attack
+    const loopFrames = attackSheet.frames
+    if (loopFrames.length > 0) {
+      const charge = visual.chargeAttack
+      const idx = chargeAttackFrameIndex(
+        charge.phase,
+        [charge.loopStart, charge.loopEnd],
+        loopFrames.length,
+        charge.phaseStartedMs,
+        settings.moveFps,
+        now,
+      )
+      const frame = loopFrames[idx] ?? loopFrames[0]!
+      return { frame, sheetKind: 'Attack' }
+    }
+  }
   if (visual.slide && (kind === 'Move' || visual.kind === 'Move')) {
     const moveSheet = set.sheets.Move ?? sheet
     const frame = frameAtProgress(
@@ -372,8 +396,13 @@ export function pickVisualFrame(
       progress = 0
     }
   } else if (kind === 'Attack') {
-    durationMs = settings.attackSec * 1000
-    progress = progressForTimedAnim(visual.startedMs, durationMs, now)
+    if (visual.chargeAttack) {
+      durationMs = 0
+      progress = 0
+    } else {
+      durationMs = settings.attackSec * 1000
+      progress = progressForTimedAnim(visual.startedMs, durationMs, now)
+    }
   } else if (kind === 'Hit') {
     durationMs = settings.hitSec * 1000
     progress = progressForTimedAnim(visual.startedMs, durationMs, now)

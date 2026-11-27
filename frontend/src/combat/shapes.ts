@@ -19,6 +19,10 @@ import {
   type ShapeGeometryOpts,
 } from './actionOrigin'
 import { isUntargetableStack, liveWallLosKeys } from './siege'
+import {
+  chargePlanShapeHits,
+  type ChargeLinePlan,
+} from './chargeLinePlan'
 
 export type ShapeHit = {
   hex: Axial
@@ -623,8 +627,15 @@ export function geometricHexes(
         board,
       )
     }
-    case 'charge_line':
-      return uniqueHexes(chargeLineHexes(origin, aim, board), board)
+    case 'charge_line': {
+      const maxRange = geometry?.attacker
+        ? stackMaxRange(geometry.attacker, catalog)
+        : 99
+      return uniqueHexes(
+        lineHexesToRange(origin, aim, maxRange, board),
+        board,
+      )
+    }
     case 'breath':
       return uniqueHexes(breathHexes(origin, aim, spec.rows), board)
     case 'rain':
@@ -736,6 +747,8 @@ export function resolveShapeHits(
     /** Beam: frozen clipped path (LoS only re-run). */
     beamClippedPath?: Axial[] | null
     beamPathOrigin?: Axial | null
+    /** charge_line: frozen roll plan (preview = resolve). */
+    chargeLinePlan?: ChargeLinePlan | null
   },
 ): ShapeHit[] {
   const base = unitAttackShape(unitById(catalog, attacker.unitId))
@@ -802,6 +815,10 @@ export function resolveShapeHits(
       hits.push({ hex: { q: next.q, r: next.r }, stack: next, dmgPct: 100 })
     }
     return hits
+  }
+
+  if (spec.shape === 'charge_line' && options?.chargeLinePlan != null) {
+    return chargePlanShapeHits(options.chargeLinePlan)
   }
 
   if (

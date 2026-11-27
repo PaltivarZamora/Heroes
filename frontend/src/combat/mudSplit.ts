@@ -20,6 +20,7 @@ import {
   occupiedHexes,
 } from './occupancy'
 import { tombstoneOccupancyBodies } from './tombstone'
+import { registerMidBattleAppear, type MidBattleAppearSlot } from './battleAppear'
 
 function nextSplitId(stacks: CombatStack[], side: CombatStack['side']): string {
   let n = 1
@@ -33,7 +34,7 @@ function nextSplitId(stacks: CombatStack[], side: CombatStack['side']): string {
 
 /**
  * Mud Golem: before acting, split qty in half onto an adjacent open hex.
- * Never split on the turn a stack was created (summon or prior split).
+ * Split-born stacks do not split again in the round they were created (G14-25).
  * Qty 1 never splits. Odd qty: floor half goes to the new stack.
  */
 export function tryAutoSplitOnTurn(
@@ -41,7 +42,7 @@ export function tryAutoSplitOnTurn(
   catalog: ReferenceCatalog,
   tiles: CombatTile[],
   stackId: string,
-): { battle: CombatBattle; lines: string[] } | null {
+): { battle: CombatBattle; lines: string[]; appears?: MidBattleAppearSlot[] } | null {
   const stack = battle.stacks.find((row) => row.id === stackId)
   if (!stack || stack.qty <= 1 || isHeroStack(stack)) {
     return null
@@ -54,12 +55,11 @@ export function tryAutoSplitOnTurn(
   if (!abilities.autoSplitOnTurn) {
     return null
   }
-  // Skip the creation turn (summon or split). Prefer spawnedRound; if missing
-  // on a skipFirstTurn unit, treat as ineligible this turn (safe default).
-  if (abilities.skipFirstTurn) {
-    if (stack.spawnedRound == null || stack.spawnedRound === battle.round) {
-      return null
-    }
+  if (
+    stack.autoSplitBornRound != null &&
+    stack.autoSplitBornRound === battle.round
+  ) {
+    return null
   }
   const splitQty = Math.floor(stack.qty / 2)
   if (splitQty <= 0) {
@@ -100,8 +100,8 @@ export function tryAutoSplitOnTurn(
     r: at.r,
     hasActedThisRound: false,
     retaliationsLeft: retaliationCharges(unit),
-    // New stack — must wait until its own next turn before splitting.
     spawnedRound: battle.round,
+    autoSplitBornRound: battle.round,
     startHex: { q: at.q, r: at.r },
     summonSeq: (stack.summonSeq ?? 0) + 1000,
   }
@@ -123,10 +123,13 @@ export function tryAutoSplitOnTurn(
     }
     next = insertIntoRemainingInitiative(next, catalog, childId)
   }
+  const appears: MidBattleAppearSlot[] = []
+  registerMidBattleAppear(appears, childId, unit.id)
   return {
     battle: next,
     lines: [
       `${remainQty} ${unit.name} split into ${remainQty} and ${splitQty} ${unit.name}.`,
     ],
+    appears,
   }
 }

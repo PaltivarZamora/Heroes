@@ -1,0 +1,70 @@
+{
+  "frames": {
+    "Earth_Spikes_Idle_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 248,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 248,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 248,
+        "h": 200
+      },
+      "anchor": {
+        "x": 0.5315,
+        "y": 1
+      },
+      "duration": 1000
+    },
+    "Earth_Spikes_Idle_Stand": {
+      "frame": {
+        "x": 248,
+        "y": 0,
+        "w": 248,
+        "h": 200
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 248,
+        "h": 200
+      },
+      "sourceSize": {
+        "w": 248,
+        "h": 200
+      },
+      "anchor": {
+        "x": 0.5315,
+        "y": 1
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "image": "Earth_Spikes_Idle.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 496,
+      "h": 200
+    },
+    "scale": "1",
+    "anim": "Idle",
+    "loop": true,
+    "foot": {
+      "x": 0.5315,
+      "y": 1
+    },
+    "rest_height": 200
+  }
+}

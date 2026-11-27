@@ -22,6 +22,7 @@ import {
   battleAttackFlipTowardTarget,
   battleUnitSheetForUnit,
   flipBattleUnitForSide,
+  unitAttackStrikeFraction,
 } from './battleUnitSheet'
 import {
   battleUnitHasHitSheet,
@@ -51,9 +52,21 @@ import {
 } from './battleProjectile'
 import type { ProjectileRow } from '../town/catalog'
 import {
+  awaitBattleMovePathWaypoint,
+  buildBattleMovePathFeet,
   runBattleHitReactionPhase,
   runBattleWipedDeathAnim,
 } from './combatUnitAnimPlayback'
+import { battleMoveSecPerHexForUnit } from './battleAnimConfig'
+import {
+  chargeBeatDurationMs,
+  chargeLoopFramesValid,
+  chargePhaseDurationMs,
+  chargeSlideDurationMs,
+  unitChargeLoopFrames,
+  warnChargeLoopFramesFallback,
+  type ChargeLoopFrames,
+} from './chargeAttackPlayback'
 import type { DieFallbackEffectSheet } from './battleDieFallbackEffect'
 import type { ReferenceCatalog } from '../town/catalog'
 import { unitAttackShape, unitById } from '../town/catalog'
@@ -82,6 +95,9 @@ export type AttackExchange = {
   isRetaliation?: boolean
   beamPathHexes?: import('../hex/hero').Axial[]
   beamAimTargetId?: string | null
+  chargeWaypoints?: import('../hex/hero').Axial[]
+  chargeHitStackIds?: string[]
+  chargeHitPauseLegs?: number[]
 }
 
 type HexAnchor = { q: number; r: number; x: number; y: number }
@@ -106,10 +122,24 @@ export function preAttackDisplayStacks(
   baseBattle: CombatBattle,
   resolved: AttackResolved,
 ): CombatStack[] {
+  const chargeStartHex = new Map<string, { q: number; r: number }>()
+  for (const phase of resolved.animPhases ?? []) {
+    const wp = phase.chargeWaypoints
+    if (wp != null && wp.length > 0) {
+      chargeStartHex.set(phase.attackerId, {
+        q: wp[0]!.q,
+        r: wp[0]!.r,
+      })
+    }
+  }
   const posById = new Map(
     resolved.battle.stacks.map((row) => [row.id, { q: row.q, r: row.r }]),
   )
   return baseBattle.stacks.map((row) => {
+    const chargeStart = chargeStartHex.get(row.id)
+    if (chargeStart) {
+      return { ...row, q: chargeStart.q, r: chargeStart.r }
+    }
     const pos = posById.get(row.id)
     if (!pos) {
       return { ...row }
@@ -140,6 +170,13 @@ export function buildAttackExchanges(
       isRetaliation: phase.isRetaliation,
       beamPathHexes: phase.beamPathHexes?.map((hex) => ({ ...hex })),
       beamAimTargetId: phase.beamAimTargetId,
+      chargeWaypoints: phase.chargeWaypoints?.map((hex) => ({ ...hex })),
+      chargeHitStackIds: phase.chargeHitStackIds
+        ? [...phase.chargeHitStackIds]
+        : undefined,
+      chargeHitPauseLegs: phase.chargeHitPauseLegs
+        ? [...phase.chargeHitPauseLegs]
+        : undefined,
     })
     prev = phase.strikeStacks
     if (i + 1 < phases.length) {
@@ -322,7 +359,7 @@ function shapeHitStartDelayMs(row: ProjectileRow, durationMs: number): number {
   return durationMs * (pct / 100)
 }
 
-async function spawnImpactVisual(opts: {
+export async function spawnBattleImpactVisual(opts: {
   id: string
   x: number
   y: number
@@ -351,9 +388,8 @@ async function spawnImpactVisual(opts: {
       animFps: opts.animFps,
     },
   ])
-  void sleepMs(durationMs, opts.isCancelled).then(() => {
-    opts.setImpacts((prev) => prev.filter((row) => row.id !== opts.id))
-  })
+  await sleepMs(durationMs, opts.isCancelled)
+  opts.setImpacts((prev) => prev.filter((row) => row.id !== opts.id))
 }
 
 export async function runAttackBeatPresentation(opts: {
@@ -410,12 +446,30 @@ export async function runAttackBeatPresentation(opts: {
             (row) => row.q === targetBefore.q && row.r === targetBefore.r,
           )
         : null
+    const strikerUnit = unitById(opts.catalog, striker.unitId)
+    const attackShape = strikerUnit
+      ? unitAttackShape(strikerUnit).shape
+      : 'single'
+    const chargeWaypoints = exchange.chargeWaypoints
+    const chargeVisual =
+      attackShape === 'charge_line' &&
+      exchange.isRetaliation !== true &&
+      chargeWaypoints != null &&
+      chargeWaypoints.length > 1
     const strikerFootprint = combatStackFootprint(striker, opts.catalog)
-    const attackerFoot = strikerAnchor
+    const chargeStartHex =
+      chargeVisual && chargeWaypoints != null ? chargeWaypoints[0]! : null
+    const footAnchor =
+      chargeStartHex != null
+        ? opts.anchors.find(
+            (row) => row.q === chargeStartHex.q && row.r === chargeStartHex.r,
+          )
+        : strikerAnchor
+    const attackerFoot = footAnchor
       ? (() => {
           const foot = stackArtBoxFoot(
             stackArtBox(
-              strikerAnchor,
+              footAnchor,
               opts.hexPx,
               strikerFootprint,
               striker.side,
@@ -445,17 +499,72 @@ export async function runAttackBeatPresentation(opts: {
     const set = sheetSet(striker.unitId, opts.catalog, opts.sheets)
     const attackSheet = set?.sheets.Attack
     const attackMs = opts.settings.attackSec * 1000
+    const attackFrameCount = attackSheet?.frames.length ?? 0
+    const chargeLoopRaw =
+      chargeVisual && strikerUnit
+        ? unitChargeLoopFrames(opts.catalog, strikerUnit)
+        : null
+    const chargeLoop: ChargeLoopFrames | null =
+      chargeLoopRaw &&
+      chargeLoopFramesValid(chargeLoopRaw, attackFrameCount)
+        ? chargeLoopRaw
+        : null
+    const chargePhased =
+      chargeVisual && chargeLoop != null && attackFrameCount > 0
+    const moveSecPerHexCharge = strikerUnit
+      ? battleMoveSecPerHexForUnit(strikerUnit, opts.catalog)
+      : opts.settings.moveSecPerHex
+    const chargeSlideSecPerHex =
+      chargeVisual && opts.settings.projectileHexPerSec > 0
+        ? 1 / opts.settings.projectileHexPerSec
+        : moveSecPerHexCharge
+    const slideHexCount =
+      chargeWaypoints != null
+        ? Math.max(0, chargeWaypoints.length - 1)
+        : 0
     const soundPct = attackSheet?.soundStartPct ?? 0
-    const strikeMs = attackMs * soundPct
+    const strikerBeatMs = chargeVisual
+      ? chargePhased && chargeLoop
+        ? chargeBeatDurationMs(
+            chargeLoop,
+            attackFrameCount,
+            opts.settings.moveFps,
+            slideHexCount,
+            chargeSlideSecPerHex,
+          )
+        : attackMs +
+          chargeSlideDurationMs(slideHexCount, chargeSlideSecPerHex)
+      : attackMs
+    const soundDelayMs = chargeVisual
+      ? strikerBeatMs * soundPct
+      : attackMs * soundPct
+    const strikeFrac = chargeVisual
+      ? soundPct
+      : (unitAttackStrikeFraction(opts.catalog, strikerUnit, attackSheet) ??
+        soundPct)
+    const strikeDelayMs = chargeVisual
+      ? strikerBeatMs * soundPct
+      : attackMs * strikeFrac
     const maxRange = stackMaxRange(striker, opts.catalog)
     const rangedVisual = stackUsesRangedProjectileVisuals(striker, opts.catalog)
     const ranged = rangedVisual && targetFoot != null
     const strikerName =
       unitById(opts.catalog, striker.unitId)?.name ?? String(striker.unitId)
     const actionStartedMs = performance.now()
+    if (chargeVisual && !chargePhased && strikerUnit) {
+      const reason =
+        chargeLoopRaw == null
+          ? 'charge_loop_frames missing'
+          : `invalid for Attack sheet (${attackFrameCount} frames, want [${chargeLoopRaw[0]},${chargeLoopRaw[1]}])`
+      warnChargeLoopFramesFallback(
+        striker.unitId,
+        strikerName,
+        reason,
+      )
+    }
     logBeatStart(strikerName, 'Attack', beatMs())
     const attackFlipX = battleAttackFlipTowardTarget(attackerFoot, targetFoot)
-    if (set?.animated && attackSheet) {
+    if (set?.animated && attackSheet && !chargeVisual) {
       opts.setStackVisuals((prev) => ({
         ...prev,
         [striker.id]: {
@@ -465,7 +574,7 @@ export async function runAttackBeatPresentation(opts: {
           ...(attackFlipX !== undefined ? { flipX: attackFlipX } : {}),
         },
       }))
-    } else if (attackFlipX !== undefined) {
+    } else if (!chargeVisual && attackFlipX !== undefined) {
       opts.setStackVisuals((prev) => ({
         ...prev,
         [striker.id]: {
@@ -477,7 +586,7 @@ export async function runAttackBeatPresentation(opts: {
       }))
     }
     void (async () => {
-      await sleepMs(strikeMs, opts.isCancelled)
+      await sleepMs(soundDelayMs, opts.isCancelled)
       if (!opts.isCancelled?.() && set?.stem) {
         void playBattleUnitSoundOnce(
           set.stem,
@@ -491,7 +600,7 @@ export async function runAttackBeatPresentation(opts: {
     const scheduleStrikerIdle = () => {
       void (async () => {
         const elapsed = performance.now() - actionStartedMs
-        await waitClip(Math.max(0, attackMs - elapsed))
+        await waitClip(Math.max(0, strikerBeatMs - elapsed))
         if (opts.isCancelled?.()) {
           return
         }
@@ -517,10 +626,6 @@ export async function runAttackBeatPresentation(opts: {
       impactEffect: string | null
     }
 
-    const strikerUnit = unitById(opts.catalog, striker.unitId)
-    const attackShape = strikerUnit
-      ? unitAttackShape(strikerUnit).shape
-      : 'single'
     const rawProjectileRow = unitProjectileRow(opts.catalog, striker.unitId)
     const effectiveRow = strikerUnit
       ? effectiveProjectileRow(
@@ -822,9 +927,11 @@ export async function runAttackBeatPresentation(opts: {
       }
     }
 
-    const strikeAtMs = actionStartedMs + strikeMs
-    await waitClip(Math.max(0, strikeAtMs - performance.now()))
-    scheduleStrikerIdle()
+    const strikeAtMs = actionStartedMs + strikeDelayMs
+    if (!chargeVisual) {
+      await waitClip(Math.max(0, strikeAtMs - performance.now()))
+      scheduleStrikerIdle()
+    }
     const launchMs = performance.now()
 
     const pushProjectile = (plan: TargetFlightPlan) => {
@@ -868,6 +975,7 @@ export async function runAttackBeatPresentation(opts: {
         anchors: opts.anchors,
         hexPx: opts.hexPx,
         footOffsetPct: opts.settings.footOffsetPct,
+        projectileRow: effectiveRow,
       })
       const box = shapeVisualBoxPx(
         opts.catalog,
@@ -1022,7 +1130,7 @@ export async function runAttackBeatPresentation(opts: {
           prev.filter((row) => row.id !== args.plan!.projId),
         )
         if (args.playImpact && args.plan.impactEffect) {
-          await spawnImpactVisual({
+          await spawnBattleImpactVisual({
             id: `imp:${args.plan.projId}`,
             x: args.plan.toX,
             y: args.plan.toY,
@@ -1140,6 +1248,211 @@ export async function runAttackBeatPresentation(opts: {
         }
         defenderHitWaits.push(beamWait)
       }
+    } else if (chargeVisual && chargeWaypoints) {
+      const chargeWait = (async () => {
+        const pathStart = chargeWaypoints[0]!
+        const walkSteps = chargeWaypoints.slice(1)
+        const moveSettings = opts.settings
+        const moveSecPerHex = chargeSlideSecPerHex
+        const pathFeet = buildBattleMovePathFeet(
+          opts.anchors,
+          opts.hexPx,
+          moveSettings.footOffsetPct,
+          strikerFootprint,
+          striker.side,
+          pathStart.q,
+          pathStart.r,
+          walkSteps,
+        )
+        const firstFoot = pathFeet[0]!
+        const secondFoot = pathFeet[1] ?? firstFoot
+        const travelFlipX = secondFoot.x < firstFoot.x
+        const finishChargeBeat = async () => {
+          if (opts.isCancelled?.()) {
+            return
+          }
+          const strikerResolved =
+            exchange.strikeStacks.find((row) => row.id === striker.id) ??
+            striker
+          pushDisplay({
+            ...display,
+            stacks: display.stacks.map((row) =>
+              row.id === striker.id ? { ...strikerResolved } : row,
+            ),
+          })
+          opts.setStackVisuals((prev) => ({
+            ...prev,
+            [striker.id]: idleVisual(strikerResolved, opts.sheets, opts.catalog),
+          }))
+        }
+        const runChargeSlideWithHits = async (pathStartedMs: number) => {
+          const hitIds = [...(exchange.chargeHitStackIds ?? [])]
+          const pauseLegs = [...(exchange.chargeHitPauseLegs ?? [])]
+          let hitIndex = 0
+          const fireChargeHit = async () => {
+            if (hitIndex >= hitIds.length) {
+              return
+            }
+            const targetId = hitIds[hitIndex]!
+            hitIndex += 1
+            await runTargetReaction({
+              targetId,
+              delayMs: 0,
+              plan: null,
+              playImpact: true,
+              chainHop: true,
+            })
+          }
+          for (let i = 0; i < walkSteps.length; i += 1) {
+            await awaitBattleMovePathWaypoint(
+              pathStartedMs,
+              moveSecPerHex,
+              i + 1,
+              () => opts.isCancelled?.() === true,
+            )
+            if (opts.isCancelled?.()) {
+              return
+            }
+            if (
+              hitIndex < hitIds.length &&
+              (pauseLegs[hitIndex] ?? hitIndex + 1) === i + 1
+            ) {
+              await fireChargeHit()
+            }
+          }
+          while (hitIndex < hitIds.length) {
+            await fireChargeHit()
+          }
+        }
+        if (chargePhased && chargeLoop && attackSheet) {
+          opts.setStackVisuals((prev) => ({
+            ...prev,
+            [striker.id]: {
+              kind: 'Attack',
+              startedMs: actionStartedMs,
+              frameOffset: 0,
+              flipX: attackFlipX ?? travelFlipX,
+              footOverride: { x: attackerFoot.x, y: attackerFoot.y },
+              chargeAttack: {
+                loopStart: chargeLoop[0],
+                loopEnd: chargeLoop[1],
+                phase: 'windup',
+                phaseStartedMs: actionStartedMs,
+              },
+            },
+          }))
+          const windupMs = chargePhaseDurationMs(
+            'windup',
+            chargeLoop,
+            attackFrameCount,
+            moveSettings.moveFps,
+          )
+          if (windupMs > 0) {
+            await waitClip(windupMs)
+            if (opts.isCancelled?.()) {
+              return
+            }
+          }
+          const pathStartedMs = performance.now()
+          opts.setStackVisuals((prev) => ({
+            ...prev,
+            [striker.id]: {
+              kind: 'Attack',
+              startedMs: actionStartedMs,
+              frameOffset: 0,
+              flipX: attackFlipX ?? travelFlipX,
+              chargeAttack: {
+                loopStart: chargeLoop[0],
+                loopEnd: chargeLoop[1],
+                phase: 'loop',
+                phaseStartedMs: pathStartedMs,
+              },
+              slide: {
+                startedMs: pathStartedMs,
+                pathFeet,
+                secPerHex: moveSecPerHex,
+              },
+            },
+          }))
+          await runChargeSlideWithHits(pathStartedMs)
+          if (opts.isCancelled?.()) {
+            return
+          }
+          const recoverMs = chargePhaseDurationMs(
+            'recover',
+            chargeLoop,
+            attackFrameCount,
+            moveSettings.moveFps,
+          )
+          const endFoot = pathFeet[pathFeet.length - 1] ?? firstFoot
+          const recoverStartedMs = performance.now()
+          opts.setStackVisuals((prev) => ({
+            ...prev,
+            [striker.id]: {
+              kind: 'Attack',
+              startedMs: actionStartedMs,
+              frameOffset: 0,
+              flipX: attackFlipX ?? travelFlipX,
+              footOverride: { x: endFoot.x, y: endFoot.y },
+              chargeAttack: {
+                loopStart: chargeLoop[0],
+                loopEnd: chargeLoop[1],
+                phase: 'recover',
+                phaseStartedMs: recoverStartedMs,
+              },
+            },
+          }))
+          if (recoverMs > 0) {
+            await waitClip(recoverMs)
+          }
+          await finishChargeBeat()
+          return
+        }
+        opts.setStackVisuals((prev) => ({
+          ...prev,
+          [striker.id]: {
+            kind: 'Attack',
+            startedMs: actionStartedMs,
+            frameOffset: 0,
+            flipX: attackFlipX ?? travelFlipX,
+            footOverride: { x: attackerFoot.x, y: attackerFoot.y },
+          },
+        }))
+        await waitClip(Math.max(0, strikeAtMs - performance.now()))
+        if (opts.isCancelled?.()) {
+          return
+        }
+        const pathStartedMs = performance.now()
+        opts.setStackVisuals((prev) => ({
+          ...prev,
+          [striker.id]: {
+            kind: 'Attack',
+            startedMs: actionStartedMs,
+            frameOffset: 0,
+            flipX: attackFlipX ?? travelFlipX,
+            slide: {
+              startedMs: pathStartedMs,
+              pathFeet,
+              secPerHex: moveSecPerHex,
+            },
+          },
+        }))
+        await runChargeSlideWithHits(pathStartedMs)
+        if (opts.isCancelled?.()) {
+          return
+        }
+        const elapsed = performance.now() - actionStartedMs
+        await waitClip(Math.max(0, attackMs - elapsed))
+        await finishChargeBeat()
+      })()
+      reactionWaits.push(chargeWait)
+      for (const targetId of exchange.targetIds) {
+        const before = stackRow(exchange.beforeStacks, targetId)
+        if (!before || before.side === striker.side) {
+          continue
+        }
+        defenderHitWaits.push(chargeWait)
+      }
     } else if (chainMode && effectiveRow) {
       const chainWait = (async () => {
         let hopFrom = striker
@@ -1219,7 +1532,7 @@ export async function runAttackBeatPresentation(opts: {
           opts.hexPx,
         )
         if (rangedAoePlan.impactEffect) {
-          await spawnImpactVisual({
+          await spawnBattleImpactVisual({
             id: `imp:${rangedAoePlan.projId}`,
             x: impactX,
             y: impactY,
@@ -1279,7 +1592,7 @@ export async function runAttackBeatPresentation(opts: {
         }
         defenderHitWaits.push(aoeWait)
       }
-    } else if (!beamVisual) {
+    } else if (!beamVisual && !chargeVisual) {
       for (const targetId of exchange.targetIds) {
         const before = stackRow(exchange.beforeStacks, targetId)
         const plan = flightPlans.find((row) => row.targetId === targetId) ?? null
@@ -1312,7 +1625,7 @@ export async function runAttackBeatPresentation(opts: {
           if (opts.isCancelled?.()) {
             return
           }
-          await spawnImpactVisual({
+          await spawnBattleImpactVisual({
             id: `imp:reach:${striker.id}:${launchMs}`,
             x: reachImpactX,
             y: reachImpactY,
@@ -1332,6 +1645,7 @@ export async function runAttackBeatPresentation(opts: {
       !reachMode &&
       !chainMode &&
       !beamVisual &&
+      !chargeVisual &&
       !rangedAoeMode &&
       !legacyPerTargetRanged &&
       !catalogPerTargetFlight
@@ -1341,7 +1655,7 @@ export async function runAttackBeatPresentation(opts: {
 
     const strikerClipWait = (async () => {
       const elapsed = performance.now() - actionStartedMs
-      await waitClip(Math.max(0, attackMs - elapsed))
+      await waitClip(Math.max(0, strikerBeatMs - elapsed))
     })()
 
     if (ex + 1 < opts.exchanges.length) {

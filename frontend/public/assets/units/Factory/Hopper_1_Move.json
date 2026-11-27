@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Hopper_1_Move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_001": {
+      "frame": {
+        "x": 213,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_002": {
+      "frame": {
+        "x": 426,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_003": {
+      "frame": {
+        "x": 639,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_004": {
+      "frame": {
+        "x": 852,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_005": {
+      "frame": {
+        "x": 1065,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_006": {
+      "frame": {
+        "x": 1278,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_007": {
+      "frame": {
+        "x": 0,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_008": {
+      "frame": {
+        "x": 213,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_009": {
+      "frame": {
+        "x": 426,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_010": {
+      "frame": {
+        "x": 639,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_011": {
+      "frame": {
+        "x": 852,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_012": {
+      "frame": {
+        "x": 1065,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_013": {
+      "frame": {
+        "x": 1278,
+        "y": 266,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_014": {
+      "frame": {
+        "x": 0,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_015": {
+      "frame": {
+        "x": 213,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_016": {
+      "frame": {
+        "x": 426,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_017": {
+      "frame": {
+        "x": 639,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_018": {
+      "frame": {
+        "x": 852,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_019": {
+      "frame": {
+        "x": 1065,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_020": {
+      "frame": {
+        "x": 1278,
+        "y": 532,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_021": {
+      "frame": {
+        "x": 0,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_022": {
+      "frame": {
+        "x": 213,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_023": {
+      "frame": {
+        "x": 426,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_024": {
+      "frame": {
+        "x": 639,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_025": {
+      "frame": {
+        "x": 852,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_026": {
+      "frame": {
+        "x": 1065,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_027": {
+      "frame": {
+        "x": 1278,
+        "y": 798,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_028": {
+      "frame": {
+        "x": 0,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_029": {
+      "frame": {
+        "x": 213,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_030": {
+      "frame": {
+        "x": 426,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_031": {
+      "frame": {
+        "x": 639,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_032": {
+      "frame": {
+        "x": 852,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_033": {
+      "frame": {
+        "x": 1065,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_034": {
+      "frame": {
+        "x": 1278,
+        "y": 1064,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_035": {
+      "frame": {
+        "x": 0,
+        "y": 1330,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 80
+    },
+    "Hopper_1_Move_Stand": {
+      "frame": {
+        "x": 213,
+        "y": 1330,
+        "w": 213,
+        "h": 266
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 213,
+        "h": 266
+      },
+      "sourceSize": {
+        "w": 213,
+        "h": 266
+      },
+      "anchor": {
+        "x": 0.5884,
+        "y": 0.9902
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Hopper_1_Move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1491,
+      "h": 1596
+    },
+    "scale": "1",
+    "anim": "Move",
+    "loop": true,
+    "foot": {
+      "x": 0.5884,
+      "y": 0.9902
+    },
+    "rest_height": 200
+  }
+}

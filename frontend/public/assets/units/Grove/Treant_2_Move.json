@@ -1,0 +1,946 @@
+{
+  "frames": {
+    "Treant_2_Move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_001": {
+      "frame": {
+        "x": 201,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_002": {
+      "frame": {
+        "x": 402,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_003": {
+      "frame": {
+        "x": 603,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_004": {
+      "frame": {
+        "x": 804,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_005": {
+      "frame": {
+        "x": 1005,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_006": {
+      "frame": {
+        "x": 1206,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_007": {
+      "frame": {
+        "x": 0,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_008": {
+      "frame": {
+        "x": 201,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_009": {
+      "frame": {
+        "x": 402,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_010": {
+      "frame": {
+        "x": 603,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_011": {
+      "frame": {
+        "x": 804,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_012": {
+      "frame": {
+        "x": 1005,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_013": {
+      "frame": {
+        "x": 1206,
+        "y": 204,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_014": {
+      "frame": {
+        "x": 0,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_015": {
+      "frame": {
+        "x": 201,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_016": {
+      "frame": {
+        "x": 402,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_017": {
+      "frame": {
+        "x": 603,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_018": {
+      "frame": {
+        "x": 804,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_019": {
+      "frame": {
+        "x": 1005,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_020": {
+      "frame": {
+        "x": 1206,
+        "y": 408,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_021": {
+      "frame": {
+        "x": 0,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_022": {
+      "frame": {
+        "x": 201,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_023": {
+      "frame": {
+        "x": 402,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_024": {
+      "frame": {
+        "x": 603,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_025": {
+      "frame": {
+        "x": 804,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_026": {
+      "frame": {
+        "x": 1005,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_027": {
+      "frame": {
+        "x": 1206,
+        "y": 612,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_028": {
+      "frame": {
+        "x": 0,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_029": {
+      "frame": {
+        "x": 201,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_030": {
+      "frame": {
+        "x": 402,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_031": {
+      "frame": {
+        "x": 603,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_032": {
+      "frame": {
+        "x": 804,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_033": {
+      "frame": {
+        "x": 1005,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_034": {
+      "frame": {
+        "x": 1206,
+        "y": 816,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_035": {
+      "frame": {
+        "x": 0,
+        "y": 1020,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 78
+    },
+    "Treant_2_Move_Stand": {
+      "frame": {
+        "x": 201,
+        "y": 1020,
+        "w": 201,
+        "h": 204
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 201,
+        "h": 204
+      },
+      "sourceSize": {
+        "w": 201,
+        "h": 204
+      },
+      "anchor": {
+        "x": 0.4428,
+        "y": 0.991
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Treant_2_Move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1407,
+      "h": 1224
+    },
+    "scale": "1",
+    "anim": "Move",
+    "loop": true,
+    "foot": {
+      "x": 0.4428,
+      "y": 0.991
+    },
+    "rest_height": 200
+  }
+}

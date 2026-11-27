@@ -1,7 +1,11 @@
 import type { GameSession, Hero, Town } from '../session/types'
 import { ARMY_STACK_SLOTS, slotFromPlayerId } from '../session/types'
 import type { ReferenceCatalog } from '../town/catalog'
-import { retaliationCharges, unitById } from '../town/catalog'
+import {
+  retaliationCharges,
+  unitAttackShape,
+  unitById,
+} from '../town/catalog'
 import { siegeStructureStacks } from './siege'
 import {
   tickRoundConditions,
@@ -259,6 +263,8 @@ export type CombatStack = {
   silenced?: boolean
   /** Battle round when this stack was summoned. */
   spawnedRound?: number
+  /** Battle round this stack appeared (summon, split, etc.); no auto_split that round (G14-25). */
+  autoSplitBornRound?: number
   /** Remaining attacks before this Rift goes silent. Independent per stack. */
   silenceShotsLeft?: number
   /** Curse: outgoing attacks cannot crit for N rounds. */
@@ -553,11 +559,17 @@ export function stackMaxRange(
   return Math.max(1, base + (stack.statFlat?.maxRange ?? 0))
 }
 
-/** min_range ≥ 1 → ranged delivery; min_range 0 is melee (no projectile streak). */
+/** min_range ≥ 1 → ranged delivery; min_range 0 is melee (no projectile streak). charge_line never uses projectile visuals. */
 export function unitUsesRangedProjectileVisuals(
   unit: import('../town/catalog').UnitRow | null | undefined,
 ): boolean {
-  return (unit?.min_range ?? 0) >= 1
+  if (!unit) {
+    return false
+  }
+  if (unitAttackShape(unit).shape === 'charge_line') {
+    return false
+  }
+  return (unit.min_range ?? 0) >= 1
 }
 
 export function stackUsesRangedProjectileVisuals(

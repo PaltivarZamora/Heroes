@@ -64,6 +64,7 @@ export function corpseBattleSpriteScale(
   side: CombatSide,
   set: BattleUnitSheetSet,
   settings: BattleAnimSettings,
+  unitDrawScalePct = 100,
 ): number {
   return combatBattleUnitScaleForSheetSet(
     hexPx,
@@ -71,6 +72,7 @@ export function corpseBattleSpriteScale(
     side,
     set,
     settings,
+    unitDrawScalePct,
   )
 }
 
@@ -81,6 +83,7 @@ export function corpseStaticImageScale(
   side: CombatSide,
   standFrameWidth: number,
   settings: BattleAnimSettings,
+  unitDrawScalePct = 100,
 ): number {
   return combatBattleUnitSpriteScale(
     hexPx,
@@ -89,6 +92,7 @@ export function corpseStaticImageScale(
     CORPSE_BODY_REST_HEIGHT_PX,
     standFrameWidth,
     settings,
+    unitDrawScalePct,
   )
 }
 

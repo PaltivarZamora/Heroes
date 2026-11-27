@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { advBorrowGlowCssFilter } from '../town/unitArtFallback'
-import type { ReferenceCatalog } from '../town/catalog'
+import { type ReferenceCatalog, unitSpriteScalePct, unitById } from '../town/catalog'
 import type { BattleAnimSettings } from './battleAnimConfig'
 import { corpseStaticImageScale } from './combatCorpsePaint'
 import type { FootprintCode } from './footprint'
@@ -24,6 +24,7 @@ export function CombatBattleStaticCorpseBody({
   footY,
   flipX,
   spriteScale: spriteScaleProp,
+  unitDrawScalePct,
 }: {
   unitId: number
   unitDisplayName: string
@@ -39,6 +40,7 @@ export function CombatBattleStaticCorpseBody({
   flipX: boolean
   /** Stand-based unit scale; when omitted, derived from loaded image width. */
   spriteScale?: number
+  unitDrawScalePct?: number
 }) {
   const [resolved, setResolved] = useState<UnitCorpsePictureResolved | null>(
     urlOverride
@@ -84,9 +86,19 @@ export function CombatBattleStaticCorpseBody({
 
   const natW = natural?.w ?? 200
   const natH = natural?.h ?? 200
+  const unitRow = unitById(catalog, unitId)
+  const drawPct =
+    unitDrawScalePct ?? unitSpriteScalePct(unitRow)
   const scale =
     spriteScaleProp ??
-    corpseStaticImageScale(hexPx, footprint, side, natW, settings)
+    corpseStaticImageScale(
+      hexPx,
+      footprint,
+      side,
+      natW,
+      settings,
+      drawPct,
+    )
   const frameW = natW * scale
   const frameH = natH * scale
   const anchorX = 0.5

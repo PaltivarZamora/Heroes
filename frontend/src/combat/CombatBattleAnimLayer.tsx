@@ -30,7 +30,7 @@ import {
 import type { CombatBattle } from './battle'
 import { isHeroStack } from './battle'
 import type { ReferenceCatalog } from '../town/catalog'
-import { unitById, unitFootprint } from '../town/catalog'
+import { unitById, unitFootprint, unitSpriteScalePct } from '../town/catalog'
 import { combatStackFootprint, moveKindForUnit } from './movement'
 import { proceduralIdleMotionForStack, proceduralIdleTransformCss } from './proceduralBattleIdle'
 import { proceduralHitTransformCss, proceduralHitTransformOrigin } from './proceduralBattleHit'
@@ -68,13 +68,25 @@ import {
   heroBattleMountFoot,
 } from './combatHeroMountArt'
 import type { HeroMountBattleArt } from './heroMountBattleSheet'
-
+import {
+  stackHiddenBeforeAppear,
+  stackInAppearMotion,
+  type ScheduledMidBattleAppear,
+} from './battleAppear'
+import { unitRainStillForBattle } from './battleUnitRainStill'
+import type { MidBattleAppearPaint } from './battleAppearPresentation'
+import {
+  appearRiseBodyHeightPx,
+  appearRiseFootClipStyle,
+  resolveAppearPaintTransform,
+} from './combatAppearPaint'
 type HexAnchor = { q: number; r: number; x: number; y: number }
 
 type LayerProps = {
   battle: CombatBattle
   field: {
     hexPx: number
+    height: number
     anchors: HexAnchor[]
   }
   catalog: ReferenceCatalog
@@ -84,6 +96,7 @@ type LayerProps = {
   polymorphBattleSheet?: BattleUnitSheetSet | null
   settings?: BattleAnimSettings
   paintNowMs: number
+  appearPaint?: MidBattleAppearPaint | null
 }
 
 function resolveBattleUnitFlipX(
@@ -145,6 +158,8 @@ function paintCorpseNode(
     now,
   )
   const set = sheetSetForUnit(unitId, catalog, unitSheets)
+  const tombUnit = unitById(catalog, unitId)
+  const drawPct = unitSpriteScalePct(tombUnit)
   const flipX = resolveBattleUnitFlipX(
     side,
     visual ?? { kind: 'idle', startedMs: 0, frameOffset: 0 },
@@ -162,6 +177,7 @@ function paintCorpseNode(
       side,
       set,
       settings,
+      drawPct,
     )
     const dieAnimSheet = set.sheets[picked.sheetKind]
     const dieGlow = dieAnimSheet?.borrowedGlow
@@ -189,7 +205,6 @@ function paintCorpseNode(
     return null
   }
 
-  const tombUnit = unitById(catalog, unitId)
   if (!tombUnit) {
     return null
   }
@@ -215,9 +230,11 @@ function paintCorpseNode(
               side,
               set,
               settings,
+              drawPct,
             )
           : undefined
       }
+      unitDrawScalePct={drawPct}
     />
   )
 }
@@ -365,6 +382,7 @@ export function CombatBattleAnimLayer({
   shapes,
   settings: settingsProp,
   paintNowMs,
+  appearPaint = null,
 }: LayerProps & {
   projectiles: CombatProjectileVisual[]
   impacts?: CombatImpactVisual[]
@@ -383,8 +401,15 @@ export function CombatBattleAnimLayer({
     settings.footOffsetPct,
     now,
   )
+  const scheduled: ScheduledMidBattleAppear[] = appearPaint?.scheduled ?? []
   for (const stack of paintStacks) {
     const stackVisualEarly = stackVisuals[stack.id]
+    if (
+      scheduled.length > 0 &&
+      stackHiddenBeforeAppear(stack.id, now, scheduled)
+    ) {
+      continue
+    }
     if (isHeroStack(stack)) {
       if (stack.qty <= 0) {
         continue
@@ -485,7 +510,42 @@ export function CombatBattleAnimLayer({
       visual,
       now,
     )
-    const picked = pickVisualFrame(set, visual, settings, now)
+    const appearRow = scheduled.find((row) => row.stackId === stack.id)
+    const unit = unitById(catalog, stack.unitId)
+    const drawPct = polymorphActive ? 100 : unitSpriteScalePct(unit)
+    const riseBody = appearRiseBodyHeightPx(
+      field.hexPx,
+      unitFootprint,
+      stack.side,
+      set,
+      settings,
+      unit,
+    )
+    const appearMotion =
+      appearRow && stackInAppearMotion(stack.id, now, scheduled)
+        ? resolveAppearPaintTransform(
+            appearRow,
+            scheduled,
+            now,
+            field.hexPx,
+            field.height,
+            riseBody,
+            set,
+            settings,
+          )
+        : null
+    const rainStill =
+      appearRow?.kind === 'rain' && appearMotion
+        ? unitRainStillForBattle(stack.unitId)
+        : null
+    const picked = appearMotion?.appearSheetFrame
+      ? {
+          frame: appearMotion.appearSheetFrame,
+          sheetKind: 'Idle' as const,
+        }
+      : rainStill
+        ? { frame: rainStill, sheetKind: 'Idle' as const }
+        : pickVisualFrame(set, visual, settings, now)
     if (!picked) {
       continue
     }
@@ -500,10 +560,19 @@ export function CombatBattleAnimLayer({
       stack.side,
       set,
       settings,
+      drawPct,
     )
-    const unit = unitById(catalog, stack.unitId)
     let motionTransform: string | undefined
     let motionTransformOrigin: string | undefined
+    let footX = drawFoot.footX
+    let footY = drawFoot.footY
+    const riseRestFootY =
+      appearRow?.kind === 'rise' && appearMotion != null
+        ? drawFoot.footY
+        : null
+    if (appearMotion) {
+      footY += appearMotion.offsetY
+    }
     if (visual.kind === 'Hit' && visual.proceduralHit) {
       motionTransform = proceduralHitTransformCss(
         visual.startedMs,
@@ -521,7 +590,8 @@ export function CombatBattleAnimLayer({
       visual.kind === 'idle' &&
       !visual.slide &&
       visual.proceduralIdle &&
-      unit
+      unit &&
+      !rainStill
     ) {
       motionTransform = proceduralIdleTransformCss(
         now,
@@ -537,13 +607,12 @@ export function CombatBattleAnimLayer({
     const spriteGlow = liveAnimSheet?.borrowedGlow
       ? advFallbackGlow(catalog)
       : null
-    nodes.push(
+    const art = (
       <CombatBattleUnitArt
-        key={`anim:${stack.id}`}
         frame={picked.frame}
         scale={scale}
-        footX={drawFoot.footX}
-        footY={drawFoot.footY}
+        footX={footX}
+        footY={footY}
         flipX={visual.slide ? travelFlipXForSlide(visual.slide, now) : resolveBattleUnitFlipX(stack.side, visual)}
         motionTransform={motionTransform}
         transformOrigin={motionTransformOrigin}
@@ -556,7 +625,20 @@ export function CombatBattleAnimLayer({
               }
             : null
         }
-      />,
+      />
+    )
+    nodes.push(
+      riseRestFootY != null ? (
+        <div
+          key={`anim:${stack.id}`}
+          className="combat-appear-rise-foot-clip"
+          style={appearRiseFootClipStyle(riseRestFootY)}
+        >
+          {art}
+        </div>
+      ) : (
+        art
+      ),
     )
   }
   for (const proj of projectiles) {

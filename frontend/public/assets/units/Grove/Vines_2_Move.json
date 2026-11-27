@@ -1,0 +1,446 @@
+{
+  "frames": {
+    "Vines_2_Move_000": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_001": {
+      "frame": {
+        "x": 237,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_002": {
+      "frame": {
+        "x": 474,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_003": {
+      "frame": {
+        "x": 711,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_004": {
+      "frame": {
+        "x": 948,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_005": {
+      "frame": {
+        "x": 0,
+        "y": 259,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_006": {
+      "frame": {
+        "x": 237,
+        "y": 259,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_007": {
+      "frame": {
+        "x": 474,
+        "y": 259,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_008": {
+      "frame": {
+        "x": 711,
+        "y": 259,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_009": {
+      "frame": {
+        "x": 948,
+        "y": 259,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_010": {
+      "frame": {
+        "x": 0,
+        "y": 518,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_011": {
+      "frame": {
+        "x": 237,
+        "y": 518,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_012": {
+      "frame": {
+        "x": 474,
+        "y": 518,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_013": {
+      "frame": {
+        "x": 711,
+        "y": 518,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_014": {
+      "frame": {
+        "x": 948,
+        "y": 518,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_015": {
+      "frame": {
+        "x": 0,
+        "y": 777,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 48
+    },
+    "Vines_2_Move_Stand": {
+      "frame": {
+        "x": 237,
+        "y": 777,
+        "w": 237,
+        "h": 259
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 237,
+        "h": 259
+      },
+      "sourceSize": {
+        "w": 237,
+        "h": 259
+      },
+      "anchor": {
+        "x": 0.4729,
+        "y": 0.9412
+      },
+      "duration": 0
+    }
+  },
+  "meta": {
+    "app": "https://ludo.ai",
+    "image": "Vines_2_Move.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 1185,
+      "h": 1036
+    },
+    "scale": "1",
+    "anim": "Move",
+    "loop": true,
+    "foot": {
+      "x": 0.4729,
+      "y": 0.9412
+    },
+    "rest_height": 200
+  }
+}

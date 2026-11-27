@@ -67,6 +67,10 @@ import {
   occupiedHexes,
 } from './occupancy'
 import { tombstoneOccupancyBodies } from './tombstone'
+import {
+  registerMidBattleAppear,
+  type MidBattleAppearSlot,
+} from './battleAppear'
 
 const PERM_SLOTS = ARMY_STACK_SLOTS
 
@@ -555,6 +559,18 @@ export type SummonResolve = {
   battle: CombatBattle
   lines: string[]
   flashes: Array<{ keys: string[]; color: HitFlashColor }>
+  appears?: MidBattleAppearSlot[]
+}
+
+export function foldSummonResolve(
+  flashes: SummonResolve['flashes'],
+  appears: MidBattleAppearSlot[],
+  spawned: SummonResolve,
+): void {
+  flashes.push(...spawned.flashes)
+  if (spawned.appears) {
+    appears.push(...spawned.appears)
+  }
 }
 
 /** Place one indestructible blocker on `hex` if the hex is open. */
@@ -638,10 +654,10 @@ export function spawnSummonedStack(
     retaliationsLeft: retaliationCharges(chosenUnit),
     persistOnSummon: persists,
     summonSeq: nextSummonSeq(battle.stacks),
-    // Creation round — Mud Golem skipFirstTurn / similar gates key off this.
     spawnedRound: battle.round,
     startHex: { q: at.q, r: at.r },
     ...extras,
+    autoSplitBornRound: battle.round,
   }
   let order = battle.order
   // Null-speed units (Wall, Arcane Shield, …) never enter initiative.
@@ -660,10 +676,13 @@ export function spawnSummonedStack(
     options?.omitDefaultLog === true
       ? []
       : [`${ability.name}: ${qty} ${chosenUnit.name} appear.`]
+  const appears: MidBattleAppearSlot[] = []
+  registerMidBattleAppear(appears, id, chosenUnit.id)
   return {
     battle: next,
     lines,
-    flashes: [{ keys: [occupancyKey(at.q, at.r)], color: 'green' }],
+    flashes: [],
+    appears,
   }
 }
 
@@ -683,6 +702,7 @@ function spawnRandomStacks(
   let next = battle
   const lines: string[] = []
   const flashes: SummonResolve['flashes'] = []
+  const appears: MidBattleAppearSlot[] = []
   let placed = 0
   for (let i = 0; i < count; i += 1) {
     const hex = pickRandomOpenHex(next, catalog, tiles, casterSide, chosenUnit, random)
@@ -706,7 +726,7 @@ function spawnRandomStacks(
       shots != null ? { ...extras, silenceShotsLeft: shots } : extras,
     )
     next = spawned.battle
-    flashes.push(...spawned.flashes)
+    foldSummonResolve(flashes, appears, spawned)
     placed += 1
   }
   if (placed === 0) {
@@ -717,7 +737,7 @@ function spawnRandomStacks(
     }
   }
   lines.push(`${ability.name}: ${placed} ${chosenUnit.name} appear.`)
-  return { battle: next, lines, flashes }
+  return { battle: next, lines, flashes, appears }
 }
 
 /**
@@ -797,6 +817,7 @@ export function applySummonFromStats(
       let next = battle
       const lines: string[] = []
       const flashes: SummonResolve['flashes'] = []
+      const appears: MidBattleAppearSlot[] = []
       let placed = 0
       for (const hex of spots) {
         const spawned = spawnSummonedStack(
@@ -813,7 +834,7 @@ export function applySummonFromStats(
           insertQueue,
         )
         next = spawned.battle
-        flashes.push(...spawned.flashes)
+        foldSummonResolve(flashes, appears, spawned)
         placed += 1
       }
       if (placed === 0) {
@@ -826,7 +847,7 @@ export function applySummonFromStats(
       lines.push(
         `${ability.name}: placed ${placed} ${blockerLabel(unit.name, placed)}.`,
       )
-      return { battle: next, lines, flashes }
+      return { battle: next, lines, flashes, appears }
     }
 
     // Illusions: N separate 1-unit stacks scattered toward map center.
@@ -848,6 +869,7 @@ export function applySummonFromStats(
       }
       let next = battle
       const flashes: SummonResolve['flashes'] = []
+      const appears: MidBattleAppearSlot[] = []
       let placed = 0
       for (let i = 0; i < count; i += 1) {
         const hex =
@@ -871,7 +893,7 @@ export function applySummonFromStats(
           insertQueue,
         )
         next = spawned.battle
-        flashes.push(...spawned.flashes)
+        foldSummonResolve(flashes, appears, spawned)
         placed += 1
       }
       if (placed === 0) {
@@ -885,6 +907,7 @@ export function applySummonFromStats(
         battle: next,
         lines: [`${ability.name}: ${placed} ${unit.name} appear.`],
         flashes,
+        appears,
       }
     }
 
@@ -1073,6 +1096,7 @@ export function applyMirrorImage(
       `${ability.name}: mirrored ${target.qty} ${unit.name} (${topHealth}/${maxHp} HP).`,
     ],
     flashes: spawned.flashes,
+    appears: spawned.appears,
   }
 }
 
@@ -1129,6 +1153,7 @@ export function applyIceShardPlacement(
   let next = battle
   const lines: string[] = []
   const flashes: SummonResolve['flashes'] = []
+  const appears: MidBattleAppearSlot[] = []
   const remaining = [...empty]
   const proposed = permanentBlockKeys(battle)
   let placed = 0
@@ -1166,7 +1191,7 @@ export function applyIceShardPlacement(
       },
     )
     next = spawned.battle
-    flashes.push(...spawned.flashes)
+    foldSummonResolve(flashes, appears, spawned)
     proposed.add(key)
     placed += 1
   }
@@ -1175,7 +1200,7 @@ export function applyIceShardPlacement(
       `${ability.name}: placed ${placed} ${blockerLabel(unit.name, placed)}.`,
     )
   }
-  return { battle: next, lines, flashes }
+  return { battle: next, lines, flashes, appears }
 }
 
 /**
@@ -1221,6 +1246,7 @@ export function applyRadiusBlockerPlacement(
   let next = battle
   const lines: string[] = []
   const flashes: SummonResolve['flashes'] = []
+  const appears: MidBattleAppearSlot[] = []
   const remaining = [...open]
   const proposed = permanentBlockKeys(battle)
   let placed = 0
@@ -1258,7 +1284,7 @@ export function applyRadiusBlockerPlacement(
       },
     )
     next = spawned.battle
-    flashes.push(...spawned.flashes)
+    foldSummonResolve(flashes, appears, spawned)
     proposed.add(key)
     placed += 1
   }
@@ -1267,7 +1293,7 @@ export function applyRadiusBlockerPlacement(
       `${ability.name}: raised ${placed} ${blockerLabel(unit.name, placed)}.`,
     )
   }
-  return { battle: next, lines, flashes }
+  return { battle: next, lines, flashes, appears }
 }
 
 /**

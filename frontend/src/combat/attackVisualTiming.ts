@@ -16,7 +16,7 @@ import {
 } from './actionOrigin'
 import type { CombatStack } from './battle'
 import { appendBattleAnimCombatLog } from './battleAnimLogBridge'
-import { unitProjectileRow } from './battleProjectile'
+import { computeProjectileFlightStart, unitProjectileRow } from './battleProjectile'
 import { stackArtBox, stackArtBoxFoot } from './combatStackArtBox'
 const SHAPE_VISUAL_SHAPES: ReadonlySet<AttackShapeKind> = new Set([
   'breath',
@@ -26,6 +26,39 @@ const SHAPE_VISUAL_SHAPES: ReadonlySet<AttackShapeKind> = new Set([
 ])
 
 const warnedMismatch = new Set<string>()
+const warnedChargeLineProjectile = new Set<number>()
+
+function chargeLineProjectileId(
+  catalog: ReferenceCatalog,
+  unit: UnitRow,
+): number | null {
+  let projectileId = unit.projectile_id
+  if (projectileId == null || projectileId <= 0) {
+    const partner = basicPartnerForAdvanced(catalog, unit)
+    projectileId = partner?.projectile_id ?? null
+  }
+  if (projectileId == null || projectileId <= 0) {
+    return null
+  }
+  return projectileId
+}
+
+export function warnChargeLineProjectileIgnored(
+  catalog: ReferenceCatalog,
+  unit: UnitRow | null | undefined,
+): void {
+  if (!unit || warnedChargeLineProjectile.has(unit.id)) {
+    return
+  }
+  const projectileId = chargeLineProjectileId(catalog, unit)
+  if (projectileId == null) {
+    return
+  }
+  warnedChargeLineProjectile.add(unit.id)
+  appendBattleAnimCombatLog(
+    `[Dev] ${unit.name}: projectile_id ${projectileId} ignored for charge_line (unit travels; no projectile visual).`,
+  )
+}
 
 export function normalizeProjectileKind(
   row: ProjectileRow,
@@ -46,6 +79,9 @@ export function projectileRowFitsAttack(
   maxRange: number,
   unit: UnitRow | null | undefined,
 ): boolean {
+  if (attackShape === 'charge_line') {
+    return false
+  }
   const kind = normalizeProjectileKind(row)
   if (kind === 'reach') {
     if ((unit?.min_range ?? 0) >= 1) {
@@ -100,6 +136,10 @@ export function effectiveProjectileRow(
   maxRange: number,
 ): ProjectileRow | null {
   const unit = unitById(catalog, unitId)
+  if (attackShape === 'charge_line') {
+    warnChargeLineProjectileIgnored(catalog, unit)
+    return null
+  }
   const row = unitProjectileRow(catalog, unitId)
   if (!row) {
     return null
@@ -214,6 +254,7 @@ export function shapeVisualPlacement(opts: {
   anchors: HexAnchor[]
   hexPx: number
   footOffsetPct: number
+  projectileRow?: ProjectileRow | null
 }): {
   x: number
   y: number
@@ -269,9 +310,30 @@ export function shapeVisualPlacement(opts: {
   const dx = to.x - from.x
   const dy = to.y - from.y
   const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI
+  let x = from.x
+  let y = from.y
+  if (
+    (opts.mode === 'breath' || opts.mode === 'cleave') &&
+    opts.primaryTarget &&
+    opts.projectileRow
+  ) {
+    const mouth = computeProjectileFlightStart({
+      striker: opts.striker,
+      target: opts.primaryTarget,
+      catalog: opts.catalog,
+      anchors: opts.anchors,
+      hexPx: opts.hexPx,
+      footOffsetPct: opts.footOffsetPct,
+      row: opts.projectileRow,
+    })
+    if (mouth) {
+      x = mouth.x
+      y = mouth.y
+    }
+  }
   return {
-    x: from.x,
-    y: from.y,
+    x,
+    y,
     angleDeg,
     flipY: dx < 0,
     rotate: true,
